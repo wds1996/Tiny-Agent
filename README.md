@@ -4,7 +4,7 @@
 
 Tiny-Agent is an open-source, learning-first Agent engineering project for **anyone who wants to understand how modern AI Agents actually work**.
 
-This repository does not begin with a large framework or a single black-box `create_agent(...)` call. Instead, it builds the Agent stack layer by layer: LLM interfaces, structured outputs, function calling, the Agent loop, ReAct, planning, stateful orchestration, RAG, MCP, memory, human approval, reliability, evaluation, observability, and production deployment.
+This repository does not begin with a large framework or a black-box `create_agent(...)` call. Instead, it builds the Agent stack layer by layer: LLM interfaces, structured outputs, function calling, ReAct and Agent runtimes, model-provider adapters, planning, stateful orchestration, RAG, MCP, memory, human approval, reliability, evaluation, observability, multi-Agent systems, and production deployment.
 
 The goal is not only to teach concepts, but also to show how those concepts become maintainable software.
 
@@ -20,18 +20,20 @@ Tiny-Agent is designed for:
 
 ## Core philosophy
 
-1. **Mechanism before framework** — understand the loop, state, tools, and control flow before using high-level abstractions.
-2. **Theory and code stay together** — every stage has its own conceptual notes and implementation snapshot.
+1. **Mechanism before framework** — understand loops, state, tools, protocols, and control flow before using high-level abstractions.
+2. **Theory and code stay together** — every stage keeps conceptual notes, runnable examples, and exercises close to each other.
 3. **Each stage is independently readable** — later code must not erase earlier learning material.
 4. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evals, deployment, and cost are not optional afterthoughts.
-5. **LLMs propose actions; runtimes execute actions** — model reasoning is separated from auditable execution.
+5. **LLMs propose actions; runtimes execute actions** — model decisions are separated from auditable execution.
 6. **Deterministic when possible, agentic when useful** — not every workflow needs an autonomous Agent.
+7. **Provider APIs stay behind adapters** — the core runtime should not become a collection of vendor-specific request objects.
+8. **Tests are part of the tutorial** — a serious Agent project must teach how to test runtime behavior without paying for a live model call every time.
 
 ---
 
 # Learning Path
 
-The repository is organized by **capability stages**, not by calendar days. You can learn at your own pace.
+The repository is organized by **capability stages**, not by calendar days. Learn at your own pace.
 
 ## Stage 00 — LLM & Tool-Use Foundations
 
@@ -43,7 +45,7 @@ Topics:
 
 - LLM message-based interaction;
 - model/provider boundary;
-- structured output and JSON schema;
+- structured output and JSON Schema;
 - function/tool calling;
 - tool schema vs real executable function;
 - model-generated tool call vs runtime execution;
@@ -57,8 +59,9 @@ Key materials:
 - [`Structured Output`](stages/00-foundations/theory/02-structured-output.md)
 - [`Function Calling`](stages/00-foundations/theory/03-function-calling.md)
 - [`Minimal Tool Loop`](stages/00-foundations/code/minimal_tool_loop.py)
+- [`Foundation Review Questions`](stages/00-foundations/exercises/review-questions.md)
 
-**Milestone:** you can explain why function calling itself is not yet a complete Agent and can implement a minimal tool-use loop without an Agent framework.
+**Milestone:** you can explain why function calling itself is not yet a complete Agent and implement a minimal tool-use loop without an Agent framework.
 
 ---
 
@@ -66,7 +69,7 @@ Key materials:
 
 📁 [`stages/01-react-runtime/`](stages/01-react-runtime/)
 
-**Goal:** turn tool calling into a real iterative Agent runtime.
+**Goal:** turn tool calling into a real iterative Agent runtime, then connect that runtime to a real model provider without coupling the runtime to the provider SDK.
 
 Topics:
 
@@ -75,25 +78,48 @@ Topics:
 - Agent stopping conditions;
 - provider-neutral model interfaces;
 - normalized model responses;
-- tool registry and execution layer;
+- Tool and ToolRegistry abstractions;
 - tool errors as observations;
 - maximum-step protection;
-- deterministic unit testing with fake models;
-- why production systems should not require visible chain-of-thought.
+- model provider adapters;
+- Responses API function-call protocol;
+- `call_id` correlation;
+- strict tool schemas;
+- serial tool dependencies;
+- multiple tool calls in one model turn;
+- deterministic unit testing with fake models and fake provider clients;
+- real multi-tool Agent execution.
 
-Key materials:
+Key theory:
 
 - [`ReAct and the Agent Loop`](stages/01-react-runtime/theory/01-react-and-agent-loop.md)
 - [`Runtime Architecture`](stages/01-react-runtime/theory/02-runtime-architecture.md)
-- [`Minimal ReAct Runtime`](stages/01-react-runtime/code/)
+- [`Model Provider Adapters`](stages/01-react-runtime/theory/03-model-provider-adapter.md)
+
+Educational code:
+
+- [`Minimal ReAct Runtime`](stages/01-react-runtime/code/minimal_react_runtime.py)
+- [`OpenAI Multi-Tool Agent`](stages/01-react-runtime/code/openai_multi_tool_agent.py)
+
+Exercises:
+
+- [`ReAct Runtime Review Questions`](stages/01-react-runtime/exercises/review-questions.md)
+- [`Provider Adapter Exercises`](stages/01-react-runtime/exercises/provider-adapter-exercises.md)
 
 Current evolving implementation:
 
 - [`src/tiny_agent/runtime.py`](src/tiny_agent/runtime.py)
 - [`src/tiny_agent/tool.py`](src/tiny_agent/tool.py)
 - [`src/tiny_agent/types.py`](src/tiny_agent/types.py)
+- [`src/tiny_agent/models/openai.py`](src/tiny_agent/models/openai.py)
 
-**Milestone:** you can implement and explain a framework-free Agent loop and clearly separate model decisions from runtime execution.
+Tests:
+
+- [`tests/test_runtime.py`](tests/test_runtime.py)
+- [`tests/test_openai_adapter.py`](tests/test_openai_adapter.py)
+- [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
+
+**Milestone:** you can implement and explain a framework-free Agent loop, connect it to a real model through an adapter, preserve tool-call correlation, and test both runtime and provider translation without a live API call.
 
 ---
 
@@ -121,19 +147,22 @@ Planned topics:
 
 📁 [`stages/03-stateful-orchestration/`](stages/03-stateful-orchestration/)
 
-**Goal:** move from a simple `while` loop to explicit graph/state-based orchestration.
+**Goal:** move from a simple `while` loop to explicit graph/state-based orchestration and provider-aware conversation state.
 
 Planned topics:
 
 - state machines for Agents;
 - nodes, edges, and conditional transitions;
 - explicit Agent state;
+- provider-native conversation state;
+- transcript replay vs response chaining;
+- preserving reasoning/output items where required;
 - LangGraph fundamentals;
 - persistence-ready execution;
 - streaming state updates;
 - comparing a handwritten runtime with framework orchestration.
 
-**Milestone:** rebuild the Agent workflow as an explicit state graph and understand what the framework adds over the handwritten runtime.
+**Milestone:** rebuild the Agent workflow as an explicit state graph and understand what stateful orchestration adds over the handwritten runtime.
 
 ---
 
@@ -141,7 +170,7 @@ Planned topics:
 
 📁 [`stages/04-agentic-rag/`](stages/04-agentic-rag/)
 
-**Goal:** give Agents access to external knowledge and let them decide when/how to retrieve it.
+**Goal:** give Agents access to external knowledge and let them decide when and how to retrieve it.
 
 Planned topics:
 
@@ -284,7 +313,7 @@ Planned topics:
 - PostgreSQL / Redis roles;
 - configuration and secrets;
 - Docker and Docker Compose;
-- CI tests;
+- CI and integration tests;
 - structured logging;
 - basic monitoring;
 - concurrency, rate limits, latency, and cost.
@@ -322,7 +351,11 @@ Target capabilities:
 ```text
 Tiny-Agent/
 ├── README.md
-├── stages/                         # Stable educational snapshots
+├── CONTRIBUTING.md
+├── .github/workflows/               # Continuous integration
+│   └── tests.yml
+│
+├── stages/                          # Stable educational snapshots
 │   ├── 00-foundations/
 │   ├── 01-react-runtime/
 │   ├── 02-planning-routing/
@@ -336,8 +369,13 @@ Tiny-Agent/
 │   ├── 10-production-deployment/
 │   └── 11-capstone-enterprise-agent/
 │
-├── src/tiny_agent/                 # Latest evolving Tiny-Agent runtime
-├── tests/                          # Tests for the latest implementation
+├── src/tiny_agent/                  # Latest evolving Tiny-Agent runtime
+│   ├── runtime.py
+│   ├── tool.py
+│   ├── types.py
+│   └── models/                      # Provider adapters
+│
+├── tests/                           # Tests for the latest implementation
 └── pyproject.toml
 ```
 
@@ -347,8 +385,8 @@ Each stage follows this convention whenever applicable:
 stage-name/
 ├── README.md        # goals, prerequisites, learning order, deliverables
 ├── theory/          # detailed conceptual notes in Markdown
-├── code/            # stage-specific runnable implementation snapshot
-└── exercises/       # optional exercises and interview-style questions
+├── code/            # stage-specific runnable implementation snapshots
+└── exercises/       # exercises and interview-style questions
 ```
 
 A theory-only stage is still kept as a full stage directory with Markdown material. We do not remove a stage simply because it has little or no executable code.
@@ -361,15 +399,33 @@ Follow `stages/00-foundations` → `stages/01-react-runtime` → ... in order. E
 
 ### 2. Read or contribute to the latest runtime
 
-Use [`src/tiny_agent/`](src/tiny_agent/) to inspect the latest integrated implementation. This code will evolve as later stages are completed.
+Use [`src/tiny_agent/`](src/tiny_agent/) to inspect the latest integrated implementation. This code evolves as later stages are completed.
+
+# Testing philosophy
+
+Tiny-Agent separates:
+
+```text
+Unit tests                         Live integration tests
+----------                         ----------------------
+Fake model                         Real model
+Fake provider client               Real API key
+Deterministic                      Potentially nondeterministic
+Fast / no token cost               Network + token cost
+Runtime/protocol correctness       End-to-end provider behavior
+```
+
+Basic unit tests run in GitHub Actions on pull requests. Live provider examples are kept explicit so contributors are not required to spend API credits to run the core test suite.
 
 # Current Status
 
-- ✅ Stage 00 structure and foundation materials are being added.
-- 🚧 Stage 01 ReAct runtime is the current implementation milestone.
-- 📝 Stages 02–11 have defined learning objectives and will be implemented progressively.
+- ✅ Stage 00 — foundation theory and minimal tool loop are available.
+- 🚧 Stage 01 — ReAct runtime, provider-neutral core, OpenAI Responses adapter, tests, and real multi-tool example are the current implementation milestone.
+- 📝 Stages 02–11 — learning objectives and scaffolds are defined and will be implemented progressively.
 
 # Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Tiny-Agent is intended to become a community learning project. Contributions are welcome in areas such as:
 
@@ -391,11 +447,14 @@ When adding a new capability, prefer updating both:
 
 # References
 
-Primary references will be maintained inside the relevant stage so learners can understand *why* each technique exists rather than only copying APIs.
+Primary references are maintained inside the relevant stages so learners can understand *why* each technique exists rather than only copying APIs.
 
-The ReAct stage begins with:
+Current Stage 01 references include:
 
 - ReAct: *Synergizing Reasoning and Acting in Language Models*, ICLR 2023.
+- OpenAI Function Calling documentation.
+- OpenAI Responses API / model documentation.
+- OpenAI Python SDK.
 
 ---
 
