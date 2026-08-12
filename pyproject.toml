@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
+openai = ["openai>=2,<3"]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
