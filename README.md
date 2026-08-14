@@ -4,7 +4,7 @@
 
 Tiny-Agent is an open-source, learning-first Agent engineering project for **anyone who wants to understand how modern AI Agents actually work**.
 
-This repository does not begin with a large framework or a black-box `create_agent(...)` call. Instead, it builds the Agent stack layer by layer: LLM interfaces, structured outputs, function calling, ReAct and Agent runtimes, model-provider adapters, planning, stateful orchestration, RAG, MCP, memory, human approval, reliability, evaluation, observability, multi-Agent systems, and production deployment.
+This repository does not begin with a large framework or a black-box `create_agent(...)` call. Instead, it builds the Agent stack layer by layer: LLM interfaces, structured outputs, function calling, ReAct and Agent runtimes, model-provider adapters, workflow design, routing, planning, stateful orchestration, RAG, MCP, memory, human approval, reliability, evaluation, observability, multi-Agent systems, and production deployment.
 
 The goal is not only to teach concepts, but also to show how those concepts become maintainable software.
 
@@ -28,6 +28,8 @@ Tiny-Agent is designed for:
 6. **Deterministic when possible, agentic when useful** — not every workflow needs an autonomous Agent.
 7. **Provider APIs stay behind adapters** — the core runtime should not become a collection of vendor-specific request objects.
 8. **Tests are part of the tutorial** — a serious Agent project must teach how to test runtime behavior without paying for a live model call every time.
+9. **Model output is a proposal, not authority** — routes, plans, and tool calls remain subject to application validation, policy, budgets, and permissions.
+10. **Early simplifications must be explicit** — tutorial code can be intentionally small, but its production limitations should be documented rather than hidden.
 
 ---
 
@@ -69,7 +71,7 @@ Key materials:
 
 📁 [`stages/01-react-runtime/`](stages/01-react-runtime/)
 
-**Goal:** turn tool calling into a real iterative Agent runtime, then connect that runtime to a real model provider without coupling the runtime to the provider SDK.
+**Goal:** turn tool calling into a real iterative Agent runtime, connect it to a real model provider without coupling the runtime to the provider SDK, and understand where the minimal teaching runtime stops being production-ready.
 
 Topics:
 
@@ -87,14 +89,17 @@ Topics:
 - strict tool schemas;
 - serial tool dependencies;
 - multiple tool calls in one model turn;
+- multiple calls vs physical concurrent execution;
 - deterministic unit testing with fake models and fake provider clients;
-- real multi-tool Agent execution.
+- real multi-tool Agent execution;
+- explicit production limitations: validation, error redaction, retries, timeouts, permissions, state, tracing, and evaluation.
 
 Key theory:
 
 - [`ReAct and the Agent Loop`](stages/01-react-runtime/theory/01-react-and-agent-loop.md)
 - [`Runtime Architecture`](stages/01-react-runtime/theory/02-runtime-architecture.md)
 - [`Model Provider Adapters`](stages/01-react-runtime/theory/03-model-provider-adapter.md)
+- [`Scope and Production Limitations`](stages/01-react-runtime/theory/04-scope-and-production-limitations.md)
 
 Educational code:
 
@@ -116,10 +121,12 @@ Current evolving implementation:
 Tests:
 
 - [`tests/test_runtime.py`](tests/test_runtime.py)
+- [`tests/test_runtime_edges.py`](tests/test_runtime_edges.py)
 - [`tests/test_openai_adapter.py`](tests/test_openai_adapter.py)
+- [`tests/test_openai_adapter_edges.py`](tests/test_openai_adapter_edges.py)
 - [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
 
-**Milestone:** you can implement and explain a framework-free Agent loop, connect it to a real model through an adapter, preserve tool-call correlation, and test both runtime and provider translation without a live API call.
+**Milestone:** you can implement and explain a framework-free Agent loop, connect it to a real model through an adapter, preserve tool-call correlation, test runtime/protocol boundaries without a live API call, and explain which parts are deliberate teaching simplifications rather than production guarantees.
 
 ---
 
@@ -127,19 +134,65 @@ Tests:
 
 📁 [`stages/02-planning-routing/`](stages/02-planning-routing/)
 
-**Goal:** learn when to use dynamic Agent decisions and when to use explicit workflows.
+**Goal:** learn how much autonomy a task actually needs, keep predictable control flow in software, and introduce model-driven routing/planning only where semantic judgment adds value.
 
-Planned topics:
+Core questions:
 
-- task decomposition;
-- ReAct vs Plan-and-Execute;
-- router patterns;
-- planner/executor separation;
-- deterministic workflow vs autonomous Agent;
-- replanning;
-- step budgets and plan validation.
+- What is the real control-flow difference between a Workflow and an Agent?
+- When is one LLM call enough?
+- When should routing be a deterministic rule?
+- When does semantic routing justify an LLM call?
+- Why should a Router choose a destination but not own arbitrary dispatch?
+- What does explicit planning add over local ReAct decisions?
+- Why is a Plan a bounded proposal rather than ground truth?
+- When should observations trigger replanning?
+- Why must `max_plan_steps`, `max_total_steps`, and `max_replans` be application-owned budgets?
+- How can a Stage 01 ReAct Agent become a scoped Executor inside a larger workflow?
 
-**Milestone:** build a small research workflow that can route, plan, execute, and re-plan without turning every step into an LLM decision.
+Key theory:
+
+- [`Agent vs Workflow`](stages/02-planning-routing/theory/01-agent-vs-workflow.md)
+- [`Routing Patterns`](stages/02-planning-routing/theory/02-routing-patterns.md)
+- [`Planning and Replanning`](stages/02-planning-routing/theory/03-planning-and-replanning.md)
+- [`Planner–Executor`](stages/02-planning-routing/theory/04-planner-executor.md)
+
+Educational code:
+
+- [`Deterministic Router`](stages/02-planning-routing/code/deterministic_router.py) — no API key required
+- [`OpenAI Semantic Router`](stages/02-planning-routing/code/openai_router.py) — schema-constrained route selection
+- [`Planner + ReAct Executor`](stages/02-planning-routing/code/planner_executor_agent.py) — Stage 02 orchestration composed with the Stage 01 runtime
+- [`Bounded Replanning`](stages/02-planning-routing/code/bounded_replanning.py) — deterministic failure/recovery example, no API key required
+
+Current evolving implementation:
+
+- [`src/tiny_agent/decision.py`](src/tiny_agent/decision.py) — provider-neutral structured control decisions
+- [`src/tiny_agent/models/openai_structured.py`](src/tiny_agent/models/openai_structured.py) — Responses API JSON-Schema decisions
+- [`src/tiny_agent/workflows.py`](src/tiny_agent/workflows.py) — rule routing, LLM routing, planner, replanner, and bounded workflow execution
+
+Tests:
+
+- [`tests/test_structured_decision.py`](tests/test_structured_decision.py)
+- [`tests/test_workflows.py`](tests/test_workflows.py)
+- [`tests/test_workflow_budgets.py`](tests/test_workflow_budgets.py)
+- [`tests/test_workflow_safety.py`](tests/test_workflow_safety.py)
+
+Exercises:
+
+- [`Stage 02 Review Questions and Coding Exercises`](stages/02-planning-routing/exercises/review-questions.md)
+
+The central architecture principle is:
+
+```text
+model proposes route / plan / next action
+            |
+            v
+application validates and governs
+            |
+            v
+explicit workflow executes
+```
+
+**Milestone:** you can choose between deterministic workflow, routing, Planner–Executor, bounded replanning, and a ReAct Agent based on task uncertainty rather than architectural fashion. You can also build a structured Planner whose local Executor is itself a Stage 01 Agent.
 
 ---
 
@@ -147,7 +200,7 @@ Planned topics:
 
 📁 [`stages/03-stateful-orchestration/`](stages/03-stateful-orchestration/)
 
-**Goal:** move from a simple `while` loop to explicit graph/state-based orchestration and provider-aware conversation state.
+**Goal:** move from simple Python loops to explicit graph/state-based orchestration and provider-aware conversation state.
 
 Planned topics:
 
@@ -160,9 +213,9 @@ Planned topics:
 - LangGraph fundamentals;
 - persistence-ready execution;
 - streaming state updates;
-- comparing a handwritten runtime with framework orchestration.
+- comparing handwritten orchestration with framework orchestration.
 
-**Milestone:** rebuild the Agent workflow as an explicit state graph and understand what stateful orchestration adds over the handwritten runtime.
+**Milestone:** rebuild existing Tiny-Agent patterns as explicit state graphs and understand what the framework adds over ordinary Python control flow.
 
 ---
 
@@ -237,7 +290,8 @@ Planned topics:
 
 Planned topics:
 
-- invalid tool arguments;
+- local tool argument validation;
+- error classification and safe model-facing failures;
 - retries and retryable errors;
 - timeout and cancellation;
 - fallback tools/models;
@@ -264,6 +318,8 @@ Planned topics:
 - traces and spans;
 - tool-call trajectories;
 - task-success evaluation;
+- routing accuracy;
+- plan quality and unnecessary-step analysis;
 - tool-selection accuracy;
 - argument accuracy;
 - retrieval metrics;
@@ -308,6 +364,7 @@ Planned topics:
 
 - FastAPI service boundaries;
 - async execution;
+- concurrent tool execution;
 - streaming responses;
 - task/session APIs;
 - PostgreSQL / Redis roles;
@@ -369,13 +426,17 @@ Tiny-Agent/
 │   ├── 10-production-deployment/
 │   └── 11-capstone-enterprise-agent/
 │
-├── src/tiny_agent/                  # Latest evolving Tiny-Agent runtime
-│   ├── runtime.py
+├── src/tiny_agent/                  # Latest evolving Tiny-Agent implementation
+│   ├── decision.py                  # Structured routing/planning decisions
+│   ├── runtime.py                   # ReAct Agent loop
 │   ├── tool.py
 │   ├── types.py
+│   ├── workflows.py                 # Routing and Planner–Executor workflows
 │   └── models/                      # Provider adapters
+│       ├── openai.py
+│       └── openai_structured.py
 │
-├── tests/                           # Tests for the latest implementation
+├── tests/                           # Deterministic unit tests
 └── pyproject.toml
 ```
 
@@ -395,9 +456,9 @@ A theory-only stage is still kept as a full stage directory with Markdown materi
 
 ### 1. Learn progressively
 
-Follow `stages/00-foundations` → `stages/01-react-runtime` → ... in order. Each stage preserves the simplest implementation that teaches that concept.
+Follow `stages/00-foundations` → `stages/01-react-runtime` → `stages/02-planning-routing` → ... in order. Each stage preserves the simplest implementation that teaches that concept.
 
-### 2. Read or contribute to the latest runtime
+### 2. Read or contribute to the latest implementation
 
 Use [`src/tiny_agent/`](src/tiny_agent/) to inspect the latest integrated implementation. This code evolves as later stages are completed.
 
@@ -417,11 +478,14 @@ Runtime/protocol correctness       End-to-end provider behavior
 
 Basic unit tests run in GitHub Actions on pull requests. Live provider examples are kept explicit so contributors are not required to spend API credits to run the core test suite.
 
+The unit suite increasingly tests **failure boundaries**, not only successful demos: stopping budgets, malformed provider data, plan validation, safe failure propagation, and invalid control decisions are treated as first-class learning material.
+
 # Current Status
 
-- ✅ Stage 00 — foundation theory and minimal tool loop are available.
-- 🚧 Stage 01 — ReAct runtime, provider-neutral core, OpenAI Responses adapter, tests, and real multi-tool example are the current implementation milestone.
-- 📝 Stages 02–11 — learning objectives and scaffolds are defined and will be implemented progressively.
+- ✅ Stage 00 — LLM/tool-use foundations and minimal tool loop.
+- ✅ Stage 01 — ReAct runtime, provider-neutral core, OpenAI Responses adapter, edge-case tests, real multi-tool example, and explicit production-limitations chapter.
+- 🚧 Stage 02 — workflow vs Agent, deterministic/LLM routing, structured planning, Planner–Executor, bounded replanning, tests, and runnable examples are under active review.
+- 📝 Stages 03–11 — learning objectives and scaffolds are defined and will be implemented progressively.
 
 # Contributing
 
@@ -432,7 +496,7 @@ Tiny-Agent is intended to become a community learning project. Contributions are
 - clearer explanations;
 - additional runnable examples;
 - exercises and interview questions;
-- tests;
+- tests and edge cases;
 - bug fixes;
 - diagrams;
 - provider adapters;
@@ -443,18 +507,19 @@ Tiny-Agent is intended to become a community learning project. Contributions are
 When adding a new capability, prefer updating both:
 
 1. the corresponding educational stage under `stages/`; and
-2. the latest implementation under `src/tiny_agent/` when the capability belongs in the runtime.
+2. the latest implementation under `src/tiny_agent/` when the capability belongs in the reusable runtime/orchestration layer.
 
 # References
 
 Primary references are maintained inside the relevant stages so learners can understand *why* each technique exists rather than only copying APIs.
 
-Current Stage 01 references include:
+Current reference families include:
 
 - ReAct: *Synergizing Reasoning and Acting in Language Models*, ICLR 2023.
-- OpenAI Function Calling documentation.
-- OpenAI Responses API / model documentation.
-- OpenAI Python SDK.
+- OpenAI Function Calling, Responses API, Structured Outputs, and current model documentation.
+- Anthropic, *Building Effective Agents*.
+- LangGraph workflow/agent documentation.
+- LLM-Agent planning research and surveys where relevant.
 
 ---
 
