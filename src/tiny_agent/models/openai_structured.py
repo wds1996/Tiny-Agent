@@ -4,6 +4,14 @@ import json
 from typing import Any, Literal
 
 
+class StructuredDecisionRefusal(RuntimeError):
+    """The provider refused to produce the requested structured decision."""
+
+
+class StructuredDecisionIncomplete(RuntimeError):
+    """The provider stopped before the structured decision completed."""
+
+
 class OpenAIStructuredDecisionModel:
     """OpenAI Responses adapter for schema-constrained control decisions.
 
@@ -68,6 +76,20 @@ class OpenAIStructuredDecisionModel:
             request["instructions"] = instructions
 
         response = self.client.responses.create(**request)
+
+        # A safety refusal is a first-class provider outcome, not malformed JSON.
+        refusal = self._extract_refusal(response)
+        if refusal is not None:
+            raise StructuredDecisionRefusal(refusal)
+
+        # Responses can also stop before a complete structured value is produced.
+        if getattr(response, "status", None) == "incomplete":
+            details = getattr(response, "incomplete_details", None)
+            reason = getattr(details, "reason", None) or "unknown"
+            raise StructuredDecisionIncomplete(
+                f"Structured decision response was incomplete: {reason}"
+            )
+
         raw = getattr(response, "output_text", None)
         if raw is None or not str(raw).strip():
             raise RuntimeError("Structured decision response contained no output text")
@@ -86,3 +108,14 @@ class OpenAIStructuredDecisionModel:
             )
 
         return value
+
+    @staticmethod
+    def _extract_refusal(response: Any) -> str | None:
+        for output in getattr(response, "output", []) or []:
+            if getattr(output, "type", None) != "message":
+                continue
+            for item in getattr(output, "content", []) or []:
+                if getattr(item, "type", None) == "refusal":
+                    refusal = getattr(item, "refusal", None)
+                    return str(refusal or "The model refused the structured request.")
+        return None
