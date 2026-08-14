@@ -131,6 +131,15 @@ class RoutingWorkflow:
 # ---------------------------------------------------------------------------
 
 
+class StepFailure(RuntimeError):
+    """Expected executor failure whose message is safe to expose to a replanner.
+
+    Unexpected exceptions are intentionally reduced to their exception type before
+    entering control-plane state. This prevents arbitrary internal exception text
+    from being copied into a model-backed replanner prompt.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class PlanStep:
     id: str
@@ -330,11 +339,19 @@ class PlanExecutorWorkflow:
                         success=True,
                         output=str(output),
                     )
-                except Exception as exc:
+                except StepFailure as exc:
                     result = StepResult(
                         step=step,
                         success=False,
-                        error=f"{type(exc).__name__}: {exc}",
+                        error=f"StepFailure: {exc}",
+                    )
+                except Exception as exc:
+                    # Unexpected details stay outside the model-facing workflow state.
+                    # A production observability layer should record the full exception.
+                    result = StepResult(
+                        step=step,
+                        success=False,
+                        error=type(exc).__name__,
                     )
 
                 results.append(result)
