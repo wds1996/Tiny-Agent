@@ -50,7 +50,8 @@ After this stage, you should be able to:
 11. distinguish serial tool dependencies from multiple independent tool calls;
 12. enforce a maximum-step stopping condition;
 13. unit-test the runtime and provider adapter without a live LLM;
-14. run the same provider-neutral runtime with a real OpenAI model.
+14. run the same provider-neutral runtime with a real OpenAI model;
+15. distinguish Stage 01 architectural principles from deliberate teaching simplifications.
 
 ## Recommended order
 
@@ -67,11 +68,17 @@ After this stage, you should be able to:
 6. [`../../tests/test_openai_adapter.py`](../../tests/test_openai_adapter.py)
 7. [`code/openai_multi_tool_agent.py`](code/openai_multi_tool_agent.py)
 
-### Part C — Review and extend
+### Part C — Understand the boundaries
 
-8. Read the integrated implementation under [`../../src/tiny_agent/`](../../src/tiny_agent/)
-9. [`exercises/review-questions.md`](exercises/review-questions.md)
-10. [`exercises/provider-adapter-exercises.md`](exercises/provider-adapter-exercises.md)
+8. [`theory/04-scope-and-production-limitations.md`](theory/04-scope-and-production-limitations.md)
+9. [`../../tests/test_runtime_edges.py`](../../tests/test_runtime_edges.py)
+10. [`../../tests/test_openai_adapter_edges.py`](../../tests/test_openai_adapter_edges.py)
+
+### Part D — Review and extend
+
+11. Read the integrated implementation under [`../../src/tiny_agent/`](../../src/tiny_agent/)
+12. [`exercises/review-questions.md`](exercises/review-questions.md)
+13. [`exercises/provider-adapter-exercises.md`](exercises/provider-adapter-exercises.md)
 
 ## Stage architecture
 
@@ -180,7 +187,9 @@ The reusable implementation is split across:
 - [`../../src/tiny_agent/runtime.py`](../../src/tiny_agent/runtime.py)
 - [`../../src/tiny_agent/models/openai.py`](../../src/tiny_agent/models/openai.py)
 - [`../../tests/test_runtime.py`](../../tests/test_runtime.py)
+- [`../../tests/test_runtime_edges.py`](../../tests/test_runtime_edges.py)
 - [`../../tests/test_openai_adapter.py`](../../tests/test_openai_adapter.py)
+- [`../../tests/test_openai_adapter_edges.py`](../../tests/test_openai_adapter_edges.py)
 
 The stage snapshot and `src/` serve different purposes: the stage code teaches the smallest version of a concept, while `src/` continues evolving with later stages.
 
@@ -204,7 +213,13 @@ Run:
 python stages/01-react-runtime/code/openai_multi_tool_agent.py
 ```
 
-The teaching example defaults to `gpt-5.6-luna` with reasoning effort `none` so the stage can focus on a transparent, stateless provider-adapter boundary. Later stages will introduce native conversation state and persisted reasoning deliberately.
+The teaching example defaults to `gpt-5.6-luna` with reasoning effort `none` so the stage can focus on a transparent, stateless provider-adapter boundary. Later stages introduce native conversation state and persisted reasoning deliberately.
+
+## Important: this is not yet a production runtime
+
+Before moving on, read [`theory/04-scope-and-production-limitations.md`](theory/04-scope-and-production-limitations.md).
+
+In particular, Stage 01 does **not** yet provide local JSON-Schema validation, safe error redaction, real concurrent tool execution, retries, timeouts, permissions, checkpoints, tracing, or evaluation. These omissions are deliberate and are addressed in later stages rather than hidden from learners.
 
 ## Completion checkpoint
 
@@ -226,3 +241,5 @@ Tool schema
   -> provider function_call_output
   -> next model decision
 ```
+
+Finally, you should be able to explain why the same early implementation can be *conceptually correct* while still being *intentionally incomplete for production*.
