@@ -29,7 +29,6 @@ if __name__ == "__main__":
                     "id": "call_mul",
                     "name": "multiply",
                     "args": {"a": 6, "b": 7},
-                    "type": "tool_call",
                 }
             ],
         ),
@@ -39,6 +38,9 @@ if __name__ == "__main__":
     print("LangChain messages:")
     for message in messages:
         print(type(message).__name__, message.content)
+
+    print("\nTool call correlation:")
+    print(messages[-1].tool_call_id)
 
     print("\nTool name:")
     print(multiply.name)
