@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  pytest:
+  core-pytest:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -22,10 +22,40 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install project
+      - name: Install core test dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Run tests
-        run: pytest -q
+      - name: Run core tests
+        run: |
+          pytest -q \
+            --ignore=tests/test_langgraph_runtime.py \
+            --ignore=tests/test_stage03_frameworks.py
+
+  stage03-framework-pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Stage 03 dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,stage03]"
+
+      - name: Run Stage 03 framework tests
+        run: |
+          pytest -q \
+            tests/test_langgraph_runtime.py \
+            tests/test_stage03_frameworks.py
