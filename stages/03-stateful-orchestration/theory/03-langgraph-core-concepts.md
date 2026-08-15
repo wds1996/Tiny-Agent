@@ -18,6 +18,37 @@ invoke                        compiled_graph.invoke()
 
 ---
 
+## Before you read this chapter
+
+If `StateGraph`, nodes, edges, reducers, and checkpoints are completely new terms, do not rely on this chapter alone. Use the following resources alongside Tiny-Agent:
+
+**Official references**
+
+- [LangGraph Overview](https://docs.langchain.com/oss/python/langgraph/overview) — the current official definition and framework scope.
+- [LangGraph Quickstart](https://docs.langchain.com/oss/python/langgraph/quickstart) — a compact runnable introduction.
+- [Graph API Overview](https://docs.langchain.com/oss/python/langgraph/graph-api) — the primary API reference for State, Nodes, Edges, reducers, and graph construction.
+- [LangGraph Essentials — Python](https://academy.langchain.com/courses/langgraph-essentials-python) — free official guided course.
+- [LangGraph 101](https://github.com/langchain-ai/langgraph-101) — official workshop-style runnable examples.
+
+**Chinese companion tutorial**
+
+- [Dive into LangGraph — LangGraph 1.0 完全指南](https://www.luochang.ink/dive-into-langgraph/) — recommended for Chinese readers. Its **快速入门** and **状态图** chapters pair especially well with this chapter.
+
+Recommended order for a beginner:
+
+```text
+Tiny-Agent handwritten state graph
+    -> LangGraph official Overview
+    -> this chapter
+    -> official Graph API / Quickstart
+    -> Tiny-Agent LangGraph examples
+    -> Dive into LangGraph for additional practice
+```
+
+Framework APIs evolve quickly. Use community tutorials for explanation and practice, but use the current official documentation as the source of truth when APIs disagree.
+
+---
+
 ## 1. What LangGraph is
 
 LangGraph is a low-level orchestration framework/runtime for long-running,

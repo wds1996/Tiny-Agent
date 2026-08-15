@@ -18,6 +18,32 @@ Current LangChain agents are themselves built on LangGraph, which is another rea
 
 ---
 
+## Recommended companion resources
+
+If this is your first time seeing LangChain, it helps to read one short official overview before continuing:
+
+- [LangChain Overview](https://docs.langchain.com/oss/python/langchain/overview) — current framework positioning and ecosystem layering.
+- [LangChain Quickstart](https://docs.langchain.com/oss/python/langchain/quickstart) — shows the current high-level `create_agent()` workflow.
+- [LangChain Agents](https://docs.langchain.com/oss/python/langchain/agents) — explains the high-level Agent abstraction and its graph-based execution model.
+- [LangChain Messages](https://docs.langchain.com/oss/python/langchain/messages) — use this beside the message examples in this chapter.
+- [LangChain Tools](https://docs.langchain.com/oss/python/langchain/tools) — use this beside the `@tool` example.
+- [LangChain Essentials — Python](https://academy.langchain.com/courses/langchain-essentials-python) — free official guided course covering agents, messages, tools, streaming, MCP, memory, structured output, and HITL.
+
+For LangGraph-specific material, use:
+
+- [LangGraph Overview](https://docs.langchain.com/oss/python/langgraph/overview)
+- [Graph API Overview](https://docs.langchain.com/oss/python/langgraph/graph-api)
+- [LangGraph Essentials — Python](https://academy.langchain.com/courses/langgraph-essentials-python)
+- [Dive into LangGraph — LangGraph 1.0 完全指南](https://www.luochang.ink/dive-into-langgraph/) — recommended Chinese companion tutorial.
+
+Do not try to memorize both frameworks at once. First answer this question for every abstraction you see:
+
+> Is this component describing an LLM/application primitive, or is it controlling stateful execution?
+
+That question makes the rest of this chapter much easier to follow.
+
+---
+
 ## 1. What LangChain gives you
 
 LangChain provides standardized abstractions around common LLM application components.
