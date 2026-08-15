@@ -156,6 +156,88 @@ langchain >= 1.3, < 2
 
 ---
 
+# External learning resources
+
+Tiny-Agent explains the mechanisms from first principles, but a beginner should not be expected to learn an evolving framework from one repository alone. The resources below are intentionally curated rather than exhaustive.
+
+A useful rule is:
+
+```text
+Tiny-Agent
+    -> understand why the abstraction exists
+
+Official documentation
+    -> confirm the current API and framework semantics
+
+Official courses / notebooks
+    -> gain repetition through guided practice
+
+Community tutorials
+    -> get an alternative explanation in a familiar language
+```
+
+## LangGraph — start here
+
+### Official documentation
+
+- [LangGraph Overview](https://docs.langchain.com/oss/python/langgraph/overview) — read this first for the current official positioning of LangGraph and the capabilities it owns.
+- [LangGraph Quickstart](https://docs.langchain.com/oss/python/langgraph/quickstart) — a compact end-to-end example using the current APIs.
+- [Graph API Overview](https://docs.langchain.com/oss/python/langgraph/graph-api) — the most relevant reference for this stage: State, Nodes, Edges, reducers, graph construction, and execution.
+- [Persistence](https://docs.langchain.com/oss/python/langgraph/persistence) — use alongside chapter 06 when learning checkpoints and `thread_id`.
+- [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) — use alongside chapter 06 for human-in-the-loop pause/resume semantics.
+
+### Official hands-on material
+
+- [LangGraph Essentials — Python, LangChain Academy](https://academy.langchain.com/courses/langgraph-essentials-python) — a short official course covering Nodes, Edges, Conditional Edges, Memory, and Interrupt/HITL.
+- [LangChain Academy — Introduction to LangGraph notebooks](https://github.com/langchain-ai/langchain-academy) — longer notebook-based material maintained by the LangChain team.
+- [LangGraph 101](https://github.com/langchain-ai/langgraph-101) — a condensed official workshop-style repository for learning LangChain/LangGraph fundamentals through runnable examples.
+
+### High-quality Chinese tutorial
+
+- [Dive into LangGraph — LangGraph 1.0 完全指南](https://www.luochang.ink/dive-into-langgraph/) — recommended Chinese companion tutorial. It uses runnable notebooks and covers StateGraph, HITL, memory, context engineering, parallelism, RAG, MCP, multi-agent patterns, and debugging. Read its **快速入门** and **状态图** chapters while working through Part B of Tiny-Agent; keep the later chapters for the corresponding future Tiny-Agent stages.
+
+> Community tutorials are useful for explanation and practice, but framework APIs change quickly. If a community example conflicts with current official documentation or Tiny-Agent's tested dependency range, treat the official documentation as the source of truth.
+
+## LangChain — start here
+
+### Official documentation
+
+- [LangChain Overview](https://docs.langchain.com/oss/python/langchain/overview) — explains the current role of LangChain and how it relates to LangGraph.
+- [LangChain Quickstart](https://docs.langchain.com/oss/python/langchain/quickstart) — useful after Stage 00–03 because you can now recognize what `create_agent()` is abstracting.
+- [Agents](https://docs.langchain.com/oss/python/langchain/agents) — current high-level Agent API and its graph-based runtime model.
+- [Messages](https://docs.langchain.com/oss/python/langchain/messages) — read beside `langchain_component_examples.py` to understand standardized message objects.
+- [Tools](https://docs.langchain.com/oss/python/langchain/tools) — read beside the Tiny-Agent `Tool` abstraction and LangChain `@tool` example.
+
+### Official hands-on material
+
+- [LangChain Essentials — Python, LangChain Academy](https://academy.langchain.com/courses/langchain-essentials-python) — a free official course covering agents, models/messages, streaming, tools, MCP, memory, structured output, dynamic prompts, and HITL.
+
+## Suggested reading path for a complete beginner
+
+Do **not** try to finish all external material before continuing Tiny-Agent. Use it as just-in-time support:
+
+```text
+1. Tiny-Agent 01/02 theory
+2. Tiny-Agent Stage 03 chapters 01-02
+3. LangGraph official Overview
+4. Tiny-Agent handwritten_state_graph.py
+5. LangGraph Graph API + Quickstart
+6. Tiny-Agent langgraph_state_graph.py
+7. Dive into LangGraph: 快速入门 + 状态图
+8. Tiny-Agent LangChain vs LangGraph chapter
+9. LangChain Overview + Messages + Tools
+10. LangGraph Essentials / LangChain Essentials courses for reinforcement
+11. Tiny-Agent persistence / interrupt chapter
+12. Official Persistence + Interrupt docs
+```
+
+This order prevents two common failure modes:
+
+- reading a large framework manual before understanding the underlying problem;
+- copying a framework tutorial successfully without understanding what the runtime is doing.
+
+---
+
 # Stage architecture
 
 The LangGraph ReAct example rebuilds Stage 01 as:
