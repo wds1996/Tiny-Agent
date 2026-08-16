@@ -16,6 +16,12 @@ stage03 = [
     "langgraph>=1.2,<2",
     "langchain>=1.3,<2",
 ]
+stage04 = [
+    "numpy>=1.26",
+    "faiss-cpu>=1.9,<2",
+    "qdrant-client>=1.14,<2",
+    "langchain>=1.3,<2",
+]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
