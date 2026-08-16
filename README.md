@@ -2,7 +2,7 @@
 
 > Learn AI Agents by building one from first principles to production.
 
-Tiny-Agent is a public, learning-first Agent engineering project for **anyone who wants to understand how modern AI Agents actually work**.
+Tiny-Agent is an open-source, learning-first Agent engineering project for **anyone who wants to understand how modern AI Agents actually work**.
 
 The repository does not begin with a black-box framework call. It builds the stack progressively:
 
@@ -268,6 +268,7 @@ Important failure boundaries are tested explicitly:
 ```text
 Tiny-Agent/
 ├── README.md
+├── LICENSE
 ├── CONTRIBUTING.md
 ├── docs/
 │   └── framework-and-tooling-map.md
@@ -310,19 +311,13 @@ Tiny-Agent/
 
 ---
 
-# License status
+# License
 
-Tiny-Agent is intended to become an explicitly licensed open-source learning project, but the repository **does not yet contain a `LICENSE` file**.
+Tiny-Agent is open-source software released under the **MIT License**.
 
-A public GitHub repository is readable, but public visibility alone should not be treated as an open-source reuse license.
+Copyright (c) 2026 wds1996.
 
-The maintainer license decision is tracked in:
-
-- [Issue #5 — Choose and add an explicit open-source license](https://github.com/wds1996/Tiny-Agent/issues/5)
-
-Until that issue is resolved and a canonical license file is added, do not assume permissions beyond the terms that already apply to the repository hosting/service.
-
-This notice is deliberately explicit because licensing is a maintainer/legal decision and should not be guessed by an automated contributor.
+See [`LICENSE`](LICENSE) for the full license text.
 
 ---
 
