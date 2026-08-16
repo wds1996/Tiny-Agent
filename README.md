@@ -2,7 +2,7 @@
 
 > Learn AI Agents by building one from first principles to production.
 
-Tiny-Agent is an open-source, learning-first Agent engineering project for **anyone who wants to understand how modern AI Agents actually work**.
+Tiny-Agent is a public, learning-first Agent engineering project for **anyone who wants to understand how modern AI Agents actually work**.
 
 The repository does not begin with a black-box framework call. It builds the stack progressively:
 
@@ -13,7 +13,7 @@ LLM interfaces
     -> provider adapters
     -> workflow / routing / planning
     -> explicit state / LangGraph
-    -> RAG / vector databases
+    -> RAG / vector databases / Agentic retrieval
     -> MCP
     -> memory / HITL
     -> reliability / safety
@@ -32,12 +32,13 @@ The goal is not only to make examples run. The goal is to understand **why each 
 2. **Theory and code stay together** — each capability stage contains conceptual notes, runnable examples, tests, and exercises where applicable.
 3. **Educational snapshots are preserved** — later framework code does not erase earlier handwritten implementations.
 4. **Deterministic when possible, agentic when useful** — autonomy is added only where uncertainty justifies it.
-5. **Model output is a proposal, not authority** — routes, plans, tool calls, and actions remain subject to application validation and policy.
-6. **Runtimes own execution** — LLMs can propose actions; application/runtime code governs execution, observations, budgets, and stopping.
+5. **Model output is a proposal, not authority** — routes, plans, tool calls, retrieval queries, and actions remain subject to application validation and policy.
+6. **Runtimes own execution** — LLMs can propose actions; application/runtime code governs execution, observations, budgets, stopping, and data access.
 7. **State is explicit when orchestration demands it** — complex branching, persistence, interruption, and resumption should not be hidden in local variables.
-8. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, and deployment are not optional afterthoughts.
-9. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, and state-transition errors are first-class test cases.
-10. **Tutorial simplifications are documented** — beginner code may be intentionally small, but its production limitations must be explicit.
+8. **External evidence is not authority** — retrieved documents are data, not trusted system instructions.
+9. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, and deployment are not optional afterthoughts.
+10. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, and state-transition errors are first-class test cases.
+11. **Tutorial simplifications are documented** — beginner code may be intentionally small, but its production limitations must be explicit.
 
 ---
 
@@ -59,7 +60,7 @@ Typical stage structure:
 
 ```text
 stage-name/
-├── README.md        # learning order, goals, milestone
+├── README.md        # learning order, goals, milestone, external resources
 ├── theory/          # detailed conceptual notes
 ├── code/            # runnable teaching examples
 └── exercises/       # review/coding/interview questions
@@ -77,7 +78,7 @@ The project is organized by **capability**, not by calendar day or framework nam
 | [01 — ReAct Runtime](stages/01-react-runtime/) | ReAct, Tool Registry, runtime loop, provider adapter | Build and test a provider-neutral tool-using Agent runtime |
 | [02 — Planning & Routing](stages/02-planning-routing/) | Workflow vs Agent, Router, Planner–Executor, bounded replanning | Choose the least dynamic architecture that solves a task |
 | [03 — Stateful Orchestration](stages/03-stateful-orchestration/) | Explicit state, state machines, LangGraph, LangChain components, checkpoint/interrupt | Rebuild existing Agent/workflow patterns as inspectable state graphs |
-| [04 — Agentic RAG](stages/04-agentic-rag/) | Chunking, embeddings, FAISS, Qdrant, retrieval/reranking | Build evidence-grounded Agentic retrieval |
+| [04 — Agentic RAG](stages/04-agentic-rag/) | Chunking, embeddings, FAISS, Qdrant, retrievers, reranking, grounded Agentic retrieval | Build a bounded evidence-grounded retrieval Agent |
 | [05 — MCP](stages/05-mcp/) | MCP host/client/server, tools/resources/prompts | Build and consume a custom MCP server |
 | [06 — Memory / Persistence / HITL](stages/06-memory-persistence-hitl/) | session state, long-term memory, durable persistence, human approval | Pause/resume stateful Agents with deliberate memory policies |
 | [07 — Reliability & Safety](stages/07-reliability-safety/) | validation, retry, timeout, budgets, permissions, injection defense | Build a guarded runtime that fails predictably |
@@ -90,15 +91,11 @@ For the framework/infrastructure mapping, see:
 
 **[Framework & Tooling Map](docs/framework-and-tooling-map.md)**
 
-This explains where LangChain, LangGraph, FAISS, Qdrant, MCP, LangSmith, FastAPI, PostgreSQL, Redis, Docker, and related tools enter the curriculum.
-
 ---
 
 # Current implemented stages
 
 ## ✅ Stage 00 — LLM & Tool-Use Foundations
-
-Available now:
 
 - message-based LLM interaction;
 - provider boundary;
@@ -109,8 +106,6 @@ Available now:
 - review questions.
 
 ## ✅ Stage 01 — ReAct & Core Agent Runtime
-
-Available now:
 
 - explicit ReAct feedback loop;
 - normalized `ToolCall` / `ModelResponse`;
@@ -124,8 +119,6 @@ Available now:
 
 ## ✅ Stage 02 — Planning, Routing & Deterministic Workflows
 
-Available now:
-
 - Workflow vs Agent decision framework;
 - deterministic and semantic routing;
 - schema-constrained control decisions;
@@ -138,30 +131,45 @@ Available now:
 
 ## ✅ Stage 03 — Stateful Orchestration
 
-Available in the current Stage 03 implementation:
-
 - explicit state and state-machine theory;
 - handwritten `TinyStateGraph`;
 - nodes, edges, conditional edges, cycles, START/END;
 - LangGraph `StateGraph` fundamentals;
 - LangGraph rebuild of the Stage 01 ReAct loop;
 - graph version of Stage 02 Planner–Executor recovery;
-- `stream()` state updates;
+- streaming state updates;
 - checkpointing with `InMemorySaver` for teaching/testing;
 - `interrupt()` / `Command(resume=...)` fundamentals;
 - LangChain messages and tool abstractions;
-- LangChain vs LangGraph comparison;
+- curated official/community learning resources;
 - dedicated framework compatibility tests.
 
-Stages 04–11 currently contain roadmap scaffolds and will be implemented progressively.
+## ✅ Stage 04 — RAG & Agentic Retrieval
+
+Available in the current Stage 04 implementation:
+
+- RAG fundamentals and fixed two-step RAG;
+- chunking, overlap, metadata, and provider-neutral embedding interfaces;
+- deterministic offline `HashEmbeddingModel` for teaching/tests;
+- cosine similarity and exact brute-force top-k retrieval;
+- FAISS `IndexFlatIP` adapter with normalized-vector cosine ranking;
+- Qdrant local-mode adapter with collections, payloads, and metadata filtering;
+- LangChain `BaseRetriever` adapter;
+- candidate retrieval vs reranking and hybrid-retrieval theory;
+- bounded Agentic RAG retrieval decisions;
+- one-or-more controlled query rewrites through `max_rewrites`;
+- evidence-sufficiency checks and explicit abstention;
+- retrieval metrics such as Recall@k and MRR;
+- deterministic tests plus optional-backend compatibility tests;
+- official FAISS/Qdrant/LangChain references and the original RAG paper.
+
+Stages 05–11 currently contain roadmap scaffolds and will be implemented progressively.
 
 ---
 
 # Framework learning strategy
 
 Frameworks are introduced **after** the underlying mechanism.
-
-Examples:
 
 ```text
 Python while-loop Agent
@@ -171,10 +179,12 @@ Python while-loop Agent
 ```
 
 ```text
-raw embeddings / similarity
+chunk / vector / cosine from first principles
+    -> brute-force Retriever
     -> FAISS local index
     -> Qdrant vector database
-    -> LangChain retriever integrations
+    -> LangChain Retriever adapter
+    -> Agentic RAG
 ```
 
 ```text
@@ -192,61 +202,64 @@ This prevents the project from becoming a collection of framework API recipes.
 Clone the repository and install the lightweight core development environment:
 
 ```bash
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
 pytest -q
 ```
 
 ## OpenAI examples
 
 ```bash
-pip install -e ".[openai]"
+python -m pip install -e ".[openai]"
 export OPENAI_API_KEY="your-key"
 ```
 
 ## Stage 03 LangGraph / LangChain examples
 
 ```bash
-pip install -e ".[stage03]"
+python -m pip install -e ".[stage03]"
 ```
 
-For framework tests as well:
+## Stage 04 FAISS / Qdrant / LangChain retrieval examples
 
 ```bash
-pip install -e ".[dev,stage03]"
+python -m pip install -e ".[stage04]"
 ```
 
-Then follow the learning order in:
+For Stage 04 tests:
 
-[`stages/03-stateful-orchestration/README.md`](stages/03-stateful-orchestration/README.md)
+```bash
+python -m pip install -e ".[dev,stage04]"
+```
+
+Follow the stage-specific learning orders rather than reading the code directories alphabetically.
 
 ---
 
 # Testing philosophy
 
-Tiny-Agent separates deterministic correctness tests from live provider behavior.
+Tiny-Agent separates deterministic correctness tests from optional framework/backend compatibility and live provider behavior.
 
 ```text
-Unit / framework compatibility tests     Live integration examples
-------------------------------------     -------------------------
-Fake models                              Real model
-Fake provider clients                    Real API key
-Deterministic                            Potentially nondeterministic
-Fast / usually no token cost             Network + token cost
-Control/protocol correctness             End-to-end behavior
+Core deterministic tests          Optional integration tests          Live examples
+------------------------          --------------------------          -------------
+Pure Python                       LangGraph / FAISS / Qdrant          Real model/API
+Fake models                       Local/in-memory backends             API keys/network
+No token cost                     No model token cost                  Potential cost
+Mechanism correctness             Library compatibility               End-to-end behavior
 ```
-
-The CI suite also keeps optional framework tests separate from core tests so Stage 00 learners do not need the complete framework stack installed.
 
 Important failure boundaries are tested explicitly:
 
-- loop/step budgets;
+- loop/step/rewrite budgets;
 - malformed provider responses;
 - invalid structured decisions;
-- invalid graph routes;
-- graph cycles;
+- invalid graph routes/cycles;
 - plan validation;
 - safe failure propagation;
-- checkpoint/interrupt compatibility.
+- checkpoint/interrupt compatibility;
+- invalid embedding dimensions;
+- metadata filtering behavior;
+- evidence-insufficiency abstention.
 
 ---
 
@@ -280,6 +293,12 @@ Tiny-Agent/
 │   ├── runtime.py
 │   ├── state_graph.py
 │   ├── langgraph_runtime.py
+│   ├── retrieval.py
+│   ├── rag.py
+│   ├── retrievers/
+│   │   ├── faiss.py
+│   │   ├── qdrant.py
+│   │   └── langchain_adapter.py
 │   ├── tool.py
 │   ├── types.py
 │   ├── workflows.py
@@ -288,6 +307,22 @@ Tiny-Agent/
 ├── tests/
 └── pyproject.toml
 ```
+
+---
+
+# License status
+
+Tiny-Agent is intended to become an explicitly licensed open-source learning project, but the repository **does not yet contain a `LICENSE` file**.
+
+A public GitHub repository is readable, but public visibility alone should not be treated as an open-source reuse license.
+
+The maintainer license decision is tracked in:
+
+- [Issue #5 — Choose and add an explicit open-source license](https://github.com/wds1996/Tiny-Agent/issues/5)
+
+Until that issue is resolved and a canonical license file is added, do not assume permissions beyond the terms that already apply to the repository hosting/service.
+
+This notice is deliberately explicit because licensing is a maintainer/legal decision and should not be guessed by an automated contributor.
 
 ---
 
@@ -303,7 +338,7 @@ Good contributions include:
 - deterministic tests and edge cases;
 - bug fixes;
 - diagrams;
-- provider/framework adapters;
+- provider/framework/retriever adapters;
 - evaluation cases;
 - documentation improvements.
 
@@ -318,13 +353,20 @@ When adding a capability, update both:
 
 Primary references are maintained in the relevant stage documentation.
 
-Framework APIs evolve quickly. Tiny-Agent examples should be checked against current official documentation whenever dependencies are updated.
+Framework/database APIs evolve quickly. Tiny-Agent examples should be checked against current official documentation whenever dependencies are updated.
 
-Current Stage 03 dependency policy targets stable major versions:
+Current optional dependency policy targets stable major-version ranges:
 
 ```text
+Stage 03
 langgraph >= 1.2, < 2
 langchain >= 1.3, < 2
+
+Stage 04
+faiss-cpu >= 1.9, < 2
+qdrant-client >= 1.14, < 2
+langchain >= 1.3, < 2
+numpy >= 1.26
 ```
 
 ---
