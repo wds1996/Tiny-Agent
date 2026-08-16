@@ -1,4 +1,17 @@
 from .decision import StructuredDecisionModel
+from .rag import AgenticRAGWorkflow, AnswerGenerator, BasicRAG, RAGResult
+from .retrieval import (
+    DocumentChunk,
+    EmbeddingModel,
+    HashEmbeddingModel,
+    InMemoryVectorRetriever,
+    Retriever,
+    SearchResult,
+    chunk_text,
+    cosine_similarity,
+    format_evidence,
+    tokenize,
+)
 from .runtime import AgentResult, AgentRuntime
 from .state_graph import END, START, GraphRunResult, TinyStateGraph
 from .tool import Tool, ToolRegistry
@@ -22,8 +35,15 @@ from .workflows import (
 __all__ = [
     "AgentResult",
     "AgentRuntime",
+    "AgenticRAGWorkflow",
+    "AnswerGenerator",
+    "BasicRAG",
+    "DocumentChunk",
     "END",
+    "EmbeddingModel",
     "GraphRunResult",
+    "HashEmbeddingModel",
+    "InMemoryVectorRetriever",
     "LLMRouter",
     "Model",
     "ModelResponse",
@@ -31,11 +51,14 @@ __all__ = [
     "PlanExecutorWorkflow",
     "PlanRunResult",
     "PlanStep",
+    "RAGResult",
+    "Retriever",
     "RouteDecision",
     "RoutingResult",
     "RoutingWorkflow",
     "RuleRouter",
     "START",
+    "SearchResult",
     "StepFailure",
     "StepResult",
     "StructuredDecisionModel",
@@ -45,4 +68,8 @@ __all__ = [
     "Tool",
     "ToolCall",
     "ToolRegistry",
+    "chunk_text",
+    "cosine_similarity",
+    "format_evidence",
+    "tokenize",
 ]
