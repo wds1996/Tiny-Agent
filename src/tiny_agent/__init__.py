@@ -10,6 +10,7 @@ from .retrieval import (
     chunk_text,
     cosine_similarity,
     format_evidence,
+    tokenize,
 )
 from .runtime import AgentResult, AgentRuntime
 from .state_graph import END, START, GraphRunResult, TinyStateGraph
@@ -70,4 +71,5 @@ __all__ = [
     "chunk_text",
     "cosine_similarity",
     "format_evidence",
+    "tokenize",
 ]
