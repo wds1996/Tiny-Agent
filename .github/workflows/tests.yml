@@ -118,3 +118,30 @@ jobs:
           python stages/05-mcp/code/in_memory_client.py
           python stages/05-mcp/code/stdio_client.py
           python stages/05-mcp/code/tiny_agent_mcp_bridge.py
+
+      - name: Smoke-test Stage 05 Streamable HTTP example
+        run: |
+          python stages/05-mcp/code/streamable_http_server.py > /tmp/tiny-agent-mcp-http.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          python - <<'PY'
+          import socket
+          import time
+
+          deadline = time.time() + 10
+          while time.time() < deadline:
+              try:
+                  with socket.create_connection(("127.0.0.1", 8000), timeout=0.5):
+                      break
+              except OSError:
+                  time.sleep(0.1)
+          else:
+              raise SystemExit("Streamable HTTP MCP server did not start")
+          PY
+
+          python stages/05-mcp/code/streamable_http_client.py
+
+          kill "$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+          trap - EXIT
