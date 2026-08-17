@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from .tool import Tool, ToolRegistry
 
@@ -50,12 +50,6 @@ class MCPToolBridge:
                 local_name=local_name,
             )
 
-            async def handler(
-                _remote_name: str = remote_name,
-                **arguments: Any,
-            ) -> Any:
-                return await self._call_remote_tool(_remote_name, arguments)
-
             tools.append(
                 Tool(
                     name=local_name,
@@ -63,7 +57,7 @@ class MCPToolBridge:
                     or remote.title
                     or f"MCP tool {remote_name}",
                     parameters=dict(remote.input_schema),
-                    handler=handler,
+                    handler=self._make_handler(remote_name),
                 )
             )
 
@@ -75,6 +69,12 @@ class MCPToolBridge:
         for tool in tools:
             registry.register(tool)
         return tools
+
+    def _make_handler(self, remote_name: str) -> Callable[..., Any]:
+        async def handler(**arguments: Any) -> Any:
+            return await self._call_remote_tool(remote_name, arguments)
+
+        return handler
 
     async def _call_remote_tool(
         self,
