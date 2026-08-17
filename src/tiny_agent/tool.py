@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
 
 
 @dataclass(slots=True)
 class Tool:
-    """A callable capability exposed to the model."""
+    """A callable capability exposed to the model.
+
+    Handlers may be synchronous or asynchronous. The original synchronous
+    ``invoke`` API remains for the Stage 01 runtime, while ``ainvoke`` is the
+    safe path for remote/async capabilities such as MCP tools.
+    """
 
     name: str
     description: str
@@ -22,8 +28,27 @@ class Tool:
         }
 
     def invoke(self, arguments: dict[str, Any]) -> Any:
-        """Execute the underlying Python function with model-generated arguments."""
-        return self.handler(**arguments)
+        """Execute a synchronous handler.
+
+        An async handler is rejected explicitly instead of leaking a coroutine
+        object into the model transcript. Call :meth:`ainvoke` for async tools.
+        """
+        result = self.handler(**arguments)
+        if inspect.isawaitable(result):
+            if inspect.iscoroutine(result):
+                result.close()
+            raise RuntimeError(
+                f"Tool {self.name!r} is asynchronous; use Tool.ainvoke() or "
+                "ToolRegistry.aexecute()"
+            )
+        return result
+
+    async def ainvoke(self, arguments: dict[str, Any]) -> Any:
+        """Execute either a synchronous or asynchronous handler."""
+        result = self.handler(**arguments)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
 
 class ToolRegistry:
@@ -47,3 +72,10 @@ class ToolRegistry:
         if tool is None:
             raise KeyError(f"Unknown tool: {name}")
         return tool.invoke(arguments)
+
+    async def aexecute(self, name: str, arguments: dict[str, Any]) -> Any:
+        """Execute a tool without assuming its handler is synchronous."""
+        tool = self._tools.get(name)
+        if tool is None:
+            raise KeyError(f"Unknown tool: {name}")
+        return await tool.ainvoke(arguments)
