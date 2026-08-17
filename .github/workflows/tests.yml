@@ -111,3 +111,10 @@ jobs:
       - name: Run Stage 05 MCP tests
         run: |
           pytest -q tests/test_stage05_mcp.py
+
+      - name: Smoke-test Stage 05 runnable examples
+        run: |
+          python stages/05-mcp/code/protocol_message_walkthrough.py
+          python stages/05-mcp/code/in_memory_client.py
+          python stages/05-mcp/code/stdio_client.py
+          python stages/05-mcp/code/tiny_agent_mcp_bridge.py
