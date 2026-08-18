@@ -24,7 +24,7 @@ Compare what the abstraction adds
 | 03 | Stateful orchestration | **LangGraph**, selected **LangChain** core abstractions |
 | 04 | RAG & Agentic retrieval | **FAISS**, **Qdrant**, LangChain retriever/vector-store integrations |
 | 05 | Standardized capabilities/context | **MCP 2026-07-28**, **MCP Python SDK v2**, stdio, Streamable HTTP, Tiny-Agent MCP bridge |
-| 06 | Memory, persistence, HITL | LangGraph checkpoint/persistence concepts, SQLite/PostgreSQL/Redis where appropriate |
+| 06 | Memory, durable persistence, HITL | LangGraph **Checkpointer + Store + interrupt**, **SQLite**, **PostgreSQL**, Tiny-Agent memory/approval policies |
 | 07 | Reliability & safety | Pydantic/JSON Schema validation, retry/timeout/cancellation patterns, sandbox/permission concepts |
 | 08 | Evaluation & observability | **LangSmith**, OpenTelemetry concepts, custom eval datasets/graders |
 | 09 | Multi-Agent systems | OpenAI Agents SDK / AutoGen-style patterns for comparison where useful |
@@ -40,6 +40,7 @@ LangChain chapter
 LangGraph chapter
 Qdrant chapter
 MCP decorators chapter
+Postgres chapter
 Docker chapter
 ```
 
@@ -66,6 +67,13 @@ hard-coded local ToolRegistry
         -> MCP Python SDK v2
         -> stdio / Streamable HTTP
         -> Tiny-Agent MCP adapter
+```
+
+```text
+thread state / memory candidate / risky action
+        -> explicit persistence + policy boundaries
+        -> LangGraph Checkpointer / Store / interrupt
+        -> SQLite / PostgreSQL durable backends
 ```
 
 ```text
@@ -146,6 +154,55 @@ MCP Prompt    -> remains a prompt primitive
 
 Not every MCP primitive should be forced into `ToolRegistry` just because Tools are already familiar.
 
+## Memory / persistence / HITL learning order
+
+Stage 06 does **not** begin with "install a database and call it memory."
+
+It separates three responsibilities first:
+
+```text
+thread runtime state
+    -> Checkpointer
+    -> InMemorySaver
+    -> SQLiteSaver
+    -> PostgresSaver
+
+candidate durable fact
+    -> MemoryCandidate
+    -> MemoryWritePolicy
+    -> Store namespace/key
+    -> InMemoryStore / PostgresStore
+
+risky side effect
+    -> review policy
+    -> interrupt
+    -> approve / edit / reject
+    -> validate + authorize
+    -> execute
+```
+
+The key distinction is:
+
+```text
+Checkpointer
+    = persist one execution thread so it can resume
+
+Store
+    = persist selected data across threads/sessions
+```
+
+Both may use PostgreSQL in production, but sharing an infrastructure technology does not make them the same semantic layer.
+
+Stage 06 also keeps application policy outside the framework:
+
+```text
+model proposes memory       -> application decides whether it may persist
+model proposes risky action -> application decides whether review is required
+human approves/edits        -> application revalidates and authorizes before execution
+```
+
+This preserves the Tiny-Agent invariant that model output and external input are proposals, not authority.
+
 ## Maintenance rule
 
 When Tiny-Agent introduces a new external tool or framework, the relevant stage should explain:
@@ -157,6 +214,7 @@ When Tiny-Agent introduces a new external tool or framework, the relevant stage 
 5. what new complexity or lock-in it introduces;
 6. when not to use it;
 7. at least one runnable example and one comparison with the underlying mechanism;
-8. the version/specification target when the ecosystem is evolving quickly.
+8. the version/specification target when the ecosystem is evolving quickly;
+9. durability, trust, and ownership boundaries when the tool stores state or executes remote actions.
 
 This keeps Tiny-Agent focused on **Agent engineering**, while still teaching the mainstream tools expected in real projects.
