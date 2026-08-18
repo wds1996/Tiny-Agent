@@ -24,6 +24,22 @@ def test_approval_request_payload_is_serializable_policy_data():
     assert payload["allowed_decisions"] == ["approve", "edit", "reject"]
 
 
+def test_approval_request_validates_runtime_shape():
+    with pytest.raises(ValueError):
+        ApprovalRequest(
+            action="send_email",
+            arguments="not-an-object",  # type: ignore[arg-type]
+            reason="test",
+        )
+    with pytest.raises(ValueError):
+        ApprovalRequest(
+            action="send_email",
+            arguments={},
+            reason="test",
+            risk="extreme",  # type: ignore[arg-type]
+        )
+
+
 def test_approve_preserves_original_arguments():
     request = make_request()
     resolution = resolve_approval(request, ApprovalDecision(outcome="approve"))
@@ -51,9 +67,14 @@ def test_edit_uses_human_supplied_arguments():
     assert resolution.feedback == "Use the release owner instead."
 
 
-def test_edit_requires_edited_arguments():
+def test_edit_requires_edited_arguments_at_decision_boundary():
     with pytest.raises(ValueError):
-        resolve_approval(make_request(), ApprovalDecision(outcome="edit"))
+        ApprovalDecision(outcome="edit")
+
+
+def test_non_edit_decision_rejects_edited_arguments():
+    with pytest.raises(ValueError):
+        ApprovalDecision(outcome="approve", edited_arguments={"x": 1})
 
 
 def test_reject_does_not_return_executable_arguments():
@@ -66,7 +87,9 @@ def test_reject_does_not_return_executable_arguments():
     assert resolution.arguments is None
 
 
-def test_decision_payload_is_validated():
+def test_decision_is_validated_for_direct_construction_and_payloads():
+    with pytest.raises(ValueError):
+        ApprovalDecision(outcome="maybe")  # type: ignore[arg-type]
     with pytest.raises(ValueError):
         ApprovalDecision.from_payload({"outcome": "maybe"})
     with pytest.raises(ValueError):
