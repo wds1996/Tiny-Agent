@@ -25,6 +25,12 @@ stage04 = [
 stage05 = [
     "mcp[cli]>=2,<3",
 ]
+stage06 = [
+    "langgraph>=1.2,<2",
+    "langgraph-checkpoint-sqlite>=3.1,<4",
+    "langgraph-checkpoint-postgres>=3.1,<4",
+    "psycopg[binary,pool]>=3.3,<4",
+]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]

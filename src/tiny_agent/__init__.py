@@ -1,5 +1,17 @@
+from .approval import (
+    ApprovalDecision,
+    ApprovalRequest,
+    ApprovalResolution,
+    resolve_approval,
+)
 from .decision import StructuredDecisionModel
 from .mcp_bridge import MCPToolBinding, MCPToolBridge, MCPToolError
+from .memory_policy import (
+    ConservativeMemoryWritePolicy,
+    MemoryCandidate,
+    MemoryWriteDecision,
+    memory_namespace,
+)
 from .rag import AgenticRAGWorkflow, AnswerGenerator, BasicRAG, RAGResult
 from .retrieval import (
     DocumentChunk,
@@ -38,7 +50,11 @@ __all__ = [
     "AgentRuntime",
     "AgenticRAGWorkflow",
     "AnswerGenerator",
+    "ApprovalDecision",
+    "ApprovalRequest",
+    "ApprovalResolution",
     "BasicRAG",
+    "ConservativeMemoryWritePolicy",
     "DocumentChunk",
     "END",
     "EmbeddingModel",
@@ -49,6 +65,8 @@ __all__ = [
     "MCPToolBinding",
     "MCPToolBridge",
     "MCPToolError",
+    "MemoryCandidate",
+    "MemoryWriteDecision",
     "Model",
     "ModelResponse",
     "Plan",
@@ -75,5 +93,7 @@ __all__ = [
     "chunk_text",
     "cosine_similarity",
     "format_evidence",
+    "memory_namespace",
+    "resolve_approval",
     "tokenize",
 ]

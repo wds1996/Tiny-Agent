@@ -5,7 +5,7 @@ learning/testing; production persistence should use a durable checkpointer.
 
 Run:
 
-    pip install -e ".[stage03]"
+    python -m pip install -e ".[stage03]"
     python stages/03-stateful-orchestration/code/checkpoint_interrupt_demo.py
 """
 

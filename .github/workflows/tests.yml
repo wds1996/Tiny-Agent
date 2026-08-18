@@ -33,7 +33,9 @@ jobs:
             --ignore=tests/test_langgraph_runtime.py \
             --ignore=tests/test_stage03_frameworks.py \
             --ignore=tests/test_stage04_vector_backends.py \
-            --ignore=tests/test_stage05_mcp.py
+            --ignore=tests/test_stage05_mcp.py \
+            --ignore=tests/test_stage06_langgraph.py \
+            --ignore=tests/test_stage06_postgres.py
 
   stage03-framework-pytest:
     runs-on: ubuntu-latest
@@ -145,3 +147,63 @@ jobs:
           kill "$SERVER_PID" 2>/dev/null || true
           wait "$SERVER_PID" 2>/dev/null || true
           trap - EXIT
+
+  stage06-memory-pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TEST_POSTGRES_URI: postgresql://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      LANGGRAPH_STRICT_MSGPACK: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Stage 06 dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,stage06]"
+
+      - name: Run Stage 06 persistence and HITL tests
+        run: |
+          pytest -q \
+            tests/test_stage06_langgraph.py \
+            tests/test_stage06_postgres.py
+
+      - name: Smoke-test Stage 06 local examples
+        run: |
+          python stages/06-memory-persistence-hitl/code/memory_write_policy.py
+          python stages/06-memory-persistence-hitl/code/thread_short_term_memory.py
+          python stages/06-memory-persistence-hitl/code/long_term_memory_store.py
+          python stages/06-memory-persistence-hitl/code/sqlite_durable_checkpoint.py
+          python stages/06-memory-persistence-hitl/code/human_approval.py
+          python stages/06-memory-persistence-hitl/code/durable_hitl_resume.py
+
+      - name: Smoke-test Stage 06 Postgres example
+        run: |
+          python stages/06-memory-persistence-hitl/code/postgres_persistence.py
