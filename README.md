@@ -15,7 +15,7 @@ LLM interfaces
     -> explicit state / LangGraph
     -> RAG / vector databases / Agentic retrieval
     -> MCP / standardized external capabilities
-    -> memory / HITL
+    -> memory / durable persistence / HITL
     -> reliability / safety
     -> evaluation / observability
     -> multi-Agent
@@ -32,13 +32,15 @@ The goal is not only to make examples run. The goal is to understand **why each 
 2. **Theory and code stay together** — each capability stage contains conceptual notes, runnable examples, tests, and exercises where applicable.
 3. **Educational snapshots are preserved** — later framework code does not erase earlier handwritten implementations.
 4. **Deterministic when possible, agentic when useful** — autonomy is added only where uncertainty justifies it.
-5. **Model output is a proposal, not authority** — routes, plans, tool calls, retrieval queries, and actions remain subject to application validation and policy.
-6. **Runtimes own execution** — LLMs can propose actions; application/runtime code governs execution, observations, budgets, stopping, and data access.
+5. **Model output is a proposal, not authority** — routes, plans, tool calls, retrieval queries, memory candidates, and actions remain subject to application validation and policy.
+6. **Runtimes own execution** — LLMs can propose actions; application/runtime code governs execution, observations, budgets, stopping, data access, and durable side effects.
 7. **State is explicit when orchestration demands it** — complex branching, persistence, interruption, and resumption should not be hidden in local variables.
-8. **External evidence and remote capabilities are not authority** — retrieved documents, MCP metadata, remote prompts, and tool results retain explicit trust boundaries.
-9. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, and deployment are not optional afterthoughts.
-10. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, remote capability errors, and state-transition errors are first-class test cases.
-11. **Tutorial simplifications are documented** — beginner code may be intentionally small, but its production limitations must be explicit.
+8. **External evidence and remote capabilities are not authority** — retrieved documents, MCP metadata, remote prompts, tool results, and remembered content retain explicit trust boundaries.
+9. **Memory is governed state, not a magic bucket** — thread checkpoints, long-term memory, RAG knowledge, secrets, and audit logs have different semantics and lifecycles.
+10. **Human approval is not authorization** — reviewed actions still require ordinary validation and application permission checks.
+11. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, retention, privacy, and deployment are not optional afterthoughts.
+12. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, remote capability errors, persistence failures, and state-transition errors are first-class test cases.
+13. **Tutorial simplifications are documented** — beginner code may be intentionally small, but its production limitations must be explicit.
 
 ---
 
@@ -80,7 +82,7 @@ The project is organized by **capability**, not by calendar day or framework nam
 | [03 — Stateful Orchestration](stages/03-stateful-orchestration/) | Explicit state, state machines, LangGraph, LangChain components, checkpoint/interrupt | Rebuild existing Agent/workflow patterns as inspectable state graphs |
 | [04 — Agentic RAG](stages/04-agentic-rag/) | Chunking, embeddings, FAISS, Qdrant, retrievers, reranking, grounded Agentic retrieval | Build a bounded evidence-grounded retrieval Agent |
 | [05 — MCP](stages/05-mcp/) | MCP 2026 stateless protocol, Tools/Resources/Prompts, stdio/HTTP, Python SDK v2 | Discover and consume standardized external capabilities through a clean Tiny-Agent bridge |
-| [06 — Memory / Persistence / HITL](stages/06-memory-persistence-hitl/) | session state, long-term memory, durable persistence, human approval | Pause/resume stateful Agents with deliberate memory policies |
+| [06 — Memory / Persistence / HITL](stages/06-memory-persistence-hitl/) | thread memory, long-term Store, SQLite/Postgres checkpoints, approve/edit/reject HITL | Persist and resume stateful Agents with deliberate memory and human-review policies |
 | [07 — Reliability & Safety](stages/07-reliability-safety/) | validation, retry, timeout, budgets, permissions, injection defense | Build a guarded runtime that fails predictably |
 | [08 — Evaluation & Observability](stages/08-evaluation-observability/) | traces, trajectory eval, quality/cost/latency metrics | Measure whether Agent behavior actually works |
 | [09 — Multi-Agent](stages/09-multi-agent/) | delegation, handoffs, specialists, interoperability | Justify when multiple Agents beat one Agent/workflow |
@@ -179,7 +181,26 @@ For the framework/infrastructure mapping, see:
 - curated current official MCP/Python-SDK references;
 - dedicated MCP v2 compatibility tests.
 
-Stages 06–11 currently contain roadmap scaffolds and will be implemented progressively.
+## ✅ Stage 06 — Memory, Durable Persistence & Human-in-the-Loop
+
+- LLM context vs runtime state vs checkpoint vs short-/long-term memory;
+- `thread_id` vs cross-thread owner/user namespace;
+- short-term memory and context trimming/summarization policy;
+- semantic, episodic, and procedural memory taxonomy;
+- framework-neutral `MemoryCandidate` and conservative durable-write policy;
+- LangGraph `Store` namespace/key model for cross-thread memory;
+- `InMemorySaver` vs `SqliteSaver` vs `PostgresSaver`;
+- SQLite process-recreation durability demo;
+- real PostgreSQL checkpointer and Store integration tests;
+- framework-neutral approve/edit/reject review model;
+- LangGraph `interrupt()` / `Command(resume=...)` HITL flows;
+- durable HITL resume after the original runtime objects are gone;
+- validation and authorization after human edits/approval;
+- idempotency/recovery boundaries for external side effects;
+- memory ownership, retention, deletion, poisoning, tenancy, and governance;
+- curated current LangGraph/LangChain persistence-memory-HITL references plus CoALA.
+
+Stages 07–11 currently contain roadmap scaffolds and will be implemented progressively.
 
 ---
 
@@ -209,6 +230,23 @@ hard-coded local ToolRegistry
     -> MCP Python SDK v2
     -> stdio / Streamable HTTP
     -> Tiny-Agent MCP bridge
+```
+
+```text
+thread state
+    -> Checkpointer
+    -> SQLite durable recovery
+    -> PostgreSQL shared persistence
+
+memory candidate
+    -> write policy
+    -> cross-thread Store
+
+risky action
+    -> interrupt
+    -> approve / edit / reject
+    -> validate + authorize
+    -> execute
 ```
 
 ```text
@@ -255,12 +293,17 @@ python -m pip install -e ".[stage04]"
 python -m pip install -e ".[stage05]"
 ```
 
-For Stage 05 tests:
+## Stage 06 memory / persistence / HITL examples
 
 ```bash
-python -m pip install -e ".[dev,stage05]"
-pytest -q tests/test_stage05_mcp.py
+python -m pip install -e ".[dev,stage06]"
+pytest -q \
+  tests/test_memory_policy.py \
+  tests/test_approval.py \
+  tests/test_stage06_langgraph.py
 ```
+
+The PostgreSQL integration suite is run in GitHub Actions with a real Postgres service and can also be run locally when `TEST_POSTGRES_URI` is configured.
 
 Follow the stage-specific learning orders rather than reading code directories alphabetically.
 
@@ -271,12 +314,12 @@ Follow the stage-specific learning orders rather than reading code directories a
 Tiny-Agent separates deterministic correctness tests from optional framework/backend compatibility and live provider behavior.
 
 ```text
-Core deterministic tests          Optional integration tests                 Live examples
-------------------------          --------------------------                 -------------
-Pure Python                       LangGraph / FAISS / Qdrant / MCP SDK       Real model/API
-Fake models                       Local/in-memory framework backends          API keys/network
-No token cost                     No model token cost                         Potential cost
-Mechanism correctness             Library/protocol compatibility             End-to-end behavior
+Core deterministic tests          Optional integration tests                       Live examples
+------------------------          --------------------------                       -------------
+Pure Python                       LangGraph / FAISS / Qdrant / MCP / Postgres      Real model/API
+Fake models                       Local/in-memory + real CI service backends         API keys/network
+No token cost                     No model token cost                               Potential cost
+Mechanism correctness             Library/protocol/durability compatibility         End-to-end behavior
 ```
 
 Important failure boundaries are tested explicitly:
@@ -294,7 +337,13 @@ Important failure boundaries are tested explicitly:
 - sync/async Tool misuse;
 - MCP discovery/schema normalization;
 - namespaced remote Tool execution;
-- MCP tool-level errors.
+- MCP tool-level errors;
+- thread isolation vs cross-thread memory;
+- conservative memory-write denial paths;
+- approve/edit/reject validation;
+- SQLite checkpoint recovery after saver recreation;
+- PostgreSQL checkpoint/Store durability across new connections;
+- HITL edited-argument and rejection behavior.
 
 ---
 
@@ -325,7 +374,9 @@ Tiny-Agent/
 │   └── 11-capstone-enterprise-agent/
 │
 ├── src/tiny_agent/
+│   ├── approval.py
 │   ├── decision.py
+│   ├── memory_policy.py
 │   ├── runtime.py
 │   ├── state_graph.py
 │   ├── langgraph_runtime.py
@@ -369,7 +420,7 @@ Good contributions include:
 - deterministic tests and edge cases;
 - bug fixes;
 - diagrams;
-- provider/framework/retriever/protocol adapters;
+- provider/framework/retriever/protocol/persistence adapters;
 - evaluation cases;
 - documentation improvements.
 
@@ -402,6 +453,12 @@ numpy >= 1.26
 Stage 05
 mcp[cli] >= 2, < 3
 protocol teaching target: MCP 2026-07-28
+
+Stage 06
+langgraph >= 1.2, < 2
+langgraph-checkpoint-sqlite >= 3.1, < 4
+langgraph-checkpoint-postgres >= 3.1, < 4
+psycopg[binary,pool] >= 3.3, < 4
 ```
 
 ---
