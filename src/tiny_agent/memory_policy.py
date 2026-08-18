@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 
 MemoryKind = Literal["semantic", "episodic", "procedural"]
+_VALID_MEMORY_KINDS = frozenset({"semantic", "episodic", "procedural"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,11 +26,15 @@ class MemoryCandidate:
     sensitive: bool = False
 
     def __post_init__(self) -> None:
-        if not self.namespace or any(not part.strip() for part in self.namespace):
-            raise ValueError("memory namespace parts must be non-empty")
-        if not self.key.strip():
+        if not self.namespace or any(not isinstance(part, str) or not part.strip() for part in self.namespace):
+            raise ValueError("memory namespace parts must be non-empty strings")
+        if not isinstance(self.key, str) or not self.key.strip():
             raise ValueError("memory key must be non-empty")
-        if not self.source.strip():
+        if not isinstance(self.value, dict):
+            raise ValueError("memory value must be an object")
+        if self.kind not in _VALID_MEMORY_KINDS:
+            raise ValueError("memory kind must be semantic, episodic, or procedural")
+        if not isinstance(self.source, str) or not self.source.strip():
             raise ValueError("memory source must be non-empty")
 
 
@@ -56,7 +61,14 @@ class ConservativeMemoryWritePolicy:
     ) -> None:
         self.require_explicit_user_request = require_explicit_user_request
         self.allow_sensitive = allow_sensitive
-        self.allowed_kinds = allowed_kinds or frozenset({"semantic", "episodic"})
+        self.allowed_kinds = (
+            frozenset({"semantic", "episodic"})
+            if allowed_kinds is None
+            else frozenset(allowed_kinds)
+        )
+        unknown = self.allowed_kinds - _VALID_MEMORY_KINDS
+        if unknown:
+            raise ValueError(f"unknown memory kinds in policy: {sorted(unknown)}")
 
     def evaluate(self, candidate: MemoryCandidate) -> MemoryWriteDecision:
         if candidate.kind not in self.allowed_kinds:
@@ -83,6 +95,8 @@ class ConservativeMemoryWritePolicy:
 def memory_namespace(owner_id: str, collection: str = "memories") -> tuple[str, str]:
     """Build a stable cross-thread namespace for long-term memory."""
 
+    if not isinstance(owner_id, str) or not isinstance(collection, str):
+        raise ValueError("owner_id and collection must be strings")
     owner = owner_id.strip()
     group = collection.strip()
     if not owner:
