@@ -19,6 +19,23 @@ def test_memory_namespace_rejects_empty_parts():
         memory_namespace("user-1", " ")
 
 
+def test_memory_candidate_validates_runtime_shape():
+    with pytest.raises(ValueError):
+        MemoryCandidate(
+            namespace=("user-1", "memories"),
+            key="bad-kind",
+            value={"x": 1},
+            kind="unknown",  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError):
+        MemoryCandidate(
+            namespace=("user-1", "memories"),
+            key="bad-value",
+            value="not-an-object",  # type: ignore[arg-type]
+        )
+
+
 def test_conservative_policy_allows_explicit_non_sensitive_semantic_memory():
     policy = ConservativeMemoryWritePolicy()
     candidate = MemoryCandidate(
@@ -81,3 +98,25 @@ def test_conservative_policy_rejects_procedural_self_rewrite_by_default():
 
     assert decision.store is False
     assert "procedural" in decision.reason
+
+
+def test_explicit_empty_allowed_kind_set_denies_all_memory():
+    policy = ConservativeMemoryWritePolicy(allowed_kinds=frozenset())
+    candidate = MemoryCandidate(
+        namespace=memory_namespace("user-1"),
+        key="preference",
+        value={"language": "Chinese"},
+        explicit_user_request=True,
+    )
+
+    decision = policy.evaluate(candidate)
+
+    assert decision.store is False
+    assert "not allowed" in decision.reason
+
+
+def test_policy_rejects_unknown_allowed_kind_configuration():
+    with pytest.raises(ValueError):
+        ConservativeMemoryWritePolicy(
+            allowed_kinds=frozenset({"semantic", "mystery"})  # type: ignore[arg-type]
+        )
