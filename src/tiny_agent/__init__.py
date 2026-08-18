@@ -1,4 +1,5 @@
 from .decision import StructuredDecisionModel
+from .mcp_bridge import MCPToolBinding, MCPToolBridge, MCPToolError
 from .rag import AgenticRAGWorkflow, AnswerGenerator, BasicRAG, RAGResult
 from .retrieval import (
     DocumentChunk,
@@ -45,6 +46,9 @@ __all__ = [
     "HashEmbeddingModel",
     "InMemoryVectorRetriever",
     "LLMRouter",
+    "MCPToolBinding",
+    "MCPToolBridge",
+    "MCPToolError",
     "Model",
     "ModelResponse",
     "Plan",

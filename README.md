@@ -14,7 +14,7 @@ LLM interfaces
     -> workflow / routing / planning
     -> explicit state / LangGraph
     -> RAG / vector databases / Agentic retrieval
-    -> MCP
+    -> MCP / standardized external capabilities
     -> memory / HITL
     -> reliability / safety
     -> evaluation / observability
@@ -28,16 +28,16 @@ The goal is not only to make examples run. The goal is to understand **why each 
 
 # Core philosophy
 
-1. **Mechanism before framework** — build the minimum mechanism first, then introduce the mature framework that solves the same problem.
+1. **Mechanism before framework** — build or inspect the minimum mechanism first, then introduce the mature framework/tool that solves the same problem.
 2. **Theory and code stay together** — each capability stage contains conceptual notes, runnable examples, tests, and exercises where applicable.
 3. **Educational snapshots are preserved** — later framework code does not erase earlier handwritten implementations.
 4. **Deterministic when possible, agentic when useful** — autonomy is added only where uncertainty justifies it.
 5. **Model output is a proposal, not authority** — routes, plans, tool calls, retrieval queries, and actions remain subject to application validation and policy.
 6. **Runtimes own execution** — LLMs can propose actions; application/runtime code governs execution, observations, budgets, stopping, and data access.
 7. **State is explicit when orchestration demands it** — complex branching, persistence, interruption, and resumption should not be hidden in local variables.
-8. **External evidence is not authority** — retrieved documents are data, not trusted system instructions.
+8. **External evidence and remote capabilities are not authority** — retrieved documents, MCP metadata, remote prompts, and tool results retain explicit trust boundaries.
 9. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, and deployment are not optional afterthoughts.
-10. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, and state-transition errors are first-class test cases.
+10. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, remote capability errors, and state-transition errors are first-class test cases.
 11. **Tutorial simplifications are documented** — beginner code may be intentionally small, but its production limitations must be explicit.
 
 ---
@@ -79,7 +79,7 @@ The project is organized by **capability**, not by calendar day or framework nam
 | [02 — Planning & Routing](stages/02-planning-routing/) | Workflow vs Agent, Router, Planner–Executor, bounded replanning | Choose the least dynamic architecture that solves a task |
 | [03 — Stateful Orchestration](stages/03-stateful-orchestration/) | Explicit state, state machines, LangGraph, LangChain components, checkpoint/interrupt | Rebuild existing Agent/workflow patterns as inspectable state graphs |
 | [04 — Agentic RAG](stages/04-agentic-rag/) | Chunking, embeddings, FAISS, Qdrant, retrievers, reranking, grounded Agentic retrieval | Build a bounded evidence-grounded retrieval Agent |
-| [05 — MCP](stages/05-mcp/) | MCP host/client/server, tools/resources/prompts | Build and consume a custom MCP server |
+| [05 — MCP](stages/05-mcp/) | MCP 2026 stateless protocol, Tools/Resources/Prompts, stdio/HTTP, Python SDK v2 | Discover and consume standardized external capabilities through a clean Tiny-Agent bridge |
 | [06 — Memory / Persistence / HITL](stages/06-memory-persistence-hitl/) | session state, long-term memory, durable persistence, human approval | Pause/resume stateful Agents with deliberate memory policies |
 | [07 — Reliability & Safety](stages/07-reliability-safety/) | validation, retry, timeout, budgets, permissions, injection defense | Build a guarded runtime that fails predictably |
 | [08 — Evaluation & Observability](stages/08-evaluation-observability/) | traces, trajectory eval, quality/cost/latency metrics | Measure whether Agent behavior actually works |
@@ -146,8 +146,6 @@ For the framework/infrastructure mapping, see:
 
 ## ✅ Stage 04 — RAG & Agentic Retrieval
 
-Available in the current Stage 04 implementation:
-
 - RAG fundamentals and fixed two-step RAG;
 - chunking, overlap, metadata, and provider-neutral embedding interfaces;
 - deterministic offline `HashEmbeddingModel` for teaching/tests;
@@ -157,19 +155,37 @@ Available in the current Stage 04 implementation:
 - LangChain `BaseRetriever` adapter;
 - candidate retrieval vs reranking and hybrid-retrieval theory;
 - bounded Agentic RAG retrieval decisions;
-- one-or-more controlled query rewrites through `max_rewrites`;
-- evidence-sufficiency checks and explicit abstention;
+- controlled query rewriting and evidence-sufficiency checks;
+- explicit insufficient-evidence abstention;
 - retrieval metrics such as Recall@k and MRR;
-- deterministic tests plus optional-backend compatibility tests;
-- official FAISS/Qdrant/LangChain references and the original RAG paper.
+- deterministic tests plus optional-backend compatibility tests.
 
-Stages 05–11 currently contain roadmap scaffolds and will be implemented progressively.
+## ✅ Stage 05 — MCP: Standardized Capabilities Across Boundaries
+
+- Function Calling vs MCP boundary;
+- Host / Client / Server mental model;
+- MCP Tools, Resources, Prompts, and resource templates;
+- conceptual JSON-RPC/wire-message walkthrough;
+- explicit comparison of classic handshake-era MCP with the 2026-07-28 stateless core;
+- current Python SDK v2 `MCPServer` and `Client` APIs;
+- in-process client/server learning path;
+- local stdio subprocess transport;
+- Streamable HTTP service transport;
+- backward-compatible async `Tool.ainvoke()` / `ToolRegistry.aexecute()` support;
+- `MCPToolBridge` for converting discovered MCP Tools into Tiny-Agent Tools;
+- host-owned namespaces for multi-server tool-name collisions;
+- structured MCP tool results and explicit MCP tool errors;
+- security/trust boundaries for remote tools, resources, prompts, credentials, and server metadata;
+- curated current official MCP/Python-SDK references;
+- dedicated MCP v2 compatibility tests.
+
+Stages 06–11 currently contain roadmap scaffolds and will be implemented progressively.
 
 ---
 
 # Framework learning strategy
 
-Frameworks are introduced **after** the underlying mechanism.
+Frameworks/tools are introduced **after** the underlying mechanism or protocol problem is visible.
 
 ```text
 Python while-loop Agent
@@ -185,6 +201,14 @@ chunk / vector / cosine from first principles
     -> Qdrant vector database
     -> LangChain Retriever adapter
     -> Agentic RAG
+```
+
+```text
+hard-coded local ToolRegistry
+    -> inspect MCP roles/primitives/wire shape
+    -> MCP Python SDK v2
+    -> stdio / Streamable HTTP
+    -> Tiny-Agent MCP bridge
 ```
 
 ```text
@@ -225,13 +249,20 @@ python -m pip install -e ".[stage03]"
 python -m pip install -e ".[stage04]"
 ```
 
-For Stage 04 tests:
+## Stage 05 MCP v2 examples
 
 ```bash
-python -m pip install -e ".[dev,stage04]"
+python -m pip install -e ".[stage05]"
 ```
 
-Follow the stage-specific learning orders rather than reading the code directories alphabetically.
+For Stage 05 tests:
+
+```bash
+python -m pip install -e ".[dev,stage05]"
+pytest -q tests/test_stage05_mcp.py
+```
+
+Follow the stage-specific learning orders rather than reading code directories alphabetically.
 
 ---
 
@@ -240,12 +271,12 @@ Follow the stage-specific learning orders rather than reading the code directori
 Tiny-Agent separates deterministic correctness tests from optional framework/backend compatibility and live provider behavior.
 
 ```text
-Core deterministic tests          Optional integration tests          Live examples
-------------------------          --------------------------          -------------
-Pure Python                       LangGraph / FAISS / Qdrant          Real model/API
-Fake models                       Local/in-memory backends             API keys/network
-No token cost                     No model token cost                  Potential cost
-Mechanism correctness             Library compatibility               End-to-end behavior
+Core deterministic tests          Optional integration tests                 Live examples
+------------------------          --------------------------                 -------------
+Pure Python                       LangGraph / FAISS / Qdrant / MCP SDK       Real model/API
+Fake models                       Local/in-memory framework backends          API keys/network
+No token cost                     No model token cost                         Potential cost
+Mechanism correctness             Library/protocol compatibility             End-to-end behavior
 ```
 
 Important failure boundaries are tested explicitly:
@@ -259,7 +290,11 @@ Important failure boundaries are tested explicitly:
 - checkpoint/interrupt compatibility;
 - invalid embedding dimensions;
 - metadata filtering behavior;
-- evidence-insufficiency abstention.
+- evidence-insufficiency abstention;
+- sync/async Tool misuse;
+- MCP discovery/schema normalization;
+- namespaced remote Tool execution;
+- MCP tool-level errors.
 
 ---
 
@@ -296,6 +331,7 @@ Tiny-Agent/
 │   ├── langgraph_runtime.py
 │   ├── retrieval.py
 │   ├── rag.py
+│   ├── mcp_bridge.py
 │   ├── retrievers/
 │   │   ├── faiss.py
 │   │   ├── qdrant.py
@@ -333,7 +369,7 @@ Good contributions include:
 - deterministic tests and edge cases;
 - bug fixes;
 - diagrams;
-- provider/framework/retriever adapters;
+- provider/framework/retriever/protocol adapters;
 - evaluation cases;
 - documentation improvements.
 
@@ -348,7 +384,7 @@ When adding a capability, update both:
 
 Primary references are maintained in the relevant stage documentation.
 
-Framework/database APIs evolve quickly. Tiny-Agent examples should be checked against current official documentation whenever dependencies are updated.
+Framework, database, and protocol APIs evolve quickly. Tiny-Agent examples should be checked against current official documentation whenever dependencies are updated.
 
 Current optional dependency policy targets stable major-version ranges:
 
@@ -362,6 +398,10 @@ faiss-cpu >= 1.9, < 2
 qdrant-client >= 1.14, < 2
 langchain >= 1.3, < 2
 numpy >= 1.26
+
+Stage 05
+mcp[cli] >= 2, < 3
+protocol teaching target: MCP 2026-07-28
 ```
 
 ---
