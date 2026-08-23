@@ -25,7 +25,7 @@ class EndlessToolModel:
 
 
 class ErrorAwareModel:
-    """Checks that a tool failure is observable on the next model turn."""
+    """Checks that a redacted tool failure is observable on the next turn."""
 
     def __init__(self) -> None:
         self.turn = 0
@@ -45,7 +45,8 @@ class ErrorAwareModel:
 
         assert messages[-1]["role"] == "tool"
         assert messages[-1]["tool_call_id"] == "call_fail"
-        assert messages[-1]["content"].startswith("ToolError[ValueError]:")
+        assert messages[-1]["content"] == "ToolFailure[internal_error]: Tool execution failed."
+        assert "demonstration failure" not in messages[-1]["content"]
         return ModelResponse(final_answer="The tool failed, so I stopped safely.")
 
 
@@ -81,7 +82,7 @@ def test_runtime_enforces_max_steps():
         runtime.run("Keep calling the tool forever.")
 
 
-def test_runtime_returns_tool_error_as_observation_for_stage_01_recovery_demo():
+def test_runtime_returns_redacted_tool_error_as_observation_for_recovery_demo():
     def fail():
         raise ValueError("demonstration failure")
 

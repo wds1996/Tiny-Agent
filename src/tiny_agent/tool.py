@@ -64,18 +64,23 @@ class ToolRegistry:
             raise ValueError(f"Tool already registered: {tool.name}")
         self._tools[tool.name] = tool
 
+    def get(self, name: str) -> Tool:
+        """Return a registered Tool for policy-aware runtimes.
+
+        Stage 07 needs to inspect handler/schema metadata before execution. The
+        registry still owns lookup; callers do not reach into ``_tools``.
+        """
+        tool = self._tools.get(name)
+        if tool is None:
+            raise KeyError(f"Unknown tool: {name}")
+        return tool
+
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
 
     def execute(self, name: str, arguments: dict[str, Any]) -> Any:
-        tool = self._tools.get(name)
-        if tool is None:
-            raise KeyError(f"Unknown tool: {name}")
-        return tool.invoke(arguments)
+        return self.get(name).invoke(arguments)
 
     async def aexecute(self, name: str, arguments: dict[str, Any]) -> Any:
         """Execute a tool without assuming its handler is synchronous."""
-        tool = self._tools.get(name)
-        if tool is None:
-            raise KeyError(f"Unknown tool: {name}")
-        return await tool.ainvoke(arguments)
+        return await self.get(name).ainvoke(arguments)

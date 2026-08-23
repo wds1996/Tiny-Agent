@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .reliability import failure_from_exception
 from .tool import ToolRegistry
 from .types import Model
 
@@ -19,6 +20,11 @@ class AgentRuntime:
 
     The model decides whether to call a tool or return a final answer.
     The runtime owns execution, observations, stopping conditions, and errors.
+
+    Stage 07 hardens one legacy boundary here: unexpected tool exception
+    messages are no longer copied verbatim into the model transcript. Advanced
+    validation, permissions, timeouts, retries, and budgets live in the
+    dedicated GuardedToolExecutor rather than bloating this Stage 01 runtime.
     """
 
     def __init__(
@@ -85,4 +91,4 @@ class AgentRuntime:
             result = self.tools.execute(name, arguments)
             return str(result)
         except Exception as exc:  # observation, not process crash
-            return f"ToolError[{type(exc).__name__}]: {exc}"
+            return failure_from_exception(exc).observation()

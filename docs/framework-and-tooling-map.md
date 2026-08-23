@@ -25,7 +25,7 @@ Compare what the abstraction adds
 | 04 | RAG & Agentic retrieval | **FAISS**, **Qdrant**, LangChain retriever/vector-store integrations |
 | 05 | Standardized capabilities/context | **MCP 2026-07-28**, **MCP Python SDK v2**, stdio, Streamable HTTP, Tiny-Agent MCP bridge |
 | 06 | Memory, durable persistence, HITL | LangGraph **Checkpointer + Store + interrupt**, **SQLite**, **PostgreSQL**, Tiny-Agent memory/approval policies |
-| 07 | Reliability & safety | Pydantic/JSON Schema validation, retry/timeout/cancellation patterns, sandbox/permission concepts |
+| 07 | Reliability, safety, Tool governance | handwritten policy primitives, **jsonschema**, **Pydantic strict mode**, **Tenacity**, `asyncio` timeout/cancellation, OWASP Agent/LLM risk model |
 | 08 | Evaluation & observability | **LangSmith**, OpenTelemetry concepts, custom eval datasets/graders |
 | 09 | Multi-Agent systems | OpenAI Agents SDK / AutoGen-style patterns for comparison where useful |
 | 10 | Production deployment | **FastAPI**, Docker, PostgreSQL, Redis, CI/CD |
@@ -41,6 +41,7 @@ LangGraph chapter
 Qdrant chapter
 MCP decorators chapter
 Postgres chapter
+Tenacity chapter
 Docker chapter
 ```
 
@@ -58,7 +59,7 @@ Python while-loop Agent
 embedding similarity from first principles
         -> FAISS local index
         -> Qdrant vector database
-        -> LangChain retriever abstraction
+        -> LangChain Retriever abstraction
 ```
 
 ```text
@@ -74,6 +75,15 @@ thread state / memory candidate / risky action
         -> explicit persistence + policy boundaries
         -> LangGraph Checkpointer / Store / interrupt
         -> SQLite / PostgreSQL durable backends
+```
+
+```text
+raw Tool execution
+        -> typed failures / local validation
+        -> handwritten retry / budget / permission mechanisms
+        -> jsonschema / Pydantic / Tenacity
+        -> GuardedToolExecutor
+        -> LangChain middleware/guardrails comparison
 ```
 
 ```text
@@ -97,7 +107,8 @@ Tiny-Agent teaches these as different layers:
 LangChain
     -> reusable LLM application components
        messages, model wrappers, tools, prompts,
-       document loaders, splitters, retrievers, vector-store adapters
+       document loaders, splitters, retrievers, vector-store adapters,
+       middleware / higher-level guardrails
 
 LangGraph
     -> stateful orchestration/runtime
@@ -118,7 +129,7 @@ Text
   -> Vector similarity
   -> FAISS
   -> Qdrant
-  -> LangChain retriever abstraction
+  -> LangChain Retriever abstraction
   -> Agentic RAG
 ```
 
@@ -152,19 +163,15 @@ MCP Resource  -> remains context/data
 MCP Prompt    -> remains a prompt primitive
 ```
 
-Not every MCP primitive should be forced into `ToolRegistry` just because Tools are already familiar.
-
 ## Memory / persistence / HITL learning order
 
 Stage 06 does **not** begin with "install a database and call it memory."
-
-It separates three responsibilities first:
 
 ```text
 thread runtime state
     -> Checkpointer
     -> InMemorySaver
-    -> SQLiteSaver
+    -> SqliteSaver
     -> PostgresSaver
 
 candidate durable fact
@@ -184,24 +191,65 @@ risky side effect
 The key distinction is:
 
 ```text
-Checkpointer
-    = persist one execution thread so it can resume
-
-Store
-    = persist selected data across threads/sessions
+Checkpointer = persist one execution thread so it can resume
+Store        = persist selected data across threads/sessions
 ```
 
-Both may use PostgreSQL in production, but sharing an infrastructure technology does not make them the same semantic layer.
+Both may use PostgreSQL, but infrastructure technology does not define semantic responsibility.
 
-Stage 06 also keeps application policy outside the framework:
+## Reliability / safety / Tool-governance learning order
+
+Stage 07 deliberately starts from the Stage 01 execution boundary rather than from a guardrails package.
 
 ```text
-model proposes memory       -> application decides whether it may persist
-model proposes risky action -> application decides whether review is required
-human approves/edits        -> application revalidates and authorizes before execution
+arbitrary Tool exception
+    -> typed safe failure / redaction
+
+model ToolCall
+    -> handwritten local validation
+    -> jsonschema / Pydantic strict comparison
+
+transient failure
+    -> handwritten bounded retry/backoff
+    -> retry-safe application policy
+    -> Tenacity comparison
+
+Agent trajectory
+    -> BudgetLedger
+    -> repeated-call detector
+
+capability
+    -> authenticated Principal
+    -> default-deny role allowlist
+    -> exact-action approval binding
+
+external text
+    -> explicit untrusted-data envelope
+    -> detection as telemetry signal
+    -> deterministic permission boundary
+
+blocking/untrusted execution
+    -> thread/process distinction
+    -> sandbox concepts
+
+all controls
+    -> GuardedToolExecutor
+    -> LangChain middleware / guardrails comparison
 ```
 
-This preserves the Tiny-Agent invariant that model output and external input are proposals, not authority.
+This stage preserves several distinctions:
+
+```text
+validation          != authorization
+approval            != authorization
+discovery           != permission
+retryable failure   != retry-safe operation
+thread timeout      != hard termination
+subprocess           != secure sandbox
+injection detection != access control
+```
+
+These distinctions matter more than memorizing one security library.
 
 ## Maintenance rule
 
@@ -215,6 +263,7 @@ When Tiny-Agent introduces a new external tool or framework, the relevant stage 
 6. when not to use it;
 7. at least one runnable example and one comparison with the underlying mechanism;
 8. the version/specification target when the ecosystem is evolving quickly;
-9. durability, trust, and ownership boundaries when the tool stores state or executes remote actions.
+9. durability, trust, and ownership boundaries when the tool stores state or executes remote actions;
+10. what deterministic application policy remains necessary even after a mature framework is introduced.
 
 This keeps Tiny-Agent focused on **Agent engineering**, while still teaching the mainstream tools expected in real projects.
