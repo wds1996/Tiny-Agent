@@ -16,7 +16,7 @@ LLM interfaces
     -> RAG / vector databases / Agentic retrieval
     -> MCP / standardized external capabilities
     -> memory / durable persistence / HITL
-    -> reliability / safety
+    -> reliability / safety / tool governance
     -> evaluation / observability
     -> multi-Agent
     -> production deployment
@@ -32,15 +32,16 @@ The goal is not only to make examples run. The goal is to understand **why each 
 2. **Theory and code stay together** — each capability stage contains conceptual notes, runnable examples, tests, and exercises where applicable.
 3. **Educational snapshots are preserved** — later framework code does not erase earlier handwritten implementations.
 4. **Deterministic when possible, agentic when useful** — autonomy is added only where uncertainty justifies it.
-5. **Model output is a proposal, not authority** — routes, plans, tool calls, retrieval queries, memory candidates, and actions remain subject to application validation and policy.
+5. **Model output is a proposal, not authority** — routes, plans, ToolCalls, retrieval queries, memory candidates, and actions remain subject to application validation and policy.
 6. **Runtimes own execution** — LLMs can propose actions; application/runtime code governs execution, observations, budgets, stopping, data access, and durable side effects.
 7. **State is explicit when orchestration demands it** — complex branching, persistence, interruption, and resumption should not be hidden in local variables.
-8. **External evidence and remote capabilities are not authority** — retrieved documents, MCP metadata, remote prompts, tool results, and remembered content retain explicit trust boundaries.
+8. **External evidence and remote capabilities are not authority** — retrieved documents, MCP metadata, remote prompts, Tool results, and remembered content retain explicit trust boundaries.
 9. **Memory is governed state, not a magic bucket** — thread checkpoints, long-term memory, RAG knowledge, secrets, and audit logs have different semantics and lifecycles.
 10. **Human approval is not authorization** — reviewed actions still require ordinary validation and application permission checks.
-11. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, retention, privacy, and deployment are not optional afterthoughts.
-12. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, remote capability errors, persistence failures, and state-transition errors are first-class test cases.
-13. **Tutorial simplifications are documented** — beginner code may be intentionally small, but its production limitations must be explicit.
+11. **Least privilege beats persuasive prompting** — capabilities, credentials, roles, approvals, budgets, and sandbox boundaries are deterministic controls, not instructions the model may reinterpret.
+12. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, retention, privacy, and deployment are not optional afterthoughts.
+13. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, remote capability errors, persistence failures, authorization denials, and state-transition errors are first-class test cases.
+14. **Tutorial simplifications are documented** — beginner code may be intentionally small, but its production limitations must be explicit.
 
 ---
 
@@ -83,7 +84,7 @@ The project is organized by **capability**, not by calendar day or framework nam
 | [04 — Agentic RAG](stages/04-agentic-rag/) | Chunking, embeddings, FAISS, Qdrant, retrievers, reranking, grounded Agentic retrieval | Build a bounded evidence-grounded retrieval Agent |
 | [05 — MCP](stages/05-mcp/) | MCP 2026 stateless protocol, Tools/Resources/Prompts, stdio/HTTP, Python SDK v2 | Discover and consume standardized external capabilities through a clean Tiny-Agent bridge |
 | [06 — Memory / Persistence / HITL](stages/06-memory-persistence-hitl/) | thread memory, long-term Store, SQLite/Postgres checkpoints, approve/edit/reject HITL | Persist and resume stateful Agents with deliberate memory and human-review policies |
-| [07 — Reliability & Safety](stages/07-reliability-safety/) | validation, retry, timeout, budgets, permissions, injection defense | Build a guarded runtime that fails predictably |
+| [07 — Reliability & Safety](stages/07-reliability-safety/) | typed failures, validation, timeout/retry, budgets, permissions, approval binding, injection/sandbox boundaries | Build a guarded runtime that fails predictably and limits model authority |
 | [08 — Evaluation & Observability](stages/08-evaluation-observability/) | traces, trajectory eval, quality/cost/latency metrics | Measure whether Agent behavior actually works |
 | [09 — Multi-Agent](stages/09-multi-agent/) | delegation, handoffs, specialists, interoperability | Justify when multiple Agents beat one Agent/workflow |
 | [10 — Production Deployment](stages/10-production-deployment/) | FastAPI, async, PostgreSQL, Redis, Docker, CI | Turn Tiny-Agent into a deployable service |
@@ -142,7 +143,7 @@ For the framework/infrastructure mapping, see:
 - streaming state updates;
 - checkpointing with `InMemorySaver` for teaching/testing;
 - `interrupt()` / `Command(resume=...)` fundamentals;
-- LangChain messages and tool abstractions;
+- LangChain messages and Tool abstractions;
 - curated official/community learning resources;
 - dedicated framework compatibility tests.
 
@@ -150,57 +151,61 @@ For the framework/infrastructure mapping, see:
 
 - RAG fundamentals and fixed two-step RAG;
 - chunking, overlap, metadata, and provider-neutral embedding interfaces;
-- deterministic offline `HashEmbeddingModel` for teaching/tests;
+- deterministic offline teaching embedding;
 - cosine similarity and exact brute-force top-k retrieval;
-- FAISS `IndexFlatIP` adapter with normalized-vector cosine ranking;
-- Qdrant local-mode adapter with collections, payloads, and metadata filtering;
-- LangChain `BaseRetriever` adapter;
+- FAISS, Qdrant, and LangChain Retriever adapters;
 - candidate retrieval vs reranking and hybrid-retrieval theory;
-- bounded Agentic RAG retrieval decisions;
-- controlled query rewriting and evidence-sufficiency checks;
+- bounded Agentic RAG query rewriting and evidence-sufficiency checks;
 - explicit insufficient-evidence abstention;
-- retrieval metrics such as Recall@k and MRR;
-- deterministic tests plus optional-backend compatibility tests.
+- Recall@k / MRR and deterministic/backend tests.
 
 ## ✅ Stage 05 — MCP: Standardized Capabilities Across Boundaries
 
 - Function Calling vs MCP boundary;
 - Host / Client / Server mental model;
-- MCP Tools, Resources, Prompts, and resource templates;
-- conceptual JSON-RPC/wire-message walkthrough;
-- explicit comparison of classic handshake-era MCP with the 2026-07-28 stateless core;
-- current Python SDK v2 `MCPServer` and `Client` APIs;
-- in-process client/server learning path;
-- local stdio subprocess transport;
-- Streamable HTTP service transport;
-- backward-compatible async `Tool.ainvoke()` / `ToolRegistry.aexecute()` support;
-- `MCPToolBridge` for converting discovered MCP Tools into Tiny-Agent Tools;
-- host-owned namespaces for multi-server tool-name collisions;
-- structured MCP tool results and explicit MCP tool errors;
-- security/trust boundaries for remote tools, resources, prompts, credentials, and server metadata;
-- curated current official MCP/Python-SDK references;
-- dedicated MCP v2 compatibility tests.
+- Tools, Resources, Prompts, and resource templates;
+- MCP 2026-07-28 stateless core and Python SDK v2;
+- in-process, stdio, and Streamable HTTP examples;
+- async Tool execution path;
+- namespaced `MCPToolBridge`;
+- remote capability trust/authorization boundaries;
+- real SDK compatibility and runnable-example CI.
 
 ## ✅ Stage 06 — Memory, Durable Persistence & Human-in-the-Loop
 
-- LLM context vs runtime state vs checkpoint vs short-/long-term memory;
-- `thread_id` vs cross-thread owner/user namespace;
-- short-term memory and context trimming/summarization policy;
-- semantic, episodic, and procedural memory taxonomy;
-- framework-neutral `MemoryCandidate` and conservative durable-write policy;
-- LangGraph `Store` namespace/key model for cross-thread memory;
-- `InMemorySaver` vs `SqliteSaver` vs `PostgresSaver`;
-- SQLite process-recreation durability demo;
-- real PostgreSQL checkpointer and Store integration tests;
-- framework-neutral approve/edit/reject review model;
-- LangGraph `interrupt()` / `Command(resume=...)` HITL flows;
-- durable HITL resume after the original runtime objects are gone;
-- validation and authorization after human edits/approval;
-- idempotency/recovery boundaries for external side effects;
-- memory ownership, retention, deletion, poisoning, tenancy, and governance;
-- curated current LangGraph/LangChain persistence-memory-HITL references plus CoALA.
+- context vs state vs checkpoint vs short-/long-term memory;
+- `thread_id` vs cross-thread owner namespace;
+- semantic/episodic/procedural memory taxonomy;
+- `MemoryCandidate` + conservative write policy;
+- LangGraph Store for cross-thread memory;
+- `InMemorySaver` / `SqliteSaver` / `PostgresSaver`;
+- SQLite process-recreation durability;
+- real PostgreSQL checkpointer/Store tests;
+- approve/edit/reject review model;
+- durable HITL resume;
+- idempotency and memory-governance boundaries.
 
-Stages 07–11 currently contain roadmap scaffolds and will be implemented progressively.
+## ✅ Stage 07 — Reliability, Safety & Tool Governance
+
+- typed model-safe Tool failures and raw-exception redaction;
+- local Tool argument validation before handler execution;
+- handwritten validation subset plus maintained `jsonschema` adapter;
+- Pydantic strict-mode comparison for stable typed boundaries;
+- async timeout/cancellation semantics and sync-worker caveats;
+- bounded exponential retry/backoff and Tenacity comparison;
+- retryable-failure vs retry-safe/idempotent-action separation;
+- run-wide Tool/retry/time/token/cost budgets;
+- exact repeated-ToolCall loop detection;
+- default-deny role allowlists and authenticated `Principal` context;
+- exact Tool+arguments approval binding;
+- prompt-injection data/control-plane trust boundaries;
+- narrow Tool and least-privilege guidance;
+- process termination vs real sandbox distinction;
+- composed `GuardedToolExecutor`;
+- OWASP/Python/jsonschema/Pydantic/Tenacity/LangChain security references;
+- Python 3.10/3.12 compatibility + runnable-example CI.
+
+Stages 08–11 currently contain roadmap scaffolds and will be implemented progressively.
 
 ---
 
@@ -218,35 +223,34 @@ Python while-loop Agent
 ```text
 chunk / vector / cosine from first principles
     -> brute-force Retriever
-    -> FAISS local index
-    -> Qdrant vector database
-    -> LangChain Retriever adapter
+    -> FAISS
+    -> Qdrant
+    -> LangChain Retriever
     -> Agentic RAG
 ```
 
 ```text
 hard-coded local ToolRegistry
-    -> inspect MCP roles/primitives/wire shape
+    -> MCP roles/primitives/wire shape
     -> MCP Python SDK v2
     -> stdio / Streamable HTTP
     -> Tiny-Agent MCP bridge
 ```
 
 ```text
-thread state
-    -> Checkpointer
-    -> SQLite durable recovery
-    -> PostgreSQL shared persistence
+thread state -> Checkpointer -> SQLite/PostgreSQL
+memory candidate -> write policy -> Store
+risky action -> interrupt -> approve/edit/reject -> validate + authorize
+```
 
-memory candidate
-    -> write policy
-    -> cross-thread Store
-
-risky action
-    -> interrupt
-    -> approve / edit / reject
-    -> validate + authorize
-    -> execute
+```text
+raw Tool invocation
+    -> typed safe failures
+    -> local validation
+    -> handwritten retry/budget/permission mechanisms
+    -> jsonschema / Pydantic / Tenacity comparison
+    -> GuardedToolExecutor
+    -> LangChain middleware/guardrails comparison
 ```
 
 ```text
@@ -268,42 +272,27 @@ python -m pip install -e ".[dev]"
 pytest -q
 ```
 
-## OpenAI examples
+## Optional capability extras
 
 ```bash
+# real OpenAI examples
 python -m pip install -e ".[openai]"
-export OPENAI_API_KEY="your-key"
-```
 
-## Stage 03 LangGraph / LangChain examples
-
-```bash
+# Stage 03 LangGraph / LangChain
 python -m pip install -e ".[stage03]"
-```
 
-## Stage 04 FAISS / Qdrant / LangChain retrieval examples
-
-```bash
+# Stage 04 vector backends
 python -m pip install -e ".[stage04]"
-```
 
-## Stage 05 MCP v2 examples
-
-```bash
+# Stage 05 MCP v2
 python -m pip install -e ".[stage05]"
-```
 
-## Stage 06 memory / persistence / HITL examples
-
-```bash
+# Stage 06 persistence / HITL
 python -m pip install -e ".[dev,stage06]"
-pytest -q \
-  tests/test_memory_policy.py \
-  tests/test_approval.py \
-  tests/test_stage06_langgraph.py
-```
 
-The PostgreSQL integration suite is run in GitHub Actions with a real Postgres service and can also be run locally when `TEST_POSTGRES_URI` is configured.
+# Stage 07 reliability / safety comparisons
+python -m pip install -e ".[dev,stage07]"
+```
 
 Follow the stage-specific learning orders rather than reading code directories alphabetically.
 
@@ -314,36 +303,30 @@ Follow the stage-specific learning orders rather than reading code directories a
 Tiny-Agent separates deterministic correctness tests from optional framework/backend compatibility and live provider behavior.
 
 ```text
-Core deterministic tests          Optional integration tests                       Live examples
-------------------------          --------------------------                       -------------
-Pure Python                       LangGraph / FAISS / Qdrant / MCP / Postgres      Real model/API
-Fake models                       Local/in-memory + real CI service backends         API keys/network
-No token cost                     No model token cost                               Potential cost
-Mechanism correctness             Library/protocol/durability compatibility         End-to-end behavior
+Core deterministic tests             Optional integration tests                      Live examples
+------------------------             --------------------------                      -------------
+Pure Python                          LangGraph / FAISS / Qdrant / MCP / Postgres      Real model/API
+Fake models + policy tests           jsonschema / Tenacity / Pydantic                 API keys/network
+No token cost                        Local/in-memory + real CI backends                Potential cost
+Mechanism correctness                Library/protocol compatibility                   End-to-end behavior
 ```
 
-Important failure boundaries are tested explicitly:
+Important failure boundaries include:
 
-- loop/step/rewrite budgets;
-- malformed provider responses;
-- invalid structured decisions;
-- invalid graph routes/cycles;
-- plan validation;
-- safe failure propagation;
-- checkpoint/interrupt compatibility;
-- invalid embedding dimensions;
-- metadata filtering behavior;
-- evidence-insufficiency abstention;
-- sync/async Tool misuse;
-- MCP discovery/schema normalization;
-- namespaced remote Tool execution;
-- MCP tool-level errors;
-- thread isolation vs cross-thread memory;
-- conservative memory-write denial paths;
-- approve/edit/reject validation;
-- SQLite checkpoint recovery after saver recreation;
-- PostgreSQL checkpoint/Store durability across new connections;
-- HITL edited-argument and rejection behavior.
+- loop/step/rewrite/tool/retry budgets;
+- malformed provider responses and structured decisions;
+- invalid graph routes/cycles and plan validation;
+- model-safe error redaction;
+- Tool JSON Schema validation;
+- permission/default-deny behavior;
+- exact-action approval binding;
+- timeout/cancellation/retry semantics;
+- prompt-injection trust-boundary handling;
+- checkpoint/interrupt compatibility and durable recovery;
+- retrieval misses and evidence-insufficiency abstention;
+- MCP discovery/schema normalization and remote errors;
+- memory-write denial and HITL edit/reject behavior;
+- SQLite/PostgreSQL persistence.
 
 ---
 
@@ -358,7 +341,6 @@ Tiny-Agent/
 │   └── framework-and-tooling-map.md
 ├── .github/workflows/
 │   └── tests.yml
-│
 ├── stages/
 │   ├── 00-foundations/
 │   ├── 01-react-runtime/
@@ -372,26 +354,27 @@ Tiny-Agent/
 │   ├── 09-multi-agent/
 │   ├── 10-production-deployment/
 │   └── 11-capstone-enterprise-agent/
-│
 ├── src/tiny_agent/
 │   ├── approval.py
 │   ├── decision.py
+│   ├── governance.py
+│   ├── guarded_runtime.py
 │   ├── memory_policy.py
+│   ├── reliability.py
 │   ├── runtime.py
 │   ├── state_graph.py
 │   ├── langgraph_runtime.py
 │   ├── retrieval.py
 │   ├── rag.py
 │   ├── mcp_bridge.py
+│   ├── trust.py
+│   ├── validation.py
+│   ├── validators/
 │   ├── retrievers/
-│   │   ├── faiss.py
-│   │   ├── qdrant.py
-│   │   └── langchain_adapter.py
 │   ├── tool.py
 │   ├── types.py
 │   ├── workflows.py
 │   └── models/
-│
 ├── tests/
 └── pyproject.toml
 ```
@@ -412,30 +395,15 @@ See [`LICENSE`](LICENSE) for the full license text.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Good contributions include:
+Good contributions include clearer explanations, runnable examples, exercises/interview questions, deterministic tests, edge cases, bug fixes, diagrams, adapters, governance policies, and evaluation cases.
 
-- clearer explanations;
-- runnable examples;
-- exercises/interview questions;
-- deterministic tests and edge cases;
-- bug fixes;
-- diagrams;
-- provider/framework/retriever/protocol/persistence adapters;
-- evaluation cases;
-- documentation improvements.
-
-When adding a capability, update both:
-
-1. its educational stage under `stages/`; and
-2. `src/tiny_agent/` when the capability belongs in the reusable implementation.
+When adding a capability, update both its educational stage under `stages/` and `src/tiny_agent/` when the capability belongs in the reusable implementation.
 
 ---
 
 # References and versioning
 
-Primary references are maintained in the relevant stage documentation.
-
-Framework, database, and protocol APIs evolve quickly. Tiny-Agent examples should be checked against current official documentation whenever dependencies are updated.
+Primary references are maintained in the relevant stage documentation. Framework, database, security, and protocol APIs evolve quickly, so examples should be checked against current official documentation whenever dependencies are updated.
 
 Current optional dependency policy targets stable major-version ranges:
 
@@ -459,8 +427,14 @@ langgraph >= 1.2, < 2
 langgraph-checkpoint-sqlite >= 3.1, < 4
 langgraph-checkpoint-postgres >= 3.1, < 4
 psycopg[binary,pool] >= 3.3, < 4
+
+Stage 07
+jsonschema >= 4.25, < 5
+tenacity >= 9, < 10
+pydantic >= 2.11, < 3
+security reference baseline: OWASP Top 10 for LLM Applications 2025
 ```
 
 ---
 
-Tiny-Agent grows in small, reviewable capability stages so that the repository history remains useful as learning material rather than only as the final codebase.
+Tiny-Agent grows in small, reviewable capability stages so that repository history remains useful as learning material rather than only as the final codebase.

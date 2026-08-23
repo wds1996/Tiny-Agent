@@ -35,7 +35,8 @@ jobs:
             --ignore=tests/test_stage04_vector_backends.py \
             --ignore=tests/test_stage05_mcp.py \
             --ignore=tests/test_stage06_langgraph.py \
-            --ignore=tests/test_stage06_postgres.py
+            --ignore=tests/test_stage06_postgres.py \
+            --ignore=tests/test_stage07_integrations.py
 
   stage03-framework-pytest:
     runs-on: ubuntu-latest
@@ -207,3 +208,46 @@ jobs:
       - name: Smoke-test Stage 06 Postgres example
         run: |
           python stages/06-memory-persistence-hitl/code/postgres_persistence.py
+
+  stage07-reliability-pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Stage 07 dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,stage07]"
+
+      - name: Run Stage 07 reliability and safety tests
+        run: |
+          pytest -q \
+            tests/test_reliability.py \
+            tests/test_validation.py \
+            tests/test_governance.py \
+            tests/test_guarded_runtime.py \
+            tests/test_trust.py \
+            tests/test_stage07_integrations.py
+
+      - name: Smoke-test Stage 07 runnable examples
+        run: |
+          python stages/07-reliability-safety/code/error_model.py
+          python stages/07-reliability-safety/code/validation_boundary.py
+          python stages/07-reliability-safety/code/retry_policy.py
+          python stages/07-reliability-safety/code/execution_budget.py
+          python stages/07-reliability-safety/code/permission_policy.py
+          python stages/07-reliability-safety/code/loop_detection.py
+          python stages/07-reliability-safety/code/guarded_tool_runtime.py
+          python stages/07-reliability-safety/code/prompt_injection_boundary.py
+          python stages/07-reliability-safety/code/sandbox_boundary.py
