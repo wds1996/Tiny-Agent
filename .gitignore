@@ -36,3 +36,6 @@ Thumbs.db
 # Local logs / temporary files
 *.log
 *.tmp
+
+# Stage 11 generated paper PDFs, extracted corpus, and exports
+stages/11-capstone-enterprise-agent/generated/
