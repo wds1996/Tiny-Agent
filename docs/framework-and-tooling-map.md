@@ -28,7 +28,7 @@ Compare what the abstraction adds
 | 07 | Reliability, safety, Tool governance | handwritten policy primitives, **jsonschema**, **Pydantic strict mode**, **Tenacity**, `asyncio` timeout/cancellation, OWASP Agent/LLM risk model |
 | 08 | Evaluation & observability | handwritten trace/eval core, **OpenTelemetry**, **LangSmith**, custom datasets/graders/regression gates |
 | 09 | Multi-Agent systems & interoperability | handwritten coordination core, **OpenAI Agents SDK**, **A2A 1.0 / a2a-sdk**, LangGraph pattern mapping |
-| 10 | Production deployment | **FastAPI**, Docker, PostgreSQL, Redis, CI/CD |
+| 10 | Production service & deployment | handwritten service boundary, **FastAPI**, **Uvicorn**, **Pydantic Settings**, **PostgreSQL**, **Redis**, **Docker/Compose**, A2A route hosting, CI |
 | 11 | Enterprise capstone | Integrated use of the tools learned above |
 
 ## Why tools are not separate stages
@@ -46,6 +46,7 @@ LangSmith chapter
 OpenTelemetry chapter
 OpenAI Agents SDK chapter
 A2A chapter
+FastAPI chapter
 Docker chapter
 ```
 
@@ -87,7 +88,6 @@ raw Tool execution
         -> handwritten retry / budget / permission mechanisms
         -> jsonschema / Pydantic / Tenacity
         -> GuardedToolExecutor
-        -> LangChain middleware/guardrails comparison
 ```
 
 ```text
@@ -109,10 +109,13 @@ single Agent / deterministic workflow baseline
 ```
 
 ```text
-python script
-        -> HTTP service boundary
-        -> FastAPI
-        -> Docker / deployment
+local Agent call
+        -> BoundedAgentService
+        -> FastAPI/SSE transport adapter
+        -> Postgres/Redis lifecycle
+        -> liveness/readiness/graceful shutdown
+        -> A2A route hosting
+        -> Docker/Compose/CI
 ```
 
 ## LangChain vs LangGraph
@@ -132,11 +135,9 @@ LangGraph
        interrupts, streaming, resumable execution
 ```
 
-Neither replaces the first-principles Tiny-Agent implementation. The handwritten implementation exists so learners can understand what these abstractions actually do.
+Neither replaces the first-principles Tiny-Agent implementation.
 
 ## Vector search learning order
-
-Stage 04 uses this progression:
 
 ```text
 Text
@@ -152,8 +153,6 @@ Text
 FAISS is used first as an inspectable local vector index. Qdrant is introduced next to teach persistence, metadata/payload filtering, collections, service boundaries, and remote vector retrieval.
 
 ## MCP learning order
-
-Stage 05 deliberately does **not** begin with a black-box MCP server decorator.
 
 ```text
 Tiny-Agent local Tool
@@ -171,8 +170,6 @@ Tiny-Agent local Tool
 
 The official Python SDK v2 is introduced only after the learner can explain what the SDK is abstracting.
 
-Stage 05 also preserves an important semantic boundary:
-
 ```text
 MCP Tool      -> Tiny-Agent Tool adapter
 MCP Resource  -> remains context/data
@@ -180,8 +177,6 @@ MCP Prompt    -> remains a prompt primitive
 ```
 
 ## Memory / persistence / HITL learning order
-
-Stage 06 does **not** begin with "install a database and call it memory."
 
 ```text
 thread runtime state
@@ -204,18 +199,16 @@ risky side effect
     -> execute
 ```
 
-The key distinction is:
+Key distinction:
 
 ```text
 Checkpointer = persist one execution thread so it can resume
 Store        = persist selected data across threads/sessions
 ```
 
-Both may use PostgreSQL, but infrastructure technology does not define semantic responsibility.
+Infrastructure technology does not define semantic responsibility.
 
 ## Reliability / safety / Tool-governance learning order
-
-Stage 07 deliberately starts from the Stage 01 execution boundary rather than from a guardrails package.
 
 ```text
 arbitrary Tool exception
@@ -250,10 +243,9 @@ blocking/untrusted execution
 
 all controls
     -> GuardedToolExecutor
-    -> LangChain middleware / guardrails comparison
 ```
 
-This stage preserves several distinctions:
+Stage 07 preserves:
 
 ```text
 validation          != authorization
@@ -265,11 +257,7 @@ subprocess           != secure sandbox
 injection detection != access control
 ```
 
-These distinctions matter more than memorizing one security library.
-
 ## Evaluation / observability learning order
-
-Stage 08 deliberately does **not** begin with a hosted dashboard or a giant LLM judge.
 
 ```text
 print/debug output
@@ -299,13 +287,12 @@ candidate change
 
 local telemetry model
     -> OpenTelemetry adapter
-    -> current GenAI semantic conventions
 
 local evaluation model
     -> LangSmith trace / dataset / experiment / online-eval workflow
 ```
 
-Stage 08 preserves these distinctions:
+Stage 08 preserves:
 
 ```text
 logging       != tracing
@@ -320,11 +307,7 @@ OpenTelemetry != LangSmith
 observability != authorization
 ```
 
-OpenTelemetry's 2026 direction is also reflected explicitly: new event-like telemetry should use log-based events correlated with spans rather than introducing new Span Events API usage. GenAI semantic conventions remain fast-moving, so Tiny-Agent treats current names as versioned integration details rather than its internal domain model.
-
 ## Multi-Agent / interoperability learning order
-
-Stage 09 deliberately begins by asking whether another Agent is needed at all.
 
 ```text
 plain function / deterministic workflow / one Agent baseline
@@ -340,7 +323,7 @@ plain function / deterministic workflow / one Agent baseline
     -> compare quality, latency, cost, and coordination metrics against baseline
 ```
 
-Stage 09 preserves these distinctions:
+Stage 09 preserves:
 
 ```text
 workflow              != multi-Agent
@@ -355,9 +338,56 @@ Agent Card            != internal Tool registry
 correct final answer  != good coordination trajectory
 ```
 
-The framework mapping is intentionally narrow. OpenAI Agents SDK is used because its current manager-as-tool and handoff abstractions map cleanly to the handwritten mechanisms. LangGraph is revisited conceptually because Stage 03 already teaches graph/subgraph control. A2A 1.0 is introduced for cross-system Agent interoperability. Tiny-Agent does not install a zoo of multi-Agent frameworks merely to collect decorators.
+A2A teaching is explicitly versioned because 1.0 changed Agent Card and operation shapes from older material. Stage 09 covers protocol objects; Stage 10 adds a real ASGI hosting boundary.
 
-A2A teaching is explicitly versioned because 1.0 changed Agent Card and operation shapes from older 0.3-era material. Stage 09 uses the current `supported_interfaces[]` representation and keeps full network serving/task infrastructure for Stage 10.
+## Production service / deployment learning order
+
+Stage 10 deliberately does **not** start from a Dockerfile or giant FastAPI route.
+
+```text
+local Agent handler
+    -> ServiceRequest / run identity
+    -> BoundedAgentService
+    -> process-local concurrency admission
+    -> queue wait + execution deadline
+    -> FastAPI request/response adapter
+    -> SSE stream events
+    -> liveness / readiness
+    -> ASGI lifespan
+    -> Postgres pool / Redis coordination
+    -> typed environment configuration
+    -> A2A route factory + shutdown drain
+    -> Docker image / Compose stack
+    -> real infrastructure + image-build CI
+```
+
+It preserves these distinctions:
+
+```text
+HTTP validation       != Tool authorization
+request_id            != user identity
+thread_id             != access permission
+async                  != CPU parallelism
+concurrency limit      != rate limit
+process-local semaphore != global capacity limit
+request timeout        != hard thread/process termination
+SSE                     != durable event log
+liveness                != readiness
+readiness               != monitoring
+PostgreSQL               != Redis
+Redis cache              != durable source of truth
+SecretStr                != secret manager
+.env                     != production vault
+Docker image             != production correctness
+BackgroundTasks          != durable job queue
+one worker memory        != shared replica state
+A2A compatibility        != caller authentication
+InMemoryTaskStore        != durable multi-replica A2A state
+```
+
+The same PostgreSQL technology can appear in Stage 06 and Stage 10 for different reasons: Stage 06 teaches persistence semantics; Stage 10 teaches service topology, pooling, lifecycle, and replica effects.
+
+The same A2A protocol appears in Stage 09 and Stage 10 at different layers: Stage 09 teaches interoperability semantics; Stage 10 hosts the protocol over an operational network service.
 
 ## Maintenance rule
 
@@ -374,6 +404,9 @@ When Tiny-Agent introduces a new external tool or framework, the relevant stage 
 9. durability, trust, and ownership boundaries when the tool stores state or executes remote actions;
 10. what deterministic application policy remains necessary even after a mature framework is introduced;
 11. what telemetry/evaluation data is collected and how privacy/retention are handled when the tool observes runtime behavior;
-12. what identity/context/authority is transferred when a tool introduces a new Agent or service boundary.
+12. what identity/context/authority is transferred when a tool introduces a new Agent or service boundary;
+13. which controls are process-local versus shared across workers/replicas;
+14. how long-lived resources start, become ready, drain, and close;
+15. which tutorial simplifications stop being correct when the deployment topology changes.
 
 This keeps Tiny-Agent focused on **Agent engineering**, while still teaching the mainstream tools expected in real projects.
