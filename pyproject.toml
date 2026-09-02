@@ -28,6 +28,16 @@ stage10 = [
     "httpx2>=2.12,<3",
     "a2a-sdk[http-server]>=1.1,<2",
 ]
+stage11 = [
+    "openai>=2,<3",
+    "langgraph>=1.2,<2",
+    "fastapi>=0.141,<1",
+    "uvicorn[standard]>=0.52,<1",
+    "httpx2>=2.12,<3",
+    "pypdf>=6.16,<7",
+    "mcp[cli]>=2,<3",
+    "a2a-sdk[http-server]>=1.1,<2",
+]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]

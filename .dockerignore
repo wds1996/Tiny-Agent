@@ -16,3 +16,4 @@ htmlcov
 *.crt
 *.p12
 *.pfx
+stages/11-capstone-enterprise-agent/generated/

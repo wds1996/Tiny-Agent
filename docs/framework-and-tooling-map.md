@@ -29,7 +29,7 @@ Compare what the abstraction adds
 | 08 | Evaluation & observability | handwritten trace/eval core, **OpenTelemetry**, **LangSmith**, custom datasets/graders/regression gates |
 | 09 | Multi-Agent systems & interoperability | handwritten coordination core, **OpenAI Agents SDK**, **A2A 1.0 / a2a-sdk**, LangGraph pattern mapping |
 | 10 | Production service & deployment | handwritten service boundary, **FastAPI**, **Uvicorn**, **Pydantic Settings**, **PostgreSQL**, **Redis**, **Docker/Compose**, A2A route hosting, CI |
-| 11 | Enterprise capstone | Integrated use of the tools learned above |
+| 11 | OpenScholar integrated capstone | shared research domain layer, handwritten base orchestrator, **LangGraph** orchestrator, `pypdf`, Crossref, **MCP**, **A2A**, FastAPI, Docker, regression tests |
 
 ## Why tools are not separate stages
 
@@ -116,6 +116,15 @@ local Agent call
         -> liveness/readiness/graceful shutdown
         -> A2A route hosting
         -> Docker/Compose/CI
+```
+
+```text
+all capability stages
+        -> shared OpenScholar evidence/domain contracts
+        -> handwritten base orchestration
+        -> LangGraph orchestration over the same domain
+        -> deterministic grounding/citation evaluation
+        -> HTTP / MCP / A2A / container boundaries
 ```
 
 ## LangChain vs LangGraph
@@ -389,6 +398,35 @@ The same PostgreSQL technology can appear in Stage 06 and Stage 10 for different
 
 The same A2A protocol appears in Stage 09 and Stage 10 at different layers: Stage 09 teaches interoperability semantics; Stage 10 hosts the protocol over an operational network service.
 
+## Stage 11 capstone integration order
+
+The capstone is deliberately organized by **shared application semantics first, framework comparison second**:
+
+```text
+ResearchRequest / Evidence / ResearchReport
+    -> local full-text corpus + explicit scholarly-metadata trust class
+    -> deterministic evidence filtering / sufficiency gate
+    -> shared memory / review / export / evaluation services
+    -> BaseOpenScholarAgent (ordinary Python + asyncio)
+    -> LangGraphOpenScholarAgent (same domain, graph orchestration)
+    -> HTTP / MCP / A2A / Docker adapters
+```
+
+Important Stage 11 distinctions:
+
+```text
+retrieved candidate        != sufficient evidence
+scholarly metadata         != evidence of paper findings
+long-term preference       != scientific evidence
+correct final prose        != grounded trajectory
+human approval             != path authorization
+LangGraph checkpoint       != user long-term memory
+MCP corpus capability      != A2A whole-Agent service
+framework orchestration    != application truth
+```
+
+The capstone also explains why the same framework can be useful in one layer and unnecessary in another. Ordinary Python remains the reference implementation for readable control flow; LangGraph earns its role specifically around explicit state, durable pause/resume, and inspectable graph transitions.
+
 ## Maintenance rule
 
 When Tiny-Agent introduces a new external tool or framework, the relevant stage should explain:
@@ -407,6 +445,7 @@ When Tiny-Agent introduces a new external tool or framework, the relevant stage 
 12. what identity/context/authority is transferred when a tool introduces a new Agent or service boundary;
 13. which controls are process-local versus shared across workers/replicas;
 14. how long-lived resources start, become ready, drain, and close;
-15. which tutorial simplifications stop being correct when the deployment topology changes.
+15. which tutorial simplifications stop being correct when the deployment topology changes;
+16. in an integrated capstone, which semantics are domain-owned and which are merely framework plumbing.
 
 This keeps Tiny-Agent focused on **Agent engineering**, while still teaching the mainstream tools expected in real projects.

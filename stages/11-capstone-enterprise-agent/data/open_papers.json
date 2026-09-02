@@ -1,0 +1,50 @@
+[
+  {
+    "id": "rag-2005.11401",
+    "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+    "arxiv_id": "2005.11401",
+    "pdf_url": "https://arxiv.org/pdf/2005.11401",
+    "source_url": "https://arxiv.org/abs/2005.11401",
+    "year": 2020
+  },
+  {
+    "id": "react-2210.03629",
+    "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+    "arxiv_id": "2210.03629",
+    "pdf_url": "https://arxiv.org/pdf/2210.03629",
+    "source_url": "https://arxiv.org/abs/2210.03629",
+    "year": 2022
+  },
+  {
+    "id": "toolformer-2302.04761",
+    "title": "Toolformer: Language Models Can Teach Themselves to Use Tools",
+    "arxiv_id": "2302.04761",
+    "pdf_url": "https://arxiv.org/pdf/2302.04761",
+    "source_url": "https://arxiv.org/abs/2302.04761",
+    "year": 2023
+  },
+  {
+    "id": "reflexion-2303.11366",
+    "title": "Reflexion: Language Agents with Verbal Reinforcement Learning",
+    "arxiv_id": "2303.11366",
+    "pdf_url": "https://arxiv.org/pdf/2303.11366",
+    "source_url": "https://arxiv.org/abs/2303.11366",
+    "year": 2023
+  },
+  {
+    "id": "autogen-2308.08155",
+    "title": "AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation",
+    "arxiv_id": "2308.08155",
+    "pdf_url": "https://arxiv.org/pdf/2308.08155",
+    "source_url": "https://arxiv.org/abs/2308.08155",
+    "year": 2023
+  },
+  {
+    "id": "agent-survey-2308.11432",
+    "title": "A Survey on Large Language Model based Autonomous Agents",
+    "arxiv_id": "2308.11432",
+    "pdf_url": "https://arxiv.org/pdf/2308.11432",
+    "source_url": "https://arxiv.org/abs/2308.11432",
+    "year": 2023
+  }
+]

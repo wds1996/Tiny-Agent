@@ -1,0 +1,60 @@
+name: stage11-capstone
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  capstone-pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Stage 11 dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,stage11]"
+
+      - name: Run capstone tests
+        run: pytest -q tests/test_capstone.py tests/test_stage11_integrations.py
+
+      - name: Smoke-test offline/base/LangGraph examples
+        run: |
+          python stages/11-capstone-enterprise-agent/code/base_offline_demo.py
+          python stages/11-capstone-enterprise-agent/code/langgraph_demo.py
+          python stages/11-capstone-enterprise-agent/code/langgraph_hitl_demo.py
+          python stages/11-capstone-enterprise-agent/code/evaluation_demo.py
+
+      - name: Smoke-test MCP and A2A boundaries
+        run: |
+          python stages/11-capstone-enterprise-agent/code/mcp_server.py
+          python stages/11-capstone-enterprise-agent/code/a2a_server.py
+
+      - name: Smoke-test FastAPI app construction
+        run: |
+          python - <<'PY'
+          import runpy
+          import sys
+          from pathlib import Path
+
+          code = Path("stages/11-capstone-enterprise-agent/code").resolve()
+          sys.path.insert(0, str(code))
+          namespace = runpy.run_path(str(code / "api_app.py"), run_name="stage11_smoke")
+          assert "app" in namespace
+          PY
+
+      - name: Build Stage 11 container
+        if: matrix.python-version == '3.12'
+        run: docker build -f stages/11-capstone-enterprise-agent/deployment/Dockerfile -t tiny-agent-stage11 .
