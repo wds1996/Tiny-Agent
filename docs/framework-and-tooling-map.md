@@ -27,7 +27,7 @@ Compare what the abstraction adds
 | 06 | Memory, durable persistence, HITL | LangGraph **Checkpointer + Store + interrupt**, **SQLite**, **PostgreSQL**, Tiny-Agent memory/approval policies |
 | 07 | Reliability, safety, Tool governance | handwritten policy primitives, **jsonschema**, **Pydantic strict mode**, **Tenacity**, `asyncio` timeout/cancellation, OWASP Agent/LLM risk model |
 | 08 | Evaluation & observability | handwritten trace/eval core, **OpenTelemetry**, **LangSmith**, custom datasets/graders/regression gates |
-| 09 | Multi-Agent systems | OpenAI Agents SDK / AutoGen-style patterns for comparison where useful |
+| 09 | Multi-Agent systems & interoperability | handwritten coordination core, **OpenAI Agents SDK**, **A2A 1.0 / a2a-sdk**, LangGraph pattern mapping |
 | 10 | Production deployment | **FastAPI**, Docker, PostgreSQL, Redis, CI/CD |
 | 11 | Enterprise capstone | Integrated use of the tools learned above |
 
@@ -44,6 +44,8 @@ Postgres chapter
 Tenacity chapter
 LangSmith chapter
 OpenTelemetry chapter
+OpenAI Agents SDK chapter
+A2A chapter
 Docker chapter
 ```
 
@@ -95,6 +97,15 @@ print-based trajectory inspection
         -> regression gate
         -> OpenTelemetry
         -> LangSmith
+```
+
+```text
+single Agent / deterministic workflow baseline
+        -> explicit delegation + handoff semantics
+        -> context/authority/budget boundaries
+        -> OpenAI Agents SDK mapping
+        -> A2A 1.0 interoperability
+        -> Stage 08 evidence-based comparison
 ```
 
 ```text
@@ -311,6 +322,43 @@ observability != authorization
 
 OpenTelemetry's 2026 direction is also reflected explicitly: new event-like telemetry should use log-based events correlated with spans rather than introducing new Span Events API usage. GenAI semantic conventions remain fast-moving, so Tiny-Agent treats current names as versioned integration details rather than its internal domain model.
 
+## Multi-Agent / interoperability learning order
+
+Stage 09 deliberately begins by asking whether another Agent is needed at all.
+
+```text
+plain function / deterministic workflow / one Agent baseline
+    -> identify a real responsibility or isolation boundary
+    -> handwritten AgentSpec + TeamRuntime
+    -> delegation (manager keeps control)
+    -> handoff (specialist takes over)
+    -> context projection / private namespaces
+    -> coordination budgets + handoff-loop protection
+    -> parallel fan-out / application-owned fan-in
+    -> OpenAI Agents SDK Agent.as_tool() vs handoffs
+    -> A2A 1.0 Agent Card / Message / Task / Part / Artifact model
+    -> compare quality, latency, cost, and coordination metrics against baseline
+```
+
+Stage 09 preserves these distinctions:
+
+```text
+workflow              != multi-Agent
+multiple model calls  != multi-Agent
+Agent as Tool         != handoff
+shared context        != copy all runtime state
+discovery             != authorization
+delegation            != privilege escalation
+parallelism           != free speed
+A2A                   != MCP
+Agent Card            != internal Tool registry
+correct final answer  != good coordination trajectory
+```
+
+The framework mapping is intentionally narrow. OpenAI Agents SDK is used because its current manager-as-tool and handoff abstractions map cleanly to the handwritten mechanisms. LangGraph is revisited conceptually because Stage 03 already teaches graph/subgraph control. A2A 1.0 is introduced for cross-system Agent interoperability. Tiny-Agent does not install a zoo of multi-Agent frameworks merely to collect decorators.
+
+A2A teaching is explicitly versioned because 1.0 changed Agent Card and operation shapes from older 0.3-era material. Stage 09 uses the current `supported_interfaces[]` representation and keeps full network serving/task infrastructure for Stage 10.
+
 ## Maintenance rule
 
 When Tiny-Agent introduces a new external tool or framework, the relevant stage should explain:
@@ -325,6 +373,7 @@ When Tiny-Agent introduces a new external tool or framework, the relevant stage 
 8. the version/specification target when the ecosystem is evolving quickly;
 9. durability, trust, and ownership boundaries when the tool stores state or executes remote actions;
 10. what deterministic application policy remains necessary even after a mature framework is introduced;
-11. what telemetry/evaluation data is collected and how privacy/retention are handled when the tool observes runtime behavior.
+11. what telemetry/evaluation data is collected and how privacy/retention are handled when the tool observes runtime behavior;
+12. what identity/context/authority is transferred when a tool introduces a new Agent or service boundary.
 
 This keeps Tiny-Agent focused on **Agent engineering**, while still teaching the mainstream tools expected in real projects.

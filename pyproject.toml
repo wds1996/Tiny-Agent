@@ -41,6 +41,10 @@ stage08 = [
     "opentelemetry-api>=1.42,<2",
     "opentelemetry-sdk>=1.42,<2",
 ]
+stage09 = [
+    "openai-agents>=0.22,<1",
+    "a2a-sdk>=1.1,<2",
+]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
