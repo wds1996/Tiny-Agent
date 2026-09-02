@@ -21,6 +21,18 @@ Agent business logic
 
 The route factory exposes discovery and protocol endpoints while allowing normal ASGI middleware/auth/logging around them.
 
+Tiny-Agent wraps this current route-factory pattern in `build_a2a_starlette_app()` so SDK compatibility is covered by an integration test rather than living only in a tutorial script.
+
+## Agent output helpers are versioned SDK surface
+
+Current `a2a-sdk` 1.1.x uses helpers such as:
+
+```python
+from a2a.helpers import new_text_message
+```
+
+Older tutorials may show names such as `new_agent_text_message`. Treat helper names as version-specific SDK APIs and validate them in CI.
+
 ## Agent Card is public contract
 
 A deployed Agent Card contains advertised interface URLs. Those URLs must match the address clients can actually reach, not `localhost` inside the container.
@@ -57,7 +69,7 @@ a production server needs task/event state whose availability matches that contr
 
 ## Shutdown
 
-Current `DefaultRequestHandler` provides an async close/drain path. A production ASGI host should wire handler cleanup into lifespan/shutdown rather than abandoning pending internal tasks.
+Current `DefaultRequestHandler` exposes an async close/drain path. `build_a2a_starlette_app()` wires that cleanup into ASGI lifespan so active internal tasks are not simply abandoned when the host shuts down.
 
 ## Authentication
 

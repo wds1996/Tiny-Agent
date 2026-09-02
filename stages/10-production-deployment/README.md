@@ -146,7 +146,13 @@ AgentExecutor
     -> Uvicorn / container / network
 ```
 
+`build_a2a_starlette_app()` now keeps this route-factory integration in reusable code and wires current handler cleanup into lifespan. The public example uses current `a2a.helpers.new_text_message`; older helper names are intentionally not preserved as if they were current APIs.
+
 The teaching example still uses an in-memory A2A task store and therefore explicitly does **not** claim durable multi-replica task semantics.
+
+## Current testing note
+
+Starlette 1.6 has moved its `TestClient` toward `httpx2`; plain `httpx` support is deprecated. Stage 10 therefore targets `httpx2>=2.12,<3` for current in-process ASGI testing rather than normalizing a deprecation warning into the tutorial.
 
 ## Docker / Compose milestone
 
@@ -221,11 +227,12 @@ Read in this order:
 2. FastAPI in containers: <https://fastapi.tiangolo.com/deployment/docker/>
 3. FastAPI lifespan: <https://fastapi.tiangolo.com/advanced/events/>
 4. Uvicorn deployment: <https://www.uvicorn.org/deployment/>
-5. Docker Python guide: <https://docs.docker.com/guides/python/>
-6. Psycopg pools: <https://www.psycopg.org/psycopg3/docs/api/pool.html>
-7. redis-py asyncio: <https://redis.readthedocs.io/en/latest/examples/asyncio_examples.html>
-8. Pydantic Settings: <https://docs.pydantic.dev/latest/concepts/pydantic_settings/>
-9. A2A Python server tutorial: <https://a2a-protocol.org/latest/tutorials/python/5-start-server/>
+5. Starlette TestClient: <https://www.starlette.io/testclient/>
+6. Docker Python guide: <https://docs.docker.com/guides/python/>
+7. Psycopg pools: <https://www.psycopg.org/psycopg3/docs/api/pool.html>
+8. redis-py asyncio: <https://redis.readthedocs.io/en/latest/examples/asyncio_examples.html>
+9. Pydantic Settings: <https://docs.pydantic.dev/latest/concepts/pydantic_settings/>
+10. A2A Python server tutorial: <https://a2a-protocol.org/latest/tutorials/python/5-start-server/>
 
 ## Milestone
 

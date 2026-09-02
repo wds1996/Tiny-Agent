@@ -25,7 +25,7 @@ stage10 = [
     "pydantic-settings>=2.15,<3",
     "redis>=8.1,<9",
     "psycopg[binary,pool]>=3.3,<4",
-    "httpx>=0.28,<1",
+    "httpx2>=2.12,<3",
     "a2a-sdk>=1.1,<2",
 ]
 dev = ["pytest>=8.0"]

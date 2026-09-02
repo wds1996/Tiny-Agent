@@ -4,6 +4,8 @@ import os
 from fastapi.testclient import TestClient
 import pytest
 
+from tiny_agent.integrations.a2a import A2ASkillDescriptor, build_agent_card
+from tiny_agent.integrations.a2a_server import build_a2a_starlette_app
 from tiny_agent.integrations.fastapi_app import create_app
 from tiny_agent.integrations.postgres_backend import PostgresPool
 from tiny_agent.integrations.redis_backend import RedisFixedWindowRateLimiter, RedisHealthCheck
@@ -51,7 +53,10 @@ def test_readiness_returns_503_without_secret_exception_text():
     async def broken():
         raise RuntimeError("redis-password=secret")
 
-    app = create_app(BoundedAgentService(lambda text, metadata: text), readiness_checks={"redis": broken})
+    app = create_app(
+        BoundedAgentService(lambda text, metadata: text),
+        readiness_checks={"redis": broken},
+    )
     with TestClient(app) as client:
         response = client.get("/readyz")
     assert response.status_code == 503
@@ -67,6 +72,38 @@ def test_settings_keep_secret_out_of_safe_summary(monkeypatch):
     assert settings.model_api_key.get_secret_value() == "super-secret"
     assert "super-secret" not in repr(settings)
     assert "super-secret" not in repr(settings.safe_summary())
+
+
+def test_current_a2a_routes_and_agent_card_are_served():
+    from a2a.server.agent_execution import AgentExecutor
+
+    class NoopExecutor(AgentExecutor):
+        async def execute(self, context, event_queue):
+            return None
+
+        async def cancel(self, context, event_queue):
+            return None
+
+    card = build_agent_card(
+        name="Tiny Test Agent",
+        description="A2A route compatibility test.",
+        version="0.1.0",
+        url="http://testserver/",
+        skills=[
+            A2ASkillDescriptor(
+                id="test",
+                name="Test",
+                description="Test current route factories.",
+            )
+        ],
+    )
+    app = build_a2a_starlette_app(agent_card=card, agent_executor=NoopExecutor())
+    with TestClient(app) as client:
+        response = client.get("/.well-known/agent-card.json")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "Tiny Test Agent"
+    assert payload["supportedInterfaces"][0]["protocolVersion"] == "1.0"
 
 
 @pytest.mark.skipif(not os.getenv("TEST_REDIS_URL"), reason="TEST_REDIS_URL is required")
