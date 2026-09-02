@@ -26,14 +26,33 @@ Congratulations: your elegant async restaurant now has one very committed waiter
 
 Blocking work inside `async def` blocks the event loop.
 
-Stage 10 therefore sends synchronous handlers through `asyncio.to_thread()` for compatibility. But this has a critical caveat:
+Stage 10 therefore sends synchronous handlers through `asyncio.to_thread()` for compatibility.
+
+## Timeout is not thread termination
+
+This distinction has a real capacity consequence.
+
+Suppose:
 
 ```text
-request timeout
-    != hard kill of worker thread
+max_concurrency = 1
+sync worker thread starts
+caller deadline expires after 1 second
+worker thread still runs for 20 seconds
 ```
 
-For untrusted or hard-termination workloads, use process/container/job isolation appropriate to the risk.
+A dangerous implementation would immediately release the semaphore at second 1. New requests then enter even though the old work is still consuming resources, so the advertised concurrency bound becomes fiction.
+
+Tiny-Agent instead returns the timeout to the caller but keeps that capacity slot occupied until the underlying sync invocation actually ends.
+
+```text
+caller deadline expired -> caller receives timeout
+                           worker still alive
+                           capacity still reserved
+worker really finishes  -> capacity released
+```
+
+If you require hard termination, use process/container/job isolation appropriate to the workload and risk.
 
 ## Concurrency limit vs rate limit
 
@@ -115,6 +134,8 @@ So streaming errors become protocol events:
 event: run.error
 data: {"code":"run_timeout"}
 ```
+
+Tiny-Agent also refuses to fall back to arbitrary Python `repr()` when serializing a completion event; encoding failure becomes a stable `response_encoding_failed` event instead.
 
 ## Backpressure
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from contextlib import AbstractAsyncContextManager
@@ -18,6 +19,9 @@ from tiny_agent.production import (
     ServiceTimeoutError,
     run_readiness_checks,
 )
+
+
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 class RunRequestModel(BaseModel):
@@ -46,6 +50,8 @@ def create_app(
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):
+        # A valid inbound ID can be useful for caller correlation, but remains
+        # untrusted metadata. It is never authentication or authorization.
         request_id = _safe_request_id(request.headers.get("x-request-id"))
         request.state.request_id = request_id
         response = await call_next(request)
@@ -114,15 +120,21 @@ def create_app(
             except Exception:
                 yield _sse("run.error", {"code": "run_failed"})
             else:
-                yield _sse(
-                    "run.completed",
-                    {
-                        "request_id": result.request_id,
-                        "run_id": result.run_id,
-                        "output": jsonable_encoder(result.output),
-                        "elapsed_ms": result.elapsed_ms,
-                    },
-                )
+                try:
+                    output = jsonable_encoder(result.output)
+                    yield _sse(
+                        "run.completed",
+                        {
+                            "request_id": result.request_id,
+                            "run_id": result.run_id,
+                            "output": output,
+                            "elapsed_ms": result.elapsed_ms,
+                        },
+                    )
+                except Exception:
+                    # Streaming has already begun; emit a stable protocol error
+                    # instead of leaking repr() or trying to change HTTP status.
+                    yield _sse("run.error", {"code": "response_encoding_failed"})
 
         return StreamingResponse(
             events(),
@@ -137,11 +149,11 @@ def _safe_request_id(value: str | None) -> str:
     if value is None:
         return uuid.uuid4().hex
     candidate = value.strip()
-    if not candidate or len(candidate) > 128 or any(ord(ch) < 32 for ch in candidate):
+    if _REQUEST_ID.fullmatch(candidate) is None:
         return uuid.uuid4().hex
     return candidate
 
 
 def _sse(event: str, data: Mapping[str, Any]) -> str:
-    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str)
+    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     return f"event: {event}\ndata: {payload}\n\n"

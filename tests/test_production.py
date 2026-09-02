@@ -92,6 +92,46 @@ def test_execution_timeout_is_typed():
     run(scenario())
 
 
+def test_timed_out_sync_thread_keeps_capacity_until_it_really_finishes():
+    release_worker = threading.Event()
+
+    def blocking_handler(text, metadata):
+        release_worker.wait(timeout=1.0)
+        return text
+
+    async def scenario():
+        service = BoundedAgentService(
+            blocking_handler,
+            max_concurrency=1,
+            queue_timeout_seconds=0.01,
+            request_timeout_seconds=0.01,
+        )
+
+        with pytest.raises(ServiceTimeoutError):
+            await service.run(ServiceRequest("first"))
+
+        after_timeout = await service.snapshot()
+        assert after_timeout.timed_out == 1
+        assert after_timeout.in_flight == 1
+
+        with pytest.raises(ServiceCapacityError):
+            await service.run(ServiceRequest("second"))
+
+        release_worker.set()
+        for _ in range(100):
+            if (await service.snapshot()).in_flight == 0:
+                break
+            await asyncio.sleep(0.005)
+        else:
+            raise AssertionError("worker-thread capacity was never released")
+
+        final = await service.snapshot()
+        assert final.in_flight == 0
+        assert final.rejected == 1
+
+    run(scenario())
+
+
 def test_readiness_redacts_raw_exception_message():
     async def bad_check():
         raise RuntimeError("postgres-password=super-secret")
