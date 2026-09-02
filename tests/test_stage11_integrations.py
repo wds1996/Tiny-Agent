@@ -2,7 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import runpy
+import sys
 from pathlib import Path
+
+import pytest
+
+# The core package deliberately has no LangGraph/FastAPI/A2A/MCP dependency.
+# In the lightweight core job this module is skipped; the dedicated Stage 11
+# workflow installs the extra and executes the full integration suite.
+pytest.importorskip("langgraph")
+pytest.importorskip("fastapi")
+pytest.importorskip("mcp")
+pytest.importorskip("a2a")
+pytest.importorskip("starlette")
 
 from starlette.testclient import TestClient
 
@@ -22,6 +34,7 @@ from tiny_agent.integrations.openscholar_api import build_openscholar_app
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGE = ROOT / "stages" / "11-capstone-enterprise-agent"
+CODE = STAGE / "code"
 
 
 def corpus() -> LocalResearchCorpus:
@@ -121,26 +134,37 @@ def test_fastapi_exposes_both_implementations() -> None:
             "thread_id": "http-stage11",
         }
         base_response = client.post("/v1/research/base", json=payload)
-        graph_response = client.post("/v1/research/langgraph", json={**payload, "thread_id": "http-stage11-graph"})
+        graph_response = client.post(
+            "/v1/research/langgraph",
+            json={**payload, "thread_id": "http-stage11-graph"},
+        )
     assert base_response.status_code == 200
     assert graph_response.status_code == 200
     assert base_response.json()["status"] == "completed"
     assert graph_response.json()["status"] == "completed"
 
 
+def run_example(name: str):
+    sys.path.insert(0, str(CODE))
+    try:
+        return runpy.run_path(str(CODE / name), run_name=f"stage11_{name}")
+    finally:
+        sys.path.pop(0)
+
+
 def test_mcp_example_builds_and_searches() -> None:
-    namespace = runpy.run_path(str(STAGE / "code" / "mcp_server.py"), run_name="stage11_mcp_test")
+    namespace = run_example("mcp_server.py")
     result = namespace["search_corpus"]("retrieval augmented generation", top_k=2)
     assert result["results"]
     assert result["results"][0]["kind"] == "local_fulltext"
 
 
 def test_a2a_example_builds_routes() -> None:
-    namespace = runpy.run_path(str(STAGE / "code" / "a2a_server.py"), run_name="stage11_a2a_test")
+    namespace = run_example("a2a_server.py")
     app = namespace["build_app"]()
     assert app.routes
 
 
 def test_api_example_exports_app_object() -> None:
-    namespace = runpy.run_path(str(STAGE / "code" / "api_app.py"), run_name="stage11_api_test")
+    namespace = run_example("api_app.py")
     assert "app" in namespace
