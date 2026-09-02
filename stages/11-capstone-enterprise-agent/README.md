@@ -1,320 +1,205 @@
-# Stage 11 — Capstone: OpenScholar Research Agent
+# Stage 11 — OpenScholar: Complete Modern Agent Capstone
 
-This final stage integrates Stages 00–10 into one portfolio-quality application instead of introducing another isolated framework API.
+OpenScholar is the final integration test for Tiny-Agent's complete 2026 learning path.
 
-OpenScholar answers academic questions with **local full-text evidence**, optional **Crossref scholarly discovery**, bounded planning, reviewer/writer coordination, long-term style memory, human approval for durable export, tracing, deterministic evaluation, HTTP serving, MCP/A2A interoperability, and container deployment.
+It is an academic research Agent because that domain forces the architecture to distinguish **discovery from evidence, memory from truth, context from state, model proposals from control policy, and short requests from durable work**.
 
-Two implementations are provided:
+## What the final system integrates
 
-1. **Base version** — ordinary Python + `asyncio` + Tiny-Agent primitives. The control flow is inspectable and mostly handwritten.
-2. **LangGraph version** — the same domain services and policies, but orchestration is expressed as a `StateGraph` with checkpointing and `interrupt` / `Command(resume=...)` for durable HITL.
+```text
+Stage 00   LLM / Structured Output / Function Calling / context-cost basics
+Stage 01   ReAct runtime + provider adapters + Tool interface design
+Stage 02   bounded planning / routing / replanning
+Stage 03   explicit state + LangGraph
+Stage 04   RAG / vector retrieval / reranking / evaluation
+Stage 05   MCP 2026 core + extensions concepts
+Stage 06   memory / checkpoints / durable HITL
+Stage 06A  context engineering / compaction / JIT context
+Stage 06B  Agent Skills / procedural knowledge
+Stage 07   reliability / safety / governance
+Stage 08   tracing / evaluation / regression
+Stage 09   multi-Agent / handoffs / A2A
+Stage 09A  governed workspace / sandbox compute
+Stage 10   production serving / identity / durable jobs
+Stage 10A  long-horizon harness / task ledger / rehydration
+```
 
-The comparison is deliberately fair: Evidence, corpus ingestion, Crossref trust labels, memory policy, export authorization, evaluation, reviewer policy, and production adapters are shared. Only orchestration plumbing changes.
-
-## Why an academic research Agent?
-
-A research Agent forces almost every earlier lesson to become concrete:
+## Domain architecture
 
 ```text
 question
-  -> structured plan
-  -> bounded subquestions
-  -> local RAG + scholarly discovery
-  -> evidence trust normalization
-  -> grounded synthesis
-  -> critic / writer review
-  -> memory write policy
-  -> optional human-approved export
-  -> trace + evaluation
-  -> API / MCP / A2A / container
+  ↓
+remembered user preferences (not evidence)
+  ↓
+bounded research plan
+  ↓
+parallel retrieval
+  ├── local full text
+  └── scholarly metadata discovery
+  ↓
+trust normalization + score filtering + optional document diversity
+  ↓
+evidence sufficiency gate
+  ├── insufficient -> abstain
+  └── sufficient
+        ↓
+      synthesis
+        ↓
+ supervisor -> critic -> optional writer
+        ↓
+ deterministic citation inventory checks
+        ↓
+ optional semantic citation-support judge
+        ↓
+ memory write policy
+        ↓
+ optional human-approved authorized export
+        ↓
+ ResearchReport + trace + metrics
 ```
 
-It also exposes an important truth: **finding a paper title is not the same as possessing evidence for the paper's claims**. OpenScholar therefore distinguishes local full text from scholarly metadata instead of putting everything into one vaguely named `context` list.
+## Two orchestration implementations
 
-## Architecture
+### BaseOpenScholarAgent
+
+Ordinary Python/`asyncio` + Tiny-Agent primitives. Excellent for inspecting control flow.
+
+### LangGraphOpenScholarAgent
+
+The same domain concepts with `StateGraph`, checkpointer, and durable `interrupt`/`Command(resume=...)` semantics.
+
+They share domain policy, but durable execution semantics are intentionally **not identical**: the Base version returns `approval_required` and needs application-managed continuation; the LangGraph version can persist and resume the suspended graph.
+
+## Evidence contract
 
 ```text
-                           +-------------------+
-User / HTTP / A2A -------> | OpenScholar        |
-                           +---------+---------+
-                                     |
-                              bounded planning
-                                     |
-                         +-----------+-----------+
-                         |                       |
-                         v                       v
-                  Local full-text RAG       Crossref search
-                  substantive evidence      discovery metadata
-                         |                       |
-                         +-----------+-----------+
-                                     |
-                              normalize / dedupe
-                                     |
-                             evidence sufficiency
-                               /             \
-                              /               \
-                       insufficient          synthesize
-                           |                    |
-                         abstain          Supervisor
-                                             |
-                                             v
-                                           Critic
-                                             |
-                                      revision needed?
-                                          /       \
-                                        no        yes
-                                         |         |
-                                         |       Writer
-                                         |         |
-                                         +----+----+
-                                              |
-                                      memory policy
-                                              |
-                                      export requested?
-                                          /       \
-                                        no        yes
-                                         |          |
-                                         |     human approval
-                                         |          |
-                                         |     authorization
-                                         |          |
-                                         +------> report file
-                                              |
-                                        ResearchReport
-                                   + trace + metrics + eval
+local_fulltext
+    -> substantive source text actually ingested
+
+scholarly_metadata
+    -> title/authors/year/venue/DOI discovery facts
+    -> not proof of findings
 ```
 
-## Stage map
+The deterministic evaluator checks citation-label existence/grounding gates. The optional semantic evaluator separately asks whether the cited evidence actually supports a cited claim at the stated strength.
 
-| Earlier stage | Capstone responsibility |
-|---|---|
-| 00 | structured model/provider boundaries |
-| 01 | reason → act → observe mental model |
-| 02 | schema-constrained bounded planning |
-| 03 | explicit state and LangGraph orchestration |
-| 04 | chunking, embeddings, retrieval, evidence |
-| 05 | MCP corpus capability boundary |
-| 06 | memory, checkpointing, interrupt/resume, HITL |
-| 07 | budgets, trust labels, approval vs authorization |
-| 08 | tracing, deterministic evals, regression thinking |
-| 09 | supervisor → critic → writer delegation |
-| 09 A2A | expose OpenScholar as a remote Agent service |
-| 10 | bounded FastAPI service and container deployment |
+## Production retrieval path
 
-## Repository layout
+The original offline `HashEmbeddingModel` remains for reproducible learning and CI.
+
+The upgraded path adds:
 
 ```text
-src/tiny_agent/capstone/
-├── models.py
-├── corpus.py
-├── scholarly.py
-├── memory.py
-├── heuristic.py
-├── openai_adapter.py
-├── team.py
-├── export.py
-├── evaluation.py
-├── base_agent.py
-└── langgraph_agent.py
-
-src/tiny_agent/integrations/
-└── openscholar_api.py
-
-stages/11-capstone-enterprise-agent/
-├── README.md
-├── data/
-│   ├── open_papers.json
-│   └── synthetic_corpus.jsonl
-├── theory/
-│   ├── 01-capstone-system-design.md
-│   ├── 02-evidence-and-knowledge-base.md
-│   ├── 03-base-implementation.md
-│   ├── 04-langgraph-implementation.md
-│   ├── 05-memory-hitl-safety.md
-│   ├── 06-evaluation-observability.md
-│   └── 07-production-mcp-a2a.md
-├── code/
-│   ├── bootstrap_open_corpus.py
-│   ├── base_offline_demo.py
-│   ├── base_real_corpus_demo.py
-│   ├── langgraph_demo.py
-│   ├── langgraph_hitl_demo.py
-│   ├── evaluation_demo.py
-│   ├── mcp_server.py
-│   ├── a2a_server.py
-│   └── api_app.py
-├── deployment/
-│   └── Dockerfile
-└── exercises/
-    └── review-questions.md
+OpenAIEmbeddingModel (provider adapter)
+        +
+QdrantRetriever
+        +
+RetrieverResearchCorpus
+        +
+DiversifiedResearchCorpus
 ```
 
-## Install
+so the production architecture can use a real neural embedding model, vector database filtering/persistence, and repeated-document diversity without changing `ResearchReport` or the research Agent control flow.
+
+See:
+
+- `src/tiny_agent/integrations/openai_embeddings.py`
+- `src/tiny_agent/capstone/production_corpus.py`
+- `code/production_retrieval_demo.py`
+
+## Production service boundary
+
+The original teaching API deliberately exposes body-level `user_id` as demo metadata. Do not use that as authentication.
+
+The upgraded production boundary:
+
+```text
+HTTP request
+-> deployment-specific authenticator
+-> AuthenticatedIdentity(subject/roles/tenant)
+-> bind trusted metadata
+-> BoundedAgentService
+-> BaseOpenScholarAgent
+```
+
+The request schema contains no identity fields.
+
+See:
+
+- `src/tiny_agent/integrations/openscholar_production.py`
+- `code/production_api_app.py`
+
+Durable HITL still belongs to the LangGraph/checkpointer path; a production deployment must additionally bind persisted thread ownership to authenticated identity before resume.
+
+## Quick start
+
+Install:
 
 ```bash
 python -m pip install -e ".[dev,stage11]"
 ```
 
-The project core remains dependency-light. Stage 11 dependencies are optional because PDF ingestion, LangGraph, FastAPI, MCP, and A2A should not become mandatory for learners studying Stage 00.
-
-## Quick start: deterministic offline version
-
-The repository contains a small synthetic corpus so the complete architecture can be exercised in CI without network calls or API keys.
+Offline deterministic capstone:
 
 ```bash
 python stages/11-capstone-enterprise-agent/code/base_offline_demo.py
-```
-
-This uses `HeuristicResearchModel`. It is intentionally not a strong language model; it exists so the **control system** can be inspected independently from model quality.
-
-## Build the real open-paper corpus
-
-The repository stores only a manifest. PDFs are downloaded locally rather than committed to Git.
-
-```bash
-python stages/11-capstone-enterprise-agent/code/bootstrap_open_corpus.py
-```
-
-This downloads a small set of open arXiv papers, extracts text with `pypdf`, and writes a generated `corpus.jsonl` under `stages/11-capstone-enterprise-agent/generated/`.
-
-Then run:
-
-```bash
-python stages/11-capstone-enterprise-agent/code/base_real_corpus_demo.py
-```
-
-The default real-corpus demo still uses the deterministic model so it does not require an API key. To experiment with a real model, use `OpenAIResearchModel` and the existing OpenAI adapters after configuring your credentials.
-
-## LangGraph version
-
-```bash
 python stages/11-capstone-enterprise-agent/code/langgraph_demo.py
 python stages/11-capstone-enterprise-agent/code/langgraph_hitl_demo.py
-```
-
-The graph version uses the same corpus, evidence types, memory policy, review team, and exporter. LangGraph owns node/edge state transitions and checkpoint/resume plumbing; it does **not** become the authority for evidence or permissions.
-
-## Evidence contract
-
-OpenScholar intentionally uses two trust classes:
-
-```text
-local_fulltext
-    -> paper text actually present in the local corpus
-    -> may support substantive claims
-
-scholarly_metadata
-    -> title/authors/year/venue/DOI discovered through Crossref
-    -> useful for discovery and bibliographic facts
-    -> NOT proof of paper findings
-```
-
-Local retrieval also applies `min_local_score`. Stage 04's brute-force top-k retriever always returns candidates; a zero-similarity chunk must not become “evidence” merely because it occupied rank 1.
-
-## Human approval boundary
-
-Export is a real side effect:
-
-```text
-request export
-  -> ApprovalRequest
-  -> approve / edit / reject
-  -> ordinary validation + path authorization
-  -> write file
-```
-
-The LangGraph implementation performs no side effect before `interrupt()`. A resumed node may execute again from its beginning, so putting a non-idempotent write before `interrupt()` would be a correctness bug.
-
-## Evaluate the Agent
-
-```bash
 python stages/11-capstone-enterprise-agent/code/evaluation_demo.py
 ```
 
-Deterministic checks include:
-
-- completed vs abstained status;
-- substantive local evidence count;
-- citation labels actually used in the answer;
-- hallucinated/unknown citation labels;
-- citation coverage;
-- required-term recall;
-- grounding gate.
-
-Correct prose is not enough if the trajectory fabricated a citation or treated metadata as scientific evidence.
-
-## Serve it
+Build real paper corpus:
 
 ```bash
-uvicorn stages.11-capstone-enterprise-agent.code.api_app:app
+python stages/11-capstone-enterprise-agent/code/bootstrap_open_corpus.py
+python stages/11-capstone-enterprise-agent/code/base_real_corpus_demo.py
 ```
 
-Because Python module names cannot contain hyphens, the more practical command from repository root is:
+Optional real semantic retrieval (requires OpenAI API key):
 
 ```bash
-python stages/11-capstone-enterprise-agent/code/api_app.py
+python stages/11-capstone-enterprise-agent/code/production_retrieval_demo.py
 ```
 
-Endpoints include:
+Production-shaped authenticated/bounded API demo:
 
-```text
-POST /v1/research/base
-POST /v1/research/langgraph
-POST /v1/research/langgraph/{thread_id}/resume
-GET  /livez
+```bash
+export OPEN_SCHOLAR_DEMO_API_KEY='local-secret'
+python stages/11-capstone-enterprise-agent/code/production_api_app.py
 ```
 
-`user_id` in the teaching request body is only correlation metadata. A production service must bind user/tenant identity from authentication middleware instead of trusting a client-provided string.
+## Theory order
 
-## MCP and A2A
+1. `theory/01-capstone-system-design.md`
+2. `theory/02-evidence-and-knowledge-base.md`
+3. `theory/03-base-implementation.md`
+4. `theory/04-langgraph-implementation.md`
+5. `theory/05-memory-hitl-safety.md`
+6. `theory/06-evaluation-observability.md`
+7. `theory/07-production-mcp-a2a.md`
+8. `theory/08-modern-production-profile.md`
 
-The same application is exposed at two different boundaries:
+## Interoperability
 
 ```text
 MCP
-  -> search the OpenScholar corpus as a capability
+  -> expose corpus/search capabilities
 
 A2A
-  -> ask OpenScholar itself to perform a research task
+  -> expose OpenScholar as an independent remote Agent
+
+HTTP
+  -> ordinary application/service client boundary
 ```
 
-This is the concrete difference between Stage 05 and Stage 09:
+Do not confuse protocol compatibility with authentication or trust.
 
-> MCP connects an Agent/application to capabilities; A2A connects independent Agent systems.
+## What “complete” means here
 
-## Base vs LangGraph
+The repository now contains code paths for every major modern Agent subsystem: model/provider boundary, Tool use, planning, state, RAG, MCP, memory, HITL, context engineering, Skills, safety, evaluation, multi-Agent/A2A, workspace/sandbox, service identity, durable jobs, long-horizon harnesses, and deployment.
 
-| Question | Base version | LangGraph version |
-|---|---|---|
-| orchestration | Python control flow | StateGraph |
-| parallel retrieval | asyncio | graph node using asyncio |
-| state representation | local variables / dataclasses | typed graph state |
-| pause/resume | application must build it | checkpoint + interrupt/Command |
-| small workflow readability | excellent | extra abstraction |
-| complex durable branching | manual state-machine work grows | strong fit |
+The default OpenScholar demo remains intentionally local/offline. Enterprise production still requires deployment-specific choices such as real IAM, durable Postgres checkpointer/Store, managed sandbox infrastructure, data retention/licensing, hardened egress, autoscaling, backups, and operational SLOs.
 
-The conclusion is intentionally **not** “LangGraph wins.” The lesson is:
+That distinction is intentional:
 
-> Use ordinary code while ordinary code keeps the state machine clear. Use a graph/runtime when durable branching, resumability, inspection, or human interrupts justify the abstraction.
-
-## Run tests
-
-```bash
-pytest -q tests/test_capstone.py tests/test_stage11_integrations.py
-```
-
-Stage 11 CI also smoke-tests the public examples and container artifact without downloading external papers or calling a paid model.
-
-## Final capstone questions
-
-After finishing this stage, you should be able to explain:
-
-1. Why evidence type is an application-domain concept rather than a prompt convention.
-2. Why retrieval success and evidence sufficiency are different gates.
-3. Why a human approval decision still needs ordinary authorization.
-4. Why long-term memory must not silently become scientific evidence.
-5. Why a framework should own orchestration plumbing rather than application truth.
-6. Why a correct final answer can still be a failed Agent trajectory.
-7. Why HTTP deployment, MCP interoperability, and A2A interoperability are three different boundaries.
-
-If you can explain those seven points and modify both implementations without guessing, Tiny-Agent has achieved its final learning goal.
+> **Tiny-Agent now teaches the complete architecture and provides working reference mechanisms without pretending that one repository can supply every organization's production infrastructure or security policy.**

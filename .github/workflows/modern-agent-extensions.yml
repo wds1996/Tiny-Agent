@@ -1,0 +1,72 @@
+name: modern-agent-extensions
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  extension-core:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install core + Agent Skills dependency
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,stage06b]"
+      - name: Run modern core tests
+        run: |
+          pytest -q \
+            tests/test_context_engineering.py \
+            tests/test_skills.py \
+            tests/test_workspace.py \
+            tests/test_jobs.py \
+            tests/test_service_identity.py \
+            tests/test_harness.py \
+            tests/test_openai_embeddings.py
+      - name: Smoke-test extension examples
+        run: |
+          python stages/00-foundations/code/context_budget_basics.py
+          python stages/06a-context-engineering/code/context_budget_demo.py
+          python stages/06a-context-engineering/code/compaction_demo.py
+          python stages/06b-agent-skills/code/skill_catalog_demo.py
+          python stages/09a-agent-workspace-sandbox/code/workspace_demo.py
+          python stages/09a-agent-workspace-sandbox/code/docker_sandbox_demo.py
+          python stages/10-production-deployment/code/authenticated_identity.py
+          python stages/10-production-deployment/code/durable_job_worker.py
+          python stages/10a-long-horizon-harness/code/long_horizon_demo.py
+          python stages/10a-long-horizon-harness/code/resume_demo.py
+
+  docker-sandbox-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - name: Pull sandbox image
+        run: docker pull python:3.12-slim
+      - name: Execute a real constrained container
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+          from tiny_agent.workspace import AgentWorkspace, DockerSandboxRunner
+
+          root = Path('.sandbox-smoke').resolve()
+          shutil.rmtree(root, ignore_errors=True)
+          root.mkdir(mode=0o777)
+          runner = DockerSandboxRunner(AgentWorkspace(root))
+          result = runner.run(["python", "-c", "print('sandbox-ok')"])
+          assert result.returncode == 0, result.stderr
+          assert result.stdout.strip() == "sandbox-ok"
+          shutil.rmtree(root, ignore_errors=True)
+          PY

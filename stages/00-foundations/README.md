@@ -1,79 +1,110 @@
-# Stage 00 — LLM & Tool-Use Foundations
+# Stage 00 — LLM, Context & Tool-Use Foundations
 
-This stage establishes the minimum concepts required before building an Agent runtime.
+Stage 00 establishes the model/runtime boundary before any Agent framework appears.
 
-It is intentionally framework-free. The goal is to understand what the model does, what the application runtime does, and how a normal LLM API call becomes a tool-using loop.
+A modern Agent is not “an LLM plus a loop.” It is an application that repeatedly constructs model context, asks a probabilistic model for a proposal, validates structured outputs, executes governed capabilities, records observations, and decides what state survives.
+
+## Learning path
+
+```text
+LLM API + message roles
+        ↓
+Structured Output / JSON Schema
+        ↓
+Function / Tool Calling
+        ↓
+model capabilities + reasoning effort
+        ↓
+context windows / tokens / cost / latency
+        ↓
+instruction hierarchy + context construction
+        ↓
+minimal multi-turn Tool loop
+```
 
 ## Learning objectives
 
-After completing this stage, you should be able to:
+After Stage 00 you should be able to:
 
-1. explain the roles of system, user, assistant, and tool messages;
-2. distinguish natural-language output from structured output;
-3. explain why JSON schema is useful for machine-readable model output;
-4. explain what function/tool calling actually means;
-5. distinguish a tool schema from the executable Python function behind it;
-6. explain why the LLM does not directly execute local functions;
-7. return a tool result to the model as a new observation;
-8. implement a minimal multi-turn tool loop;
-9. identify why this loop is close to, but not yet a complete production Agent runtime.
+1. explain system/user/assistant/tool messages;
+2. distinguish natural-language output from schema-constrained output;
+3. explain why “please output JSON” is weaker than validated Structured Output;
+4. explain that a model proposes ToolCalls but the runtime executes them;
+5. distinguish Tool schema from executable handler;
+6. return Tool observations to the model;
+7. explain model capability vs application/runtime capability;
+8. reason about model selection, reasoning effort, quality, latency, and cost;
+9. distinguish context-window capacity from useful context;
+10. reserve context for output and future runtime/tool continuation;
+11. distinguish instructions, task data, examples, evidence, memory, and tool schemas;
+12. implement a minimal bounded multi-turn Tool loop;
+13. identify what is still missing from a production Agent runtime.
 
 ## Recommended order
 
-1. [`theory/01-llm-api-and-messages.md`](theory/01-llm-api-and-messages.md)
-2. [`theory/02-structured-output.md`](theory/02-structured-output.md)
-3. [`theory/03-function-calling.md`](theory/03-function-calling.md)
-4. [`code/minimal_tool_loop.py`](code/minimal_tool_loop.py)
-5. [`exercises/review-questions.md`](exercises/review-questions.md)
+1. `theory/01-llm-api-and-messages.md`
+2. `theory/02-structured-output.md`
+3. `theory/03-function-calling.md`
+4. `theory/04-model-capabilities-and-reasoning.md`
+5. `theory/05-context-tokens-cost-latency.md`
+6. `code/context_budget_basics.py`
+7. `theory/06-instructions-prompts-and-context-construction.md`
+8. `code/minimal_tool_loop.py`
+9. `exercises/review-questions.md`
 
 ## Mental model
 
-A normal LLM application is roughly:
-
 ```text
-User -> Application -> Model -> Text -> Application -> User
+Application owns
+----------------
+instructions
+context selection
+available Tools
+validation
+authorization
+execution
+state/persistence
+budgets
+observability
+
+Model owns
+----------
+probabilistic inference over the supplied context
+proposal of text / structured data / ToolCalls
 ```
 
-A tool-using application adds an execution boundary:
+The recurring rule for the entire repository starts here:
 
-```text
-User
-  |
-  v
-Model ---- proposes tool call ----> Application Runtime
-  ^                                  |
-  |                                  v
-  +--------- tool observation <--- Python / API / DB
-```
+> **The model proposes; application code validates, authorizes, executes, persists, and stops.**
 
-The most important principle in this stage is:
+## Context is already an engineering concern
 
-> The model proposes an action. The runtime decides whether and how to execute it.
+Even frontier models with very large context windows do not make every token useful. Stage 00 introduces the capacity/cost mechanics; Stage 06A later turns context selection, compaction, progressive disclosure, provenance, and isolation into a full engineering discipline.
 
-That separation becomes the foundation for Agent security, human approval, sandboxing, MCP, tracing, and evaluation later in the project.
+## Current model note
 
-## What this stage does not cover yet
+Tiny-Agent examples may use current GPT-5.6 family model IDs where a live OpenAI call is useful. Model names, prices, and context sizes are versioned provider details; the architecture should not depend on one model name.
 
-We intentionally postpone:
-
-- ReAct;
-- planning;
-- state graphs;
-- RAG;
-- MCP;
-- long-term memory;
-- retries and permissions;
-- evaluation;
-- deployment.
-
-Those features are easier to understand once the tool-use boundary is clear.
+Current OpenAI model catalog: https://platform.openai.com/docs/models
 
 ## Completion checkpoint
 
-Before moving to Stage 01, make sure you can answer:
+Before Stage 01, explain this complete path without notes:
 
-- What exactly does the LLM output when it "calls" a function?
-- Who really executes the Python function?
-- Why must the tool result be sent back to the model?
-- What is the difference between structured output and function calling?
-- Why is a single tool call not enough to define a production Agent?
+```text
+instructions + task + selected context + Tool schemas
+        ↓
+model inference
+        ↓
+ToolCall proposal
+        ↓
+local validation / policy
+        ↓
+real Python/API execution
+        ↓
+Tool observation
+        ↓
+next selected model context
+        ↓
+next proposal or final answer
+```

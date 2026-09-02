@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tiny-agent-runtime"
-version = "0.1.0"
-description = "A learning-first, production-minded agent runtime built from scratch."
+version = "0.2.0"
+description = "A mechanism-first, production-minded learning path for modern AI Agent systems."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
@@ -16,6 +16,7 @@ stage03 = ["langgraph>=1.2,<2", "langchain>=1.3,<2"]
 stage04 = ["numpy>=1.26", "faiss-cpu>=1.9,<2", "qdrant-client>=1.14,<2", "langchain>=1.3,<2"]
 stage05 = ["mcp[cli]>=2,<3"]
 stage06 = ["langgraph>=1.2,<2", "langgraph-checkpoint-sqlite>=3.1,<4", "langgraph-checkpoint-postgres>=3.1,<4", "psycopg[binary,pool]>=3.3,<4"]
+stage06b = ["pyyaml>=6,<7"]
 stage07 = ["jsonschema>=4.25,<5", "tenacity>=9,<10", "pydantic>=2.11,<3"]
 stage08 = ["langsmith>=0.11,<1", "opentelemetry-api>=1.42,<2", "opentelemetry-sdk>=1.42,<2"]
 stage09 = ["openai-agents>=0.22,<1", "a2a-sdk>=1.1,<2"]
@@ -37,6 +38,7 @@ stage11 = [
     "pypdf>=6.16,<7",
     "mcp[cli]>=2,<3",
     "a2a-sdk[http-server]>=1.1,<2",
+    "qdrant-client>=1.14,<2",
 ]
 dev = ["pytest>=8.0"]
 
