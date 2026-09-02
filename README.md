@@ -1,606 +1,277 @@
 # Tiny-Agent
 
-> Learn AI Agents by building one from first principles to production.
+**A mechanism-first, production-minded learning path for modern AI Agent systems — from one ToolCall to context engineering, MCP, memory, safety, evaluation, multi-Agent interoperability, sandboxed workspaces, durable long-horizon harnesses, and a complete research Agent capstone.**
 
-Tiny-Agent is an open-source, learning-first Agent engineering project for **anyone who wants to understand how modern AI Agents actually work**.
+Tiny-Agent is designed for people who do not want to learn Agents as a collection of framework decorators.
 
-The repository does not begin with a black-box framework call. It builds the stack progressively:
+The repository repeatedly follows this order:
 
 ```text
-LLM interfaces
-    -> Structured Output / Function Calling
-    -> ReAct runtime
-    -> provider adapters
-    -> workflow / routing / planning
-    -> explicit state / LangGraph
-    -> RAG / vector databases / Agentic retrieval
-    -> MCP / standardized external capabilities
-    -> memory / durable persistence / HITL
-    -> reliability / safety / tool governance
-    -> evaluation / observability
-    -> multi-Agent / A2A interoperability
-    -> production service / deployment
-    -> OpenScholar integrated capstone
+Why does this abstraction exist?
+        ↓
+Build the mechanism in ordinary Python
+        ↓
+Test the edge cases
+        ↓
+Map it to current frameworks/protocols
+        ↓
+State what the abstraction does NOT solve
 ```
 
-The goal is not only to make examples run. The goal is to understand **why each abstraction exists, what responsibility it owns, where it fails, and how it maps to maintainable software**.
+## Core engineering principles
+
+1. **Model output is a proposal, not authority.**
+2. **Use the least dynamic architecture that solves the task well.**
+3. **State, context, checkpoint, memory, evidence, and artifacts are different scopes.**
+4. **Discovery is not authorization.**
+5. **Approval is not authorization.**
+6. **Retryable failure is not the same as retry-safe operation.**
+7. **Retrieved/remote content is untrusted data, not control policy.**
+8. **A graph is orchestration, not automatically an Agent.**
+9. **More Agents are not automatically better.**
+10. **A subprocess is not a security sandbox.**
+11. **A large context window is capacity, not a reason to send everything.**
+12. **Skills teach procedures; Tools expose capabilities; memory retains selected information.**
+13. **Durable execution externalizes progress instead of depending on one model session/process.**
+14. **Correct final text can still come from a failed/unsafe Agent trajectory.**
+15. **Frameworks/protocols own plumbing; the application owns meaning and policy.**
 
 ---
 
-# Core philosophy
+# 2026 curriculum
 
-1. **Mechanism before framework** — build or inspect the minimum mechanism first, then introduce the mature framework/tool that solves the same problem.
-2. **Theory and code stay together** — each capability stage contains conceptual notes, runnable examples, tests, and exercises where applicable.
-3. **Educational snapshots are preserved** — later framework code does not erase earlier handwritten implementations.
-4. **Deterministic when possible, agentic when useful** — autonomy is added only where uncertainty justifies it.
-5. **Model output is a proposal, not authority** — routes, plans, ToolCalls, retrieval queries, memory candidates, Agent destinations, and actions remain subject to application validation and policy.
-6. **Runtimes own execution** — LLMs can propose actions; application/runtime code governs execution, observations, budgets, stopping, data access, and durable side effects.
-7. **State is explicit when orchestration demands it** — complex branching, persistence, interruption, resumption, delegation, and handoffs should not be hidden in local variables.
-8. **External evidence and remote capabilities are not authority** — retrieved documents, MCP metadata, remote prompts, Tool results, remembered content, and remote Agent outputs retain explicit trust boundaries.
-9. **Memory is governed state, not a magic bucket** — thread checkpoints, long-term memory, RAG knowledge, secrets, and audit logs have different semantics and lifecycles.
-10. **Human approval is not authorization** — reviewed actions still require ordinary validation and application permission checks.
-11. **Least privilege beats persuasive prompting** — capabilities, credentials, roles, approvals, budgets, delegation edges, context projection, and sandbox boundaries are deterministic controls, not instructions the model may reinterpret.
-12. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, retention, privacy, coordination, interoperability, and deployment are not optional afterthoughts.
-13. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, persistence failures, authorization denials, coordination failures, overload, and dependency failures are first-class test cases.
-14. **Tutorial simplifications are documented** — beginner code may be intentionally small, but its production limitations must be explicit.
-15. **More Agents are not automatically better** — multi-Agent complexity must be justified against a simpler workflow or single-Agent baseline with measurable evidence.
-16. **Process-local is not distributed** — Python dictionaries, semaphores, caches, and in-memory task stores do not become shared state just because an HTTP server has multiple workers.
-17. **Deployment topology is architecture** — worker count, replicas, pools, deadlines, shutdown behavior, external state, and network boundaries change correctness, not only performance.
-18. **Evidence type is application truth** — retrieved full text, scholarly metadata, remembered preferences, and remote Agent output must not be flattened into one equally trusted context bucket.
+The numbered stages are the original capability progression. The lettered extension stages were added after a full-project 2026 audit so the repository could cover modern context/skills/sandbox/harness patterns without renumbering mature historical stages.
 
----
-
-# Repository model
-
-Tiny-Agent has two complementary layers:
-
-```text
-stages/
-    stable learning modules and educational snapshots
-
-src/tiny_agent/
-    latest evolving reusable implementation
-```
-
-A concept is normally introduced in a stage before it becomes part of the integrated implementation.
-
-Typical stage structure:
-
-```text
-stage-name/
-├── README.md        # learning order, goals, milestone, external resources
-├── theory/          # detailed conceptual notes
-├── code/            # runnable teaching examples
-└── exercises/       # review/coding/interview questions
-```
-
----
-
-# Learning path
-
-The project is organized by **capability**, not by calendar day or framework name.
-
-| Stage | Capability | Main milestone |
+| Stage | Capability | Main question |
 |---|---|---|
-| [00 — Foundations](stages/00-foundations/) | LLM API, messages, Structured Output, Function Calling | Build a minimal tool-use loop without an Agent framework |
-| [01 — ReAct Runtime](stages/01-react-runtime/) | ReAct, Tool Registry, runtime loop, provider adapter | Build and test a provider-neutral tool-using Agent runtime |
-| [02 — Planning & Routing](stages/02-planning-routing/) | Workflow vs Agent, Router, Planner–Executor, bounded replanning | Choose the least dynamic architecture that solves a task |
-| [03 — Stateful Orchestration](stages/03-stateful-orchestration/) | Explicit state, state machines, LangGraph, LangChain components, checkpoint/interrupt | Rebuild existing Agent/workflow patterns as inspectable state graphs |
-| [04 — Agentic RAG](stages/04-agentic-rag/) | Chunking, embeddings, FAISS, Qdrant, retrievers, reranking, grounded Agentic retrieval | Build a bounded evidence-grounded retrieval Agent |
-| [05 — MCP](stages/05-mcp/) | MCP 2026 stateless protocol, Tools/Resources/Prompts, stdio/HTTP, Python SDK v2 | Discover and consume standardized external capabilities through a clean Tiny-Agent bridge |
-| [06 — Memory / Persistence / HITL](stages/06-memory-persistence-hitl/) | thread memory, long-term Store, SQLite/Postgres checkpoints, approve/edit/reject HITL | Persist and resume stateful Agents with deliberate memory and human-review policies |
-| [07 — Reliability & Safety](stages/07-reliability-safety/) | typed failures, validation, timeout/retry, budgets, permissions, approval binding, injection/sandbox boundaries | Build a guarded runtime that fails predictably and limits model authority |
-| [08 — Evaluation & Observability](stages/08-evaluation-observability/) | local traces/spans, Agent Tool/trajectory evals, regression datasets/gates, OpenTelemetry, LangSmith | Measure, explain, and regression-test Agent behavior across quality, safety, latency, and cost |
-| [09 — Multi-Agent](stages/09-multi-agent/) | delegation, handoffs, specialists, parallel coordination, OpenAI Agents SDK, A2A 1.0 | Build bounded Agent teams and prove whether coordination beats a simpler baseline |
-| [10 — Production Deployment](stages/10-production-deployment/) | service boundary, FastAPI/SSE, concurrency, Postgres/Redis, health/lifespan, Docker, A2A serving | Turn Tiny-Agent into a bounded, testable, containerized network service |
-| [11 — OpenScholar Capstone](stages/11-capstone-enterprise-agent/) | integrated academic research Agent, base + LangGraph implementations | Combine Stages 00–10 into one evidence-grounded, evaluated, deployable portfolio system |
+| [00](stages/00-foundations/) | LLM / messages / Structured Output / Tool Calling / model & context basics | What does the model actually do, and what remains application responsibility? |
+| [01](stages/01-react-runtime/) | ReAct & core runtime | How does one ToolCall become a bounded decide-act-observe loop? |
+| [02](stages/02-planning-routing/) | Workflow / routing / planning | Which control decisions should be deterministic vs model-driven? |
+| [03](stages/03-stateful-orchestration/) | Explicit state & LangGraph | When does a state machine/graph runtime become useful? |
+| [04](stages/04-agentic-rag/) | RAG & Agentic retrieval | How does an Agent obtain and evaluate external evidence? |
+| [05](stages/05-mcp/) | MCP 2026 | How are external capabilities/context standardized across boundaries? |
+| [06](stages/06-memory-persistence-hitl/) | Memory / durability / HITL | What should survive, and how can execution pause/resume safely? |
+| [06A](stages/06a-context-engineering/) | Context Engineering | What should the model see on this exact turn under a finite attention budget? |
+| [06B](stages/06b-agent-skills/) | Agent Skills | How is reusable procedural knowledge discovered and loaded on demand? |
+| [07](stages/07-reliability-safety/) | Reliability / safety / governance | How do we bound, validate, authorize, retry, and refuse execution? |
+| [08](stages/08-evaluation-observability/) | Tracing & evaluation | What happened, was it good, and did a new version regress? |
+| [09](stages/09-multi-agent/) | Multi-Agent / A2A | When does delegation/handoff create measurable value? |
+| [09A](stages/09a-agent-workspace-sandbox/) | Workspace & sandbox compute | Where can an Agent inspect files/run commands without handing it the host machine? |
+| [10](stages/10-production-deployment/) | Production service / identity / durable jobs | What changes when other users/Agents depend on the service? |
+| [10A](stages/10a-long-horizon-harness/) | Long-horizon harness | How does an Agent keep making progress across sessions, workers, and sandbox loss? |
+| [11](stages/11-capstone-enterprise-agent/) | OpenScholar capstone | Can all relevant mechanisms compose into one evidence-grounded Agent system? |
 
-For the framework/infrastructure mapping, see **[Framework & Tooling Map](docs/framework-and-tooling-map.md)**.
-
----
-
-# Current implemented stages
-
-## ✅ Stage 00 — LLM & Tool-Use Foundations
-
-- message-based LLM interaction;
-- provider boundary;
-- Structured Output / JSON Schema;
-- Function Calling;
-- minimal repeated tool loop;
-- framework-free runnable example;
-- review questions.
-
-## ✅ Stage 01 — ReAct & Core Agent Runtime
-
-- explicit ReAct feedback loop;
-- normalized `ToolCall` / `ModelResponse`;
-- `Tool` / `ToolRegistry`;
-- maximum-step protection;
-- OpenAI Responses provider adapter;
-- `call_id` correlation;
-- deterministic fake-model/provider tests;
-- real multi-tool example;
-- explicit production-limitations chapter.
-
-## ✅ Stage 02 — Planning, Routing & Deterministic Workflows
-
-- Workflow vs Agent decision framework;
-- deterministic and semantic routing;
-- schema-constrained control decisions;
-- Planner–Executor separation;
-- bounded replanning;
-- plan/step/replan budgets;
-- safe expected failure vs redacted unexpected failure;
-- runnable deterministic and real-model examples;
-- edge-case tests.
-
-## ✅ Stage 03 — Stateful Orchestration
-
-- explicit state and state-machine theory;
-- handwritten `TinyStateGraph`;
-- nodes, edges, conditional edges, cycles, START/END;
-- LangGraph `StateGraph` fundamentals;
-- LangGraph rebuild of the Stage 01 ReAct loop;
-- graph version of Stage 02 Planner–Executor recovery;
-- streaming state updates;
-- checkpointing with `InMemorySaver` for teaching/testing;
-- `interrupt()` / `Command(resume=...)` fundamentals;
-- LangChain messages and Tool abstractions;
-- curated official/community learning resources;
-- dedicated framework compatibility tests.
-
-## ✅ Stage 04 — RAG & Agentic Retrieval
-
-- RAG fundamentals and fixed two-step RAG;
-- chunking, overlap, metadata, and provider-neutral embedding interfaces;
-- deterministic offline teaching embedding;
-- cosine similarity and exact brute-force top-k retrieval;
-- FAISS, Qdrant, and LangChain Retriever adapters;
-- candidate retrieval vs reranking and hybrid-retrieval theory;
-- bounded Agentic RAG query rewriting and evidence-sufficiency checks;
-- explicit insufficient-evidence abstention;
-- Recall@k / MRR and deterministic/backend tests.
-
-## ✅ Stage 05 — MCP: Standardized Capabilities Across Boundaries
-
-- Function Calling vs MCP boundary;
-- Host / Client / Server mental model;
-- Tools, Resources, Prompts, and resource templates;
-- MCP 2026-07-28 stateless core and Python SDK v2;
-- in-process, stdio, and Streamable HTTP examples;
-- async Tool execution path;
-- namespaced `MCPToolBridge`;
-- remote capability trust/authorization boundaries;
-- real SDK compatibility and runnable-example CI.
-
-## ✅ Stage 06 — Memory, Durable Persistence & Human-in-the-Loop
-
-- context vs state vs checkpoint vs short-/long-term memory;
-- `thread_id` vs cross-thread owner namespace;
-- semantic/episodic/procedural memory taxonomy;
-- `MemoryCandidate` + conservative write policy;
-- LangGraph Store for cross-thread memory;
-- `InMemorySaver` / `SqliteSaver` / `PostgresSaver`;
-- SQLite process-recreation durability;
-- real PostgreSQL checkpointer/Store tests;
-- approve/edit/reject review model;
-- durable HITL resume;
-- idempotency and memory-governance boundaries.
-
-## ✅ Stage 07 — Reliability, Safety & Tool Governance
-
-- typed model-safe Tool failures and raw-exception redaction;
-- local Tool argument validation before handler execution;
-- handwritten validation subset plus maintained `jsonschema` adapter;
-- Pydantic strict-mode comparison for stable typed boundaries;
-- async timeout/cancellation semantics and sync-worker caveats;
-- bounded exponential retry/backoff and Tenacity comparison;
-- retryable-failure vs retry-safe/idempotent-action separation;
-- run-wide Tool/retry/time/token/cost budgets;
-- exact repeated-ToolCall loop detection;
-- default-deny role allowlists and authenticated `Principal` context;
-- exact Tool+arguments approval binding;
-- prompt-injection data/control-plane trust boundaries;
-- narrow Tool and least-privilege guidance;
-- process termination vs real sandbox distinction;
-- composed `GuardedToolExecutor`;
-- Python 3.10/3.12 compatibility + runnable-example CI.
-
-## ✅ Stage 08 — Observability, Tracing & Evaluation
-
-- logging vs tracing vs metrics vs evaluation vs audit-log boundaries;
-- framework-neutral `SpanRecord`, nested `LocalTracer`, and `InMemorySpanSink`;
-- privacy-aware `TraceCapturePolicy`;
-- observed Stage 07 Tool execution without duplicating governance policy;
-- `EvalExample` / `RunArtifact` / `EvaluationSuite` abstractions;
-- final-response, Tool selection/arguments, and trajectory evaluators;
-- deterministic graders vs provider-neutral LLM-as-judge boundary;
-- repeated offline evaluation and metric-coverage tracking;
-- higher/lower-is-better regression rules and CI-style release gates;
-- quality/reliability/latency/token/cost evaluation theory;
-- OpenTelemetry adapter and current GenAI semantic-convention caveats;
-- current LangSmith trace/dataset/experiment/online-eval model;
-- Python 3.10/3.12 integration and runnable-example CI.
-
-## ✅ Stage 09 — Multi-Agent Systems, Handoffs & A2A Interoperability
-
-- single-Agent/workflow baseline before team design;
-- framework-neutral `AgentSpec` / `TeamRuntime` coordination core;
-- manager delegation vs conversation-owning handoff semantics;
-- supervisor/worker and specialist-team patterns;
-- `ContextEnvelope` + `ContextPolicy` for minimum context projection;
-- Agent-private context namespaces;
-- default-deny `DelegationPolicy`;
-- run-scoped Agent-call/handoff/parallel budgets;
-- repeated-handoff-edge protection;
-- atomic prevalidation before parallel fan-out;
-- application-owned fan-in and failure-policy discussion;
-- coordination metrics integrated with Stage 08 concepts;
-- OpenAI Agents SDK `Agent.as_tool()` vs `handoffs` comparison;
-- A2A 1.0 Agent Card / Message / Task / Part / Artifact model;
-- MCP vs A2A interoperability boundary;
-- Python 3.10/3.12 integration + runnable-example CI.
-
-## ✅ Stage 10 — Production Service & Deployment
-
-- framework-neutral `BoundedAgentService` before the web framework;
-- distinct request/run identity and model-safe public failures;
-- process-local concurrency admission, bounded queue wait, and execution deadline;
-- sync-handler offload without pretending thread timeout is hard termination;
-- thin FastAPI `/v1/runs`, SSE, `/livez`, and `/readyz` adapters;
-- liveness vs readiness and bounded dependency checks;
-- ASGI lifespan for resource startup/shutdown;
-- typed environment configuration and safer secret representation with Pydantic Settings;
-- explicit Psycopg async pool lifecycle;
-- Redis health and distributed fixed-window rate-limit teaching adapter;
-- PostgreSQL durable-state vs Redis ephemeral-coordination semantics;
-- multi-worker/multi-replica memory and pool multiplication guidance;
-- current Starlette `httpx2` test-client compatibility;
-- A2A 1.0 route-factory service adapter with shutdown drain;
-- Dockerfile, non-root runtime user, Compose Postgres/Redis stack, and readiness health check;
-- durable-job vs in-process background-task distinction;
-- graceful shutdown and long-running Agent job architecture;
-- real Postgres/Redis + Docker build integration CI on Python 3.10/3.12.
-
-## ✅ Stage 11 — OpenScholar Integrated Capstone
-
-- one complete academic research Agent rather than another isolated framework demo;
-- `BaseOpenScholarAgent` built primarily with ordinary Python/`asyncio` and Tiny-Agent primitives;
-- `LangGraphOpenScholarAgent` using the same domain services with StateGraph/checkpoint/HITL orchestration;
-- explicit `local_fulltext` vs `scholarly_metadata` evidence trust classes;
-- local PDF/JSONL corpus ingestion and inspectable Stage 04 retrieval primitives;
-- open arXiv paper manifest plus local `pypdf` corpus bootstrap;
-- Crossref scholarly metadata discovery without treating titles as evidence of findings;
-- score threshold + evidence sufficiency abstention before synthesis;
-- bounded Supervisor → Critic → optional Writer review team;
-- conservative long-term style-memory write policy;
-- human-approved report export with path authorization and exclusive create;
-- deterministic citation/grounding evaluation and trace integration;
-- MCP corpus capability and A2A whole-Agent service examples;
-- FastAPI base/LangGraph/resume endpoints;
-- Stage 11 Docker artifact and Python 3.10/3.12 dedicated CI;
-- synthetic offline corpus so the complete system is testable without API keys/network.
+Detailed competency coverage: **[Modern Agent Competency Map](docs/modern-agent-competency-map.md)**  
+Framework/protocol mapping: **[Framework & Tooling Map](docs/framework-and-tooling-map.md)**
 
 ---
 
-# Framework learning strategy
-
-Frameworks/tools are introduced **after** the underlying mechanism or protocol problem is visible.
+# Capability ladder
 
 ```text
-Python while-loop Agent
-    -> explicit state machine
-    -> handwritten TinyStateGraph
-    -> LangGraph
+LLM call
+  ↓
+Structured decision / ToolCall
+  ↓
+ReAct runtime
+  ↓
+workflow / router / planner
+  ↓
+explicit state graph
+  ↓
+retrieval and external evidence
+  ↓
+MCP capability boundary
+  ↓
+memory / checkpoint / HITL
+  ↓
+context engineering + Agent Skills
+  ↓
+reliability / permissions / budgets
+  ↓
+tracing / evaluation / regression
+  ↓
+multi-Agent / A2A
+  ↓
+governed workspace / sandbox compute
+  ↓
+production identity / jobs / infrastructure
+  ↓
+long-horizon resumable harness
+  ↓
+OpenScholar capstone
 ```
 
-```text
-chunk / vector / cosine from first principles
-    -> brute-force Retriever
-    -> FAISS
-    -> Qdrant
-    -> LangChain Retriever
-    -> Agentic RAG
-```
-
-```text
-hard-coded local ToolRegistry
-    -> MCP roles/primitives/wire shape
-    -> MCP Python SDK v2
-    -> stdio / Streamable HTTP
-    -> Tiny-Agent MCP bridge
-```
-
-```text
-thread state -> Checkpointer -> SQLite/PostgreSQL
-memory candidate -> write policy -> Store
-risky action -> interrupt -> approve/edit/reject -> validate + authorize
-```
-
-```text
-raw Tool invocation
-    -> typed safe failures
-    -> local validation
-    -> handwritten retry/budget/permission mechanisms
-    -> jsonschema / Pydantic / Tenacity comparison
-    -> GuardedToolExecutor
-```
-
-```text
-print trajectory
-    -> local trace/span model
-    -> RunArtifact + deterministic Agent evaluators
-    -> regression dataset/gate
-    -> OpenTelemetry
-    -> LangSmith
-```
-
-```text
-single Agent / deterministic workflow baseline
-    -> handwritten delegation + handoff semantics
-    -> context/authority/coordination budgets
-    -> OpenAI Agents SDK manager/handoff mapping
-    -> A2A 1.0 cross-Agent interoperability
-    -> Stage 08 evidence-based architecture comparison
-```
-
-```text
-local Agent call
-    -> framework-neutral service boundary
-    -> FastAPI / SSE transport adapter
-    -> Postgres / Redis lifecycle
-    -> liveness / readiness / graceful shutdown
-    -> A2A route hosting
-    -> Docker / Compose / CI
-```
-
-```text
-all individual capabilities
-    -> shared OpenScholar domain layer
-    -> handwritten base orchestration
-    -> LangGraph orchestration of the same domain
-    -> evidence-grounded evaluation
-    -> HTTP / MCP / A2A / container boundaries
-```
-
-This prevents the project from becoming a collection of framework API recipes.
+The project deliberately does **not** say the bottom of this diagram is always better. Use only the complexity your task needs.
 
 ---
 
-# Quick start
+# What is implemented from first principles?
 
-Clone the repository and install the lightweight core development environment:
+Reusable code under `src/tiny_agent/` includes:
+
+```text
+runtime.py                 ReAct-style loop
+workflows.py               routing / planning / replanning
+state_graph.py             handwritten graph mechanism
+retrieval.py               chunking / embeddings / cosine / top-k
+rag.py                     Basic + Agentic RAG
+mcp_bridge.py              MCP Tool normalization
+memory_policy.py           governed memory candidates
+approval.py                approve/edit/reject
+context_engineering.py     context budget / selection / compaction
+skills.py                  SKILL.md catalog + progressive activation
+reliability.py             failures / retries / budgets / loop detection
+governance.py              principals / permissions / exact approval binding
+guarded_runtime.py         composed execution policy
+observability.py           local traces/spans
+evaluation.py              datasets / graders / regression gates
+multi_agent.py             delegation / handoff / fan-out / context projection
+workspace.py               workspace confinement + Docker sandbox baseline
+jobs.py                    durable local run queue + leases
+service_identity.py        trusted identity/tenant binding
+production.py              bounded service execution + readiness
+harness.py                 durable task ledger + long-horizon handoffs
+capstone/                  OpenScholar domain + orchestration + eval
+integrations/              OpenAI / FastAPI / MCP / A2A / OTel / DB adapters
+```
+
+Framework integrations are introduced only after their underlying mechanism is visible.
+
+---
+
+# Modern Agent distinctions you should know
+
+```text
+Structured Output != Tool Calling
+Tool Calling != Tool execution
+Tool != Skill
+Skill != Memory
+MCP != A2A
+Retriever != Vector Store
+RAG != Agent
+State != Context
+Checkpoint != Long-term Memory
+Graph != Agent
+Delegation != Handoff
+Discovery != Authorization
+Approval != Authorization
+Timeout != Hard termination
+Subprocess != Sandbox
+Service run != Agent checkpoint != long-horizon task ledger
+```
+
+If those distinctions are precise, most framework APIs become much easier to reason about.
+
+---
+
+# Installation
+
+Core mechanisms are dependency-light:
 
 ```bash
 python -m pip install -e ".[dev]"
-pytest -q
 ```
 
-## Optional capability extras
+Selected extras:
 
 ```bash
-python -m pip install -e ".[openai]"       # real OpenAI examples
-python -m pip install -e ".[stage03]"      # LangGraph / LangChain
-python -m pip install -e ".[stage04]"      # vector backends
-python -m pip install -e ".[stage05]"      # MCP v2
-python -m pip install -e ".[dev,stage06]"  # persistence / HITL
-python -m pip install -e ".[dev,stage07]"  # reliability / safety
-python -m pip install -e ".[dev,stage08]"  # observability / evaluation
-python -m pip install -e ".[dev,stage09]"  # multi-Agent / A2A objects
-python -m pip install -e ".[dev,stage10]"  # service / deployment stack
-python -m pip install -e ".[dev,stage11]"  # OpenScholar integrated capstone
+python -m pip install -e ".[openai]"
+python -m pip install -e ".[dev,stage03]"   # LangGraph / LangChain
+python -m pip install -e ".[dev,stage04]"   # FAISS / Qdrant / LangChain retrieval
+python -m pip install -e ".[dev,stage05]"   # MCP v2
+python -m pip install -e ".[dev,stage06]"   # SQLite/Postgres checkpointing
+python -m pip install -e ".[dev,stage06b]"  # Agent Skills YAML parsing
+python -m pip install -e ".[dev,stage07]"   # jsonschema / Pydantic / Tenacity
+python -m pip install -e ".[dev,stage08]"   # LangSmith / OpenTelemetry
+python -m pip install -e ".[dev,stage09]"   # OpenAI Agents SDK / A2A
+python -m pip install -e ".[dev,stage10]"   # FastAPI / Postgres / Redis / A2A server
+python -m pip install -e ".[dev,stage11]"   # complete OpenScholar integrations
 ```
 
-Follow the stage-specific learning orders rather than reading code directories alphabetically.
+Stages 06A, 09A, and 10A use the standard library plus Tiny-Agent core for their handwritten mechanisms. Docker is an external runtime requirement only for actually executing the Stage 09A container sandbox example.
 
 ---
 
-# Testing philosophy
+# Tests and CI
 
-Tiny-Agent separates mechanism correctness from optional backend/framework compatibility and live-provider behavior.
+Tiny-Agent separates lightweight mechanism tests from framework/infrastructure compatibility tests.
+
+Coverage includes:
+
+- runtime/tool edge cases;
+- Structured Output/provider adapters;
+- planning/replanning budgets;
+- handwritten/LangGraph state semantics;
+- FAISS/Qdrant retrieval;
+- MCP v2 server/client/transport paths;
+- durable SQLite/Postgres checkpoint and HITL;
+- validation/retry/permission/approval/injection boundaries;
+- tracing/evaluation/regression gates;
+- multi-Agent ownership, context isolation, handoff loops, A2A objects;
+- FastAPI/Postgres/Redis/A2A service integration;
+- context-budget/compaction behavior;
+- Agent Skill discovery/activation;
+- workspace path confinement and Docker command hardening;
+- durable job leases and long-horizon resume;
+- OpenScholar evidence/citation/semantic-support and authenticated bounded serving.
+
+CI targets Python 3.10 and 3.12 for the main compatibility matrix. A dedicated modern-extensions workflow also smoke-tests the Docker sandbox on Ubuntu.
+
+---
+
+# OpenScholar final capstone
+
+Stage 11 is intentionally not “one more framework demo.”
+
+It combines:
 
 ```text
-Core deterministic tests              Integration / infrastructure tests                       Live examples
-------------------------              ----------------------------------                       -------------
-Pure Python                           LangGraph / FAISS / Qdrant / MCP                         Real model/API
-Fake models + policy/eval/team tests  Postgres / Redis / FastAPI / A2A / OTel / LangSmith    API keys/network
-No token cost                         local containers + current SDK APIs                      Potential cost
-Mechanism correctness                 protocol/lifecycle/deployment compatibility              End-to-end behavior
+bounded planning
++ local full-text RAG
++ scholarly metadata discovery
++ explicit evidence trust classes
++ evidence abstention
++ reviewer/writer coordination
++ governed memory
++ HITL export
++ deterministic + optional semantic citation evaluation
++ traces/metrics
++ MCP / A2A / HTTP boundaries
++ real semantic embedding/Qdrant production path
++ trusted service identity
++ BoundedAgentService
 ```
 
-Important failure boundaries include:
+The offline default remains reproducible and API-key free. Production infrastructure is injected behind the same domain boundaries.
 
-- loop/step/rewrite/tool/retry/Agent-call/handoff budgets;
-- malformed provider responses and structured decisions;
-- invalid graph routes/cycles and plan validation;
-- model-safe error redaction;
-- Tool validation, permission/default-deny behavior, and approval binding;
-- timeout/cancellation/retry/idempotency semantics;
-- prompt-injection trust boundaries;
-- checkpoint/interrupt compatibility and durable recovery;
-- retrieval misses and evidence insufficiency;
-- MCP discovery/schema normalization and remote errors;
-- memory-write denial and HITL edit/reject behavior;
-- SQLite/PostgreSQL persistence;
-- trace/evaluator/regression-gate behavior;
-- denied Agent delegation, failed handoffs, private context isolation, and handoff loops;
-- service overload admission and execution deadlines;
-- readiness failures without raw dependency-secret leakage;
-- real Redis/Postgres async lifecycle;
-- current FastAPI/Starlette/A2A SDK compatibility;
-- Docker Compose validation and Stage 10 image build;
-- OpenScholar evidence trust classes and minimum-score filtering;
-- hallucinated citation detection and grounding gates;
-- LangGraph capstone pause/resume before durable export;
-- MCP corpus vs A2A whole-Agent integration boundaries;
-- Stage 11 image build without downloading external papers.
+The repository does not pretend that a demo API key, local SQLite, ordinary Docker, or one vector database automatically satisfies every enterprise IAM/compliance/multi-tenant threat model. The goal is to teach and test the correct **semantics and composition points**.
 
 ---
 
-# Repository structure
+# 2026 reference anchors
 
-```text
-Tiny-Agent/
-├── README.md
-├── LICENSE
-├── CONTRIBUTING.md
-├── docs/
-│   └── framework-and-tooling-map.md
-├── .github/workflows/
-│   ├── tests.yml
-│   └── stage11-capstone.yml
-├── stages/
-│   ├── 00-foundations/
-│   ├── 01-react-runtime/
-│   ├── 02-planning-routing/
-│   ├── 03-stateful-orchestration/
-│   ├── 04-agentic-rag/
-│   ├── 05-mcp/
-│   ├── 06-memory-persistence-hitl/
-│   ├── 07-reliability-safety/
-│   ├── 08-evaluation-observability/
-│   ├── 09-multi-agent/
-│   ├── 10-production-deployment/
-│   └── 11-capstone-enterprise-agent/
-├── src/tiny_agent/
-│   ├── approval.py
-│   ├── capstone/
-│   │   ├── base_agent.py
-│   │   ├── corpus.py
-│   │   ├── evaluation.py
-│   │   ├── export.py
-│   │   ├── heuristic.py
-│   │   ├── langgraph_agent.py
-│   │   ├── memory.py
-│   │   ├── models.py
-│   │   ├── openai_adapter.py
-│   │   ├── scholarly.py
-│   │   ├── team.py
-│   │   └── utils.py
-│   ├── decision.py
-│   ├── evaluation.py
-│   ├── governance.py
-│   ├── guarded_runtime.py
-│   ├── integrations/
-│   │   ├── a2a.py
-│   │   ├── a2a_server.py
-│   │   ├── fastapi_app.py
-│   │   ├── openscholar_api.py
-│   │   ├── opentelemetry.py
-│   │   ├── postgres_backend.py
-│   │   ├── redis_backend.py
-│   │   └── settings.py
-│   ├── memory_policy.py
-│   ├── multi_agent.py
-│   ├── observability.py
-│   ├── observed_runtime.py
-│   ├── production.py
-│   ├── reliability.py
-│   ├── runtime.py
-│   ├── state_graph.py
-│   ├── langgraph_runtime.py
-│   ├── retrieval.py
-│   ├── rag.py
-│   ├── mcp_bridge.py
-│   ├── trust.py
-│   ├── validation.py
-│   ├── validators/
-│   ├── retrievers/
-│   ├── tool.py
-│   ├── types.py
-│   ├── workflows.py
-│   └── models/
-├── tests/
-└── pyproject.toml
-```
+Tiny-Agent tracks current concepts/APIs rather than freezing old tutorials:
+
+- OpenAI model/API docs — https://platform.openai.com/docs/
+- OpenAI Agents SDK 2026 harness/sandbox direction — https://openai.com/index/the-next-evolution-of-the-agents-sdk/
+- LangGraph/LangChain docs — https://docs.langchain.com/
+- MCP 2026-07-28 — https://blog.modelcontextprotocol.io/posts/2026-07-28/
+- Agent Skills open specification — https://agentskills.io/specification
+- A2A specification — https://a2a-protocol.org/latest/specification/
+- Anthropic context engineering — https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
+- Anthropic long-running harness guidance — https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
+- OWASP GenAI Security — https://genai.owasp.org/
+- OpenTelemetry — https://opentelemetry.io/
+
+Version-specific framework code is covered by CI; if an external tutorial conflicts with current official docs or the repository's tested dependency range, prefer the current official docs.
 
 ---
 
-# License
+# Repository philosophy
 
-Tiny-Agent is open-source software released under the **MIT License**.
+Tiny-Agent is a learning repository, but “learning” is not an excuse for architecture that teaches dangerous habits.
 
-Copyright (c) 2026 wds1996.
+Teaching implementations are intentionally small and inspectable, while limitations are named explicitly. Production examples then add the missing mechanisms rather than retroactively pretending the small example was enterprise-ready all along.
 
-See [`LICENSE`](LICENSE) for the full license text.
-
----
-
-# Contributing
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-Good contributions include clearer explanations, runnable examples, exercises/interview questions, deterministic tests, edge cases, bug fixes, diagrams, adapters, governance policies, evaluation cases, coordination policies, interoperability examples, deployment checks, lifecycle fixes, and capstone regression cases.
-
-When adding a capability, update both its educational stage under `stages/` and `src/tiny_agent/` when the capability belongs in the reusable implementation.
-
----
-
-# References and versioning
-
-Primary references are maintained in the relevant stage documentation. Framework, database, security, observability, multi-Agent, web-service, and protocol APIs evolve quickly, so examples should be checked against current official documentation whenever dependencies are updated.
-
-Current optional dependency policy targets stable major-version ranges:
-
-```text
-Stage 03
-langgraph >= 1.2, < 2
-langchain >= 1.3, < 2
-
-Stage 04
-faiss-cpu >= 1.9, < 2
-qdrant-client >= 1.14, < 2
-langchain >= 1.3, < 2
-numpy >= 1.26
-
-Stage 05
-mcp[cli] >= 2, < 3
-protocol teaching target: MCP 2026-07-28
-
-Stage 06
-langgraph >= 1.2, < 2
-langgraph-checkpoint-sqlite >= 3.1, < 4
-langgraph-checkpoint-postgres >= 3.1, < 4
-psycopg[binary,pool] >= 3.3, < 4
-
-Stage 07
-jsonschema >= 4.25, < 5
-tenacity >= 9, < 10
-pydantic >= 2.11, < 3
-security reference baseline: OWASP Top 10 for LLM Applications 2025
-
-Stage 08
-langsmith >= 0.11, < 1
-opentelemetry-api >= 1.42, < 2
-opentelemetry-sdk >= 1.42, < 2
-OpenTelemetry GenAI semantic conventions are treated as evolving/development guidance
-
-Stage 09
-openai-agents >= 0.22, < 1
-a2a-sdk >= 1.1, < 2
-A2A protocol teaching target: 1.0
-
-Stage 10
-fastapi >= 0.141, < 1
-uvicorn[standard] >= 0.52, < 1
-pydantic-settings >= 2.15, < 3
-redis >= 8.1, < 9
-psycopg[binary,pool] >= 3.3, < 4
-httpx2 >= 2.12, < 3
-a2a-sdk >= 1.1, < 2
-
-Stage 11
-openai >= 2, < 3
-langgraph >= 1.2, < 2
-fastapi >= 0.141, < 1
-uvicorn[standard] >= 0.52, < 1
-httpx2 >= 2.12, < 3
-pypdf >= 6.16, < 7
-mcp[cli] >= 2, < 3
-a2a-sdk[http-server] >= 1.1, < 2
-```
-
----
-
-Tiny-Agent grows in small, reviewable capability stages so that repository history remains useful as learning material rather than only as the final codebase.
+MIT licensed. Contributions should preserve the project's mechanism-first order, runnable examples, tests, and explicit scope/limitations.
