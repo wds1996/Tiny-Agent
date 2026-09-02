@@ -233,7 +233,7 @@ class LangGraphOpenScholarAgent:
         def route_after_memory(state: OpenScholarGraphState) -> str:
             return "approval_export" if state.get("export_path") else "finalize"
 
-        def approval_export_node(state: OpenScholarGraphState) -> dict[str, Any]:
+        async def approval_export_node(state: OpenScholarGraphState) -> dict[str, Any]:
             requested_path = state.get("export_path")
             if not requested_path:
                 return {}
@@ -243,7 +243,10 @@ class LangGraphOpenScholarAgent:
                 reason="Writing a durable report is an external side effect.",
                 risk="medium",
             )
-            # No side effect occurs before interrupt(): this node restarts on resume.
+            # Keep the interrupt in the async runnable context. On Python 3.10,
+            # a synchronous node may run in an executor thread where LangGraph's
+            # runnable context is not available. No side effect occurs before
+            # interrupt(): this node can restart safely when resumed.
             decision_payload = interrupt(approval.to_interrupt_payload())
             decision = ApprovalDecision.from_payload(decision_payload)
             resolution = resolve_approval(approval, decision)
