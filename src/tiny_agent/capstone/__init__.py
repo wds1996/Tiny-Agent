@@ -5,6 +5,7 @@ from .corpus import CorpusDocument, LocalResearchCorpus, extract_pdf_text, load_
 from .evaluation import ResearchEvaluation, evaluate_research_report
 from .export import MarkdownReportExporter, render_report_markdown
 from .heuristic import HeuristicResearchModel
+from .langgraph_agent import LangGraphOpenScholarAgent
 from .memory import InMemoryResearchMemory, ResearchMemoryStore
 from .models import Critique, Evidence, ResearchMetrics, ResearchModel, ResearchPlan, ResearchReport, ResearchRequest
 from .openai_adapter import OpenAIResearchModel
@@ -19,6 +20,7 @@ __all__ = [
     "Evidence",
     "HeuristicResearchModel",
     "InMemoryResearchMemory",
+    "LangGraphOpenScholarAgent",
     "LocalResearchCorpus",
     "MarkdownReportExporter",
     "OpenAIResearchModel",
