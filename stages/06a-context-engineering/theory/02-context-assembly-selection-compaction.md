@@ -1,93 +1,287 @@
-# 02 — Context assembly, selection, and compaction
+# 02 — Context Assembly, Selection, Ordering, and Compaction
 
-A useful context builder works like a compiler pipeline rather than a giant string concatenation.
+A useful context builder behaves more like a compiler pipeline than `"\n".join(everything)`.
 
 ```text
 sources
   -> candidates
   -> classify
-  -> prioritize/filter
+  -> select under budget
   -> compact where appropriate
-  -> order
+  -> restore intentional ordering
   -> render
 ```
 
-## Required vs optional context
+Each step solves a different problem.
 
-Some information should fail closed if it cannot fit:
+---
 
-- core safety/control instructions;
-- the current user task;
-- schemas required to interpret the expected response.
-
-Other information can be selected:
-
-- old history;
-- low-relevance memories;
-- extra evidence candidates;
-- optional tools/skills.
-
-`ContextBuilder` admits required items first. If required items exceed the budget, it raises `ContextBudgetError` instead of silently dropping an invariant.
-
-## Priority is not ordering
+## 1. Selection and ordering are not the same
 
 Selection asks:
 
-> What fits?
+> Which items fit and matter?
 
 Ordering asks:
 
-> In what sequence should the model see it?
+> In what sequence should the model see the selected items?
 
-Tiny-Agent ranks optional items by priority for admission but restores selected items to original application order before rendering. This prevents a retrieval score from accidentally moving a low-trust evidence block ahead of system/task instructions.
+Tiny-Agent uses priority for **admission**, then returns selected items to their original application-defined order.
 
-## Compaction is lossy derived state
+Core logic, simplified from `ContextBuilder.build()`:
 
-When history becomes large:
+```python
+required = [(i, item) for i, item in indexed if item.required]
+optional = [(i, item) for i, item in indexed if not item.required]
 
-```text
-old turns
-   -> summary
-recent turns remain verbatim
+used = sum(item.estimated_tokens for _, item in required)
+optional.sort(key=lambda pair: (-pair[1].priority, pair[0]))
+
+for index, item in optional:
+    if used + item.estimated_tokens <= budget.available_input_tokens:
+        selected_indexes.add(index)
+        used += item.estimated_tokens
+
+selected = tuple(
+    item for index, item in indexed
+    if index in selected_indexes
+)
 ```
 
-But the summary is not the original record.
+Why restore order?
 
-Tiny-Agent's `compact_items()` returns a `CompactionRecord` containing:
+Because "retrieval score 0.94" should not accidentally move an untrusted document ahead of application instructions. Priority answers "keep or drop," not "rewrite semantic authority."
 
-- the source item keys;
-- the derived summary item;
-- original estimated size;
-- estimated savings;
-- provenance `derived:compaction`.
+---
 
-This matters because summaries can omit exceptions, caveats, attribution, or uncertainty.
+## 2. Greedy priority is a policy, not mathematics from heaven
 
-## What should not be compacted casually
+Tiny-Agent deliberately uses a simple deterministic policy:
 
-Avoid replacing these with vague summaries when exactness matters:
+```text
+required first
+optional by priority
+skip items that do not fit
+```
+
+Production systems may use more sophisticated policies:
+
+- per-kind quotas;
+- relevance score + recency;
+- diversity constraints;
+- source quality;
+- conversation segmentation;
+- learned context selection.
+
+The teaching implementation is valuable because you can inspect every decision.
+
+Do not optimize selection complexity before you can evaluate whether the simple version fails.
+
+---
+
+## 3. Why one giant truncation is dangerous
+
+Tempting implementation:
+
+```python
+prompt = huge_prompt[-max_chars:]
+```
+
+Possible result:
+
+```text
+system instruction at beginning -> gone
+latest random Tool output        -> preserved
+```
+
+A byte/character truncation policy has no concept of semantic importance.
+
+Explicit `ContextItem(required=True)` lets the application fail instead of silently amputating invariants.
+
+---
+
+## 4. Compaction is lossy derived state
+
+When history grows:
+
+```text
+old detailed turns
+      ↓ summarizer
+compact summary
++
+recent turns verbatim
+```
+
+But:
+
+```text
+summary != source of truth
+```
+
+Tiny-Agent records that relationship:
+
+```python
+from tiny_agent import compact_items
+
+record = compact_items(
+    old_turns,
+    key="history-summary-1",
+    summarizer=summarize_history,
+    kind="history",
+    provenance="derived:compaction",
+)
+
+print(record.source_keys)
+print(record.saved_estimated_tokens)
+```
+
+The summary is explicitly derived and marked untrusted by default.
+
+---
+
+## 5. A summary can be confidently wrong
+
+Original history:
+
+```text
+User: Never send the report automatically.
+User: You may generate a draft.
+User: I will approve export later.
+```
+
+Bad summary:
+
+```text
+User wants a report generated and sent later.
+```
+
+One missing distinction changed authorization semantics.
+
+Therefore some state should not be compressed into vague prose.
+
+---
+
+## 6. What should not be compacted casually
+
+Keep exact structured/source state when later behavior depends on it:
 
 - approval decisions;
-- authorization facts;
-- structured tool results required for later computation;
+- authorization/ownership facts;
+- idempotency keys;
+- run/task identifiers;
+- financial amounts;
+- structured Tool results used for computation;
 - legal/audit records;
-- exact source quotations/locators;
-- idempotency keys and run/task identifiers.
+- exact source locators needed for citation.
 
-Context compression is not permission to destroy application truth.
+Context compaction reduces model input. It does not grant permission to destroy durable truth.
 
-## Evaluate context policies
+---
 
-Compare policies on a fixed dataset:
+## 7. Compaction policy should separate facts from narrative
+
+A useful handoff can contain both:
 
 ```text
-answer quality
-trajectory success
-input tokens
-latency
-cost
-retrieval/tool precision
-prompt-injection success rate
+STRUCTURED FACTS
+- task_id: task-12
+- status: pending
+- artifact: reports/a.md
+- approval: not_granted
+
+SUMMARY
+- searched papers A/B; next step is compare methods
 ```
 
-If a 40% smaller context preserves quality and reduces attack surface, that is an engineering win. If aggressive summarization loses critical constraints, it is not.
+The structured facts survive exact. The narrative can be lossy.
+
+Stage 10A uses this idea: ledger/workspace state remains authoritative while the handoff summary is only a compact view for the next worker.
+
+---
+
+## 8. Worked selection example
+
+Suppose input budget is 1,000 tokens.
+
+```text
+system       120 required
+current task  80 required
+recent turns 300 priority 90
+paper A      350 priority 80
+paper B      350 priority 70
+old history  500 priority 20
+```
+
+Required uses 200.
+
+Greedy optional selection:
+
+```text
+recent turns -> total 500
+paper A      -> total 850
+paper B      -> would exceed 1000, drop
+old history  -> would exceed 1000, drop
+```
+
+Notice that a smaller lower-priority item could theoretically fit where a larger higher-priority one could not; Tiny-Agent will continue scanning and admit it if it fits. This makes the policy deterministic and easy to inspect.
+
+---
+
+## 9. Compaction trigger strategies
+
+Possible triggers:
+
+```text
+estimated token threshold
+turn count threshold
+phase transition
+long-horizon session handoff
+Tool observation burst
+```
+
+Avoid summarizing every turn. That spends model calls on compression and repeatedly compounds summary error.
+
+A practical pattern:
+
+```text
+recent window verbatim
++
+periodic older summary
++
+retrieval of exact history/artifacts when needed
+```
+
+---
+
+## 10. Evaluate context policies, not only answers
+
+Useful metrics:
+
+```text
+answer/task quality
+constraint retention
+input tokens
+latency/cost
+Tool selection precision
+retrieval precision
+prompt-injection success
+summary factual error
+```
+
+If a context policy cuts 40% of tokens while preserving success and reducing attack surface, that is an engineering win.
+
+If it saves 40% of tokens and forgets the user's "do not send" constraint, it is a very efficient failure.
+
+---
+
+## Completion mental model
+
+```text
+selection  != ordering
+summary    != truth
+storage    != context
+priority   != authority
+compression != deletion of durable state
+```
+
+Once these distinctions are clear, context engineering becomes a controllable pipeline instead of prompt-size panic.

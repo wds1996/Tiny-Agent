@@ -1,162 +1,297 @@
-# 02 — Async, concurrency, streaming, and backpressure
+# 02 — Async, Concurrency, Deadlines, Streaming, and Backpressure
 
-## Async is not “make everything faster”
+`async` is one of the most commonly over-celebrated keywords in Agent tutorials.
 
-Async helps when tasks spend time waiting on I/O:
+It is useful. It is not a spell meaning "faster."
+
+---
+
+## 1. Async helps while waiting
+
+Good async workloads spend time waiting for I/O:
 
 ```text
 LLM API
 HTTP
 Postgres
 Redis
-MCP/A2A
+MCP / A2A
+object storage
 ```
 
-It does not magically parallelize CPU-heavy Python work.
+CPU-heavy Python work still consumes CPU.
 
-## The event-loop restaurant
+### The event-loop restaurant
 
-Imagine one waiter serving many tables. The waiter is efficient because customers spend time chewing.
+Imagine one waiter serving many tables efficiently because customers spend most of their time eating.
 
-If one customer says:
+Then one customer asks the waiter:
 
-> “Please stand here and manually calculate a billion matrix multiplications before serving anyone else.”
+> Please stand here and calculate a billion matrix multiplications before serving anyone else.
 
-Congratulations: your elegant async restaurant now has one very committed waiter and 40 angry tables.
+Your elegant async restaurant now has one extremely loyal waiter and 40 angry tables.
 
 Blocking work inside `async def` blocks the event loop.
 
-Stage 10 therefore sends synchronous handlers through `asyncio.to_thread()` for compatibility.
+---
 
-## Timeout is not thread termination
+## 2. Sync compatibility through worker threads
 
-This distinction has a real capacity consequence.
+Tiny-Agent supports a synchronous handler by moving it off the event loop:
 
-Suppose:
+```python
+value = await asyncio.to_thread(
+    self._handler,
+    request.input,
+    payload,
+)
+```
+
+This improves event-loop responsiveness.
+
+It does **not** make the thread hard-killable.
+
+That distinction matters for deadlines.
+
+---
+
+## 3. Timeout != termination
+
+Scenario:
 
 ```text
 max_concurrency = 1
-sync worker thread starts
-caller deadline expires after 1 second
-worker thread still runs for 20 seconds
+sync handler starts in worker thread
+request timeout = 1 second
+actual handler runs = 20 seconds
 ```
 
-A dangerous implementation would immediately release the semaphore at second 1. New requests then enter even though the old work is still consuming resources, so the advertised concurrency bound becomes fiction.
+If the service returns timeout at second 1 and immediately releases capacity, a second request starts while the first thread is still working.
 
-Tiny-Agent instead returns the timeout to the caller but keeps that capacity slot occupied until the underlying sync invocation actually ends.
+The promised concurrency limit becomes fiction.
+
+Tiny-Agent therefore shields the sync invocation and defers semaphore release until the underlying work actually finishes:
+
+```python
+output = await asyncio.wait_for(
+    asyncio.shield(invocation),
+    timeout=request_timeout,
+)
+```
+
+On timeout:
 
 ```text
-caller deadline expired -> caller receives timeout
-                           worker still alive
-                           capacity still reserved
-worker really finishes  -> capacity released
+caller receives timeout
+worker thread may continue
+capacity remains reserved
+worker ends
+capacity released
 ```
 
-If you require hard termination, use process/container/job isolation appropriate to the workload and risk.
+If hard termination is required, use a process/container/job boundary designed for it.
 
-## Concurrency limit vs rate limit
+---
 
-Concurrency asks:
-
-> How many runs are executing right now?
-
-Rate limit asks:
-
-> How many requests may this caller make over a time window?
-
-They solve different overload problems.
-
-Tiny-Agent uses a process-local semaphore for concurrency:
+## 4. Concurrency limit vs rate limit
 
 ```text
-max_concurrency = 8
+concurrency limit
+    = how many operations are running now?
+
+rate limit
+    = how many operations may this caller start per time window?
 ```
 
-With four Uvicorn workers:
+Different overload problems.
+
+Tiny-Agent's `asyncio.Semaphore` is process-local:
+
+```python
+self._gate = asyncio.Semaphore(max_concurrency)
+```
+
+With four workers:
 
 ```text
-8 × 4 = potentially 32 concurrent runs
+8 per worker × 4 workers ~= 32 possible in-flight runs
 ```
 
-because process memory is not shared.
+A distributed rate/quota policy needs shared infrastructure such as a gateway/Redis-based mechanism.
 
-A distributed Redis limiter is introduced separately.
+---
 
-## Queue timeout
+## 5. Queue timeout prevents overload from becoming hidden latency
 
-Unlimited waiting is not kindness.
-
-Without a bounded queue, overload becomes:
+Without bounded admission:
 
 ```text
 traffic spike
- -> more waiting requests
- -> more memory
- -> longer latency
- -> client retries
- -> even more traffic
+-> waiting requests accumulate
+-> memory grows
+-> latency grows
+-> clients time out/retry
+-> even more requests
 ```
 
-Stage 10 uses a short admission timeout and returns a stable capacity failure.
+This is how a service can politely queue itself into a crater.
 
-## Execution deadline
+Tiny-Agent uses:
 
-After admission, every run still needs a deadline.
+```python
+await asyncio.wait_for(
+    self._gate.acquire(),
+    timeout=queue_timeout_seconds,
+)
+```
 
-A useful mental model:
+Failure becomes `ServiceCapacityError` instead of unlimited invisible waiting.
+
+---
+
+## 6. Deadlines should decrease inward
+
+Useful mental model:
 
 ```text
 client deadline
->= gateway deadline
->= service deadline
->= downstream/model/tool deadlines
+  >= gateway deadline
+  >= service run deadline
+  >= Tool/model/downstream deadlines
 ```
 
-If inner dependencies can wait longer than the outer request, resources may continue working after the caller has given up.
+If an inner HTTP client can wait 120 seconds while the outer Agent request times out after 10, resources can continue working long after the caller has gone home.
 
-## Streaming with SSE
+Propagate cancellation/deadlines where the dependency supports it.
 
-Server-Sent Events are useful for one-way server-to-client progress:
+---
+
+## 7. Parallel fan-out must be bounded
+
+Research Agent:
+
+```python
+tasks = [
+    asyncio.create_task(search(q))
+    for q in subquestions
+]
+results = await asyncio.gather(*tasks)
+```
+
+This is fine only because the number of `subquestions` is bounded and downstream clients have their own controls.
+
+Bad:
+
+```text
+model emits 5,000 subquestions
+-> create 10,000 HTTP tasks
+-> discover rate limits through interpretive dance
+```
+
+Application budgets must constrain fan-out before scheduling.
+
+---
+
+## 8. Streaming with SSE
+
+SSE works well for one-way server-to-client progress:
 
 ```text
 event: run.started
-data: {...}
+data: {"run_id":"42"}
+
+event: run.progress
+data: {"step":3}
 
 event: run.completed
 data: {...}
 ```
 
-Once HTTP headers and stream bytes have been sent, you generally cannot later transform the response into a normal HTTP 500/504 body.
+After headers/stream bytes are sent, you generally cannot turn a later error into a normal JSON HTTP 500 body.
 
-So streaming errors become protocol events:
+Streaming errors become stream protocol events:
 
 ```text
 event: run.error
 data: {"code":"run_timeout"}
 ```
 
-Tiny-Agent also refuses to fall back to arbitrary Python `repr()` when serializing a completion event; encoding failure becomes a stable `response_encoding_failed` event instead.
+Define event schemas and ordering deliberately.
 
-## Backpressure
+---
 
-Streaming does not mean “generate infinitely and hope TCP handles life.”
+## 9. Backpressure
 
-You must consider:
+Streaming is not:
+
+```text
+produce infinitely
+-> TCP will parent the system for us
+```
+
+Consider:
 
 - slow clients;
 - proxy buffering;
-- bounded internal queues;
+- bounded queues;
 - disconnect detection;
-- cancellation propagation;
-- reconnect semantics;
-- event ordering.
+- cancellation;
+- event retention/replay;
+- reconnect semantics.
 
-The Stage 10 SSE endpoint teaches the transport shape, not a full durable event bus.
+For durable long-running work, an event stream should usually be a **view of durable run state**, not the only place where progress exists.
 
-## Background work warning
+---
 
-FastAPI `BackgroundTasks` can be useful for small post-response work inside the same process.
+## 10. BackgroundTasks is not a durable queue
 
-It is not a durable distributed job queue.
+Framework background callbacks are useful for small best-effort post-response work.
 
-If the process crashes after returning 200 but before the background function finishes, the universe does not send a polite apology email to your database.
+They do not automatically provide:
+
+```text
+durable enqueue
+worker lease
+retry policy
+crash recovery
+multi-worker coordination
+dead-letter handling
+```
+
+If the process crashes after returning 200, the universe does not send a polite apology email to the lost callback.
+
+Stage 10/10A therefore use durable job/task state for work that product contracts promise to resume.
+
+---
+
+## 11. Worked overload case
+
+Service config:
+
+```text
+4 workers
+max_concurrency=8 each
+provider allows 20 concurrent model calls
+```
+
+Naive topology permits roughly 32 Agent runs, each of which may create more than one model call.
+
+So local semaphore alone cannot enforce provider quota.
+
+Need layered controls:
+
+```text
+gateway/tenant rate policy
++ process-local run concurrency
++ per-provider/model concurrency
++ bounded Agent fan-out
++ deadlines
+```
+
+One semaphore cannot govern an entire distributed dependency graph.
+
+---
+
+## Completion principle
+
+> **Async improves I/O concurrency; capacity remains finite. Bound admission, fan-out, deadlines, and streams at the layer that owns each resource.**

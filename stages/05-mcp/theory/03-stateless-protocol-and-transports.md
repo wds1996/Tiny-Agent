@@ -1,26 +1,26 @@
-# 03 — MCP 2026: Stateless Core, Discovery, and Transports
+# 03 — MCP 2026: Stateless Core, Discovery, Transports, and Extensions
 
-This chapter is important because many MCP tutorials on the internet still teach the older lifecycle.
+This chapter matters because a large amount of MCP material still teaches the older session-oriented lifecycle. Tiny-Agent targets the **2026-07-28 MCP protocol revision** and Python SDK v2.
 
-Tiny-Agent Stage 05 targets the **2026-07-28 MCP protocol revision** and the Python SDK v2 behavior.
-
-The key migration idea is:
+The migration idea is:
 
 ```text
 older MCP
 connect -> initialize -> session -> requests
 
-2026 MCP
+MCP 2026
 self-describing request -> response
++ optional discovery
++ explicit extensions for additional workflows
 ```
 
-The protocol became much more stateless at its core.
+The protocol became simpler at its core while moving richer behavior into explicit request flows and extensions.
 
 ---
 
-## 1. MCP still uses JSON-RPC messages
+## 1. MCP still uses JSON-RPC semantics
 
-A conceptual request looks like:
+Conceptual Tool call:
 
 ```json
 {
@@ -29,128 +29,86 @@ A conceptual request looks like:
   "method": "tools/call",
   "params": {
     "name": "add",
-    "arguments": {
-      "a": 2,
-      "b": 3
-    }
+    "arguments": {"a": 2, "b": 3}
   }
 }
 ```
 
-and a response is correlated by the same request id:
+Conceptual response:
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "structuredContent": {
-      "result": 5
-    }
+    "structuredContent": {"result": 5}
   }
 }
 ```
 
-The official SDK should construct, validate, negotiate, and transport real MCP messages for you.
-
-Our `protocol_message_walkthrough.py` is only a teaching microscope, not a home-made MCP implementation.
+Use the official SDK for real encoding, negotiation, validation, and transport. `protocol_message_walkthrough.py` is a teaching microscope, not a home-made protocol stack.
 
 ---
 
-## 2. The old lifecycle: initialize and session
+## 2. Why the old lifecycle had `initialize()`
 
 Earlier MCP revisions commonly taught:
 
 ```text
-Client
-  |
-  | initialize
-  v
-Server
-  |
-  | initialize result
-  v
-Client
-  |
-  | initialized
-  v
------ session begins -----
+Client -- initialize --> Server
+Client <-- result ----- Server
+Client -- initialized -> Server
+          session
 ```
 
-Over Streamable HTTP, a session identifier could tie subsequent requests to session state.
-
-That architecture is why older Python examples often contain concepts such as:
+Over HTTP, subsequent requests could be tied to session state. That is why old examples contain:
 
 ```python
 ClientSession(...)
 await session.initialize()
 ```
 
-and why old deployment discussions talk about session affinity/stickiness.
+and deployment guides discuss sticky sessions.
 
-Those examples are historically valid for their protocol era.
-
-They are not the best starting point for new 2026 code.
+Those examples are not nonsense; they target an older protocol generation. Version archaeology is part of modern Agent engineering.
 
 ---
 
-## 3. The 2026-07-28 core: no required initialize handshake
+## 3. 2026 stateless core
 
-In the 2026 revision, a modern request carries the information needed to interpret it rather than depending on a previously initialized session.
+Modern requests carry enough information to be interpreted without the old mandatory connection-wide handshake.
 
-The high-level idea is:
+High-level shape:
 
 ```text
 request
 ├── protocol version
-├── client identity/info
-├── client capabilities
-└── actual method + params
+├── client information/capabilities
+├── method/name routing metadata
+└── method parameters
 ```
 
-The result is a protocol core that can handle a request without requiring the old connection-wide initialize/initialized sequence.
+Analogy:
 
-A useful analogy:
+- old style: hotel check-in, then use a session wristband;
+- 2026 style: each courier package contains the routing/sender information needed to process that package.
 
-### Older session-oriented style
-
-You check into a hotel once, receive a wristband, and every later service knows you through the wristband.
-
-### 2026 stateless style
-
-Every courier package arrives with the routing and sender information necessary to process that package.
-
-The second model is friendlier to ordinary horizontal HTTP scaling because a request does not inherently belong to one sticky worker.
+The second is friendlier to ordinary horizontal HTTP scaling because a request does not inherently belong to one sticky worker.
 
 ---
 
-## 4. `server/discover`
+## 4. `server/discover` is optional discovery, not mandatory ceremony
 
-If the client wants server identity/capability information, the 2026 protocol provides discovery as an ordinary request rather than a mandatory opening handshake.
-
-Conceptually:
+A client may ask for server identity/capability information through an ordinary discovery request.
 
 ```text
-Client
-  |
-  | server/discover
-  v
-Server
-  |
-  | capabilities / server info
-  v
-Client
+Client -> server/discover -> Server
+Client <- capabilities ---- Server
 ```
 
-The important word is **ordinary**.
+Discovery is useful when the client wants a catalog up front. It is not a protocol-level session opening ritual.
 
-Discovery is useful, but the protocol does not require every request to be preceded by a session-opening ceremony.
-
----
-
-## 5. Why the Python SDK `Client` still feels pleasantly simple
-
-With the current high-level client:
+The SDK's high-level `Client` keeps compatibility machinery out of application code:
 
 ```python
 async with Client(server) as client:
@@ -158,93 +116,48 @@ async with Client(server) as client:
     print(client.server_capabilities)
 ```
 
-Entering the context handles connection and version compatibility for you.
-
-For a modern v2 server, the client can use current discovery behavior.
-
-For an older server, the SDK can fall back to the classic handshake.
-
-This is an important design lesson:
-
-> A high-level SDK can hide compatibility machinery without hiding the protocol model from the learner.
-
-You should understand why old `initialize()` tutorials exist, while writing new application code against the current `Client` abstraction.
+The learner should understand why old `initialize()` code exists without manually reproducing negotiation in every new application.
 
 ---
 
-## 6. Stateless protocol does not mean your application has no state
+## 5. Stateless protocol != stateless application
 
-This is a classic terminology trap.
-
-Suppose a long-running task needs state:
+A long-running operation may still need:
 
 ```text
-job id
+job_id
 cursor
-transaction handle
-workflow id
+transaction/workflow handle
+artifact id
 ```
 
-A stateless protocol request can still explicitly carry a handle:
+The state is referenced explicitly:
 
 ```json
-{
-  "job_id": "job-123"
-}
+{"job_id": "job-123"}
 ```
 
-The difference is between:
+rather than hidden in a transport session.
 
-```text
-implicit connection/session state
-```
-
-and:
-
-```text
-explicit application state referenced by requests
-```
-
-So do not conclude:
-
-```text
-MCP 2026 is stateless
-therefore stateful applications are impossible
-```
-
-That would be like saying HTTP is stateless, therefore shopping carts cannot exist.
+Saying "MCP is stateless, therefore stateful applications are impossible" is like saying HTTP is stateless, therefore shopping carts are forbidden by physics.
 
 ---
 
 # Part II — Transports
 
-The protocol messages need a way to travel.
-
-For Stage 05, learn two transports:
-
-```text
-stdio
-Streamable HTTP
-```
-
----
-
-## 7. stdio: excellent for local subprocess servers
-
-A host can launch an MCP server as a child process:
+## 6. stdio: local subprocess boundary
 
 ```text
 Host process
-     |
-     | spawn
-     v
+    | spawn
+    v
 MCP server process
 
 stdin  <---- requests
 stdout ----> responses
 ```
 
-Python client setup:
+Example shape:
 
 ```python
 params = StdioServerParameters(
@@ -253,80 +166,54 @@ params = StdioServerParameters(
 )
 
 transport = stdio_client(params)
-
 async with Client(transport) as client:
     tools = await client.list_tools()
 ```
 
-This is a strong local-development model because:
+Advantages:
+
+- no TCP port;
+- host can own process lifetime;
+- simple local packaging;
+- clear process boundary.
+
+### The stdout rule
+
+In stdio, stdout is the protocol wire.
+
+```python
+print("debug: hello")  # dangerous on protocol stdout
+```
+
+Use stderr/logging instead.
+
+> stdout is not your diary. It is the wire.
+
+---
+
+## 7. Streamable HTTP: remote/service boundary
+
+Client:
+
+```python
+async with Client("http://127.0.0.1:8000/mcp") as client:
+    tools = await client.list_tools()
+```
+
+Tiny-Agent's demo server uses the SDK's Streamable HTTP runner. The core idea is:
 
 ```text
-no TCP port required
-process lifetime can be owned by host
-simple local packaging
-clear process boundary
+local integration  -> stdio
+remote service     -> Streamable HTTP
 ```
+
+Do not define "2026 stateless MCP" by one SDK flag. The protocol revision is the deeper semantic change; SDK flags also exist for compatibility behavior.
 
 ---
 
-## 8. The stdout rule
+## 8. Header-based routing
 
-With stdio, stdout is the protocol channel.
-
-So this is dangerous inside the server:
-
-```python
-print("hello debug world")
-```
-
-because random debug output can corrupt the protocol stream.
-
-Use logging to stderr or the SDK's appropriate logging facilities instead.
-
-A memorable rule:
-
-> In a stdio MCP server, stdout is not your diary. It is the wire.
-
----
-
-## 9. Streamable HTTP: the remote/service boundary
-
-For a remotely reachable MCP service:
-
-```python
-async with Client(
-    "http://127.0.0.1:8000/mcp"
-) as client:
-    ...
-```
-
-The server can expose the same MCP capabilities over HTTP.
-
-Our demo runs:
-
-```python
-mcp.run(
-    transport="streamable-http",
-    host="127.0.0.1",
-    port=8000,
-    stateless_http=True,
-    json_response=True,
-)
-```
-
-There is an important version nuance:
-
-- modern 2026-07-28 traffic is already handled using the new stateless request model;
-- SDK options such as `stateless_http=True` mainly affect compatibility behavior for older, session-era clients;
-- `json_response=True` asks the HTTP server to prefer direct JSON responses where appropriate.
-
-Do not learn those flags as "the definition of MCP 2026 statelessness." The protocol revision is the deeper concept.
-
----
-
-## 10. HTTP routing metadata
-
-The 2026 HTTP protocol adds standardized routing metadata such as:
+Modern HTTP requests expose routing metadata including concepts such as:
 
 ```text
 MCP-Protocol-Version
@@ -334,44 +221,161 @@ Mcp-Method
 Mcp-Name
 ```
 
-For example, a gateway receiving a tool call can identify the MCP method/name without deeply parsing arbitrary application content first.
+A gateway can therefore route or apply policy using standardized method/tool identity without deeply interpreting arbitrary Tool arguments first.
 
-Our wire walkthrough prints a conceptual example:
+Conceptual teaching example:
 
 ```python
-http_headers = {
+headers = {
     "MCP-Protocol-Version": "2026-07-28",
     "Mcp-Method": "tools/call",
-    "Mcp-Name": "add",
+    "Mcp-Name": "search_papers",
 }
 ```
 
-Do not manually recreate HTTP protocol behavior in production; let the SDK do conformance work.
-
-The code block exists so the abstraction stops feeling magical.
+Let the official SDK implement the actual wire protocol.
 
 ---
 
-## 11. What about old HTTP+SSE tutorials?
+## 9. Legacy HTTP+SSE
 
-You may find tutorials centered on a dedicated legacy SSE transport.
+The old standalone HTTP+SSE transport is legacy/deprecated architecture for new work. Learn it when maintaining older systems, but start new Stage 05 designs with stdio or Streamable HTTP.
 
-Treat them as historical material.
+Streaming still exists where a method needs it. That is different from making a dedicated legacy SSE transport the default server architecture.
 
-For new Stage 05 work, prefer:
+---
+
+# Part III — Why extensions exist
+
+The 2026 core deliberately stays small. Richer optional capabilities can evolve through a negotiated **extensions framework**.
+
+Conceptually:
 
 ```text
-local -> stdio
-remote -> Streamable HTTP
+small stable core
+      +
+negotiated extension IDs
+      +
+versioned extension behavior
 ```
 
-The current protocol still uses streaming where a method needs a stream, but that is different from choosing the old standalone SSE transport as the architecture for a new server.
+This is healthier than forcing every experiment into the core protocol forever.
+
+Extension advertisement is still not authorization. "Both endpoints understand this feature" does not mean "this caller may use it."
 
 ---
 
-## 12. Why transports should not leak into Agent logic
+## 10. Tasks extension: long-running remote Tool work
 
-Bad architecture:
+Some Tools cannot reasonably finish inside one short request.
+
+Conceptual lifecycle:
+
+```text
+client advertises Tasks support
+        ↓
+tools/call
+        ↓
+server decides to create a task
+        ↓
+returns task handle
+        ↓
+client: tasks/get / tasks/update / tasks/cancel
+        ↓
+terminal result
+```
+
+The key abstraction is a **remote capability task handle**, not a hidden connection session.
+
+Do not confuse four different IDs:
+
+```text
+MCP task id        -> remote capability execution
+service run_id     -> your deployed Agent job
+thread/checkpoint  -> Agent orchestration state
+TaskLedger item    -> sub-work in Tiny-Agent long-horizon harness
+```
+
+One research run may contain all four.
+
+A useful systems question is: *who owns cancellation at each layer?*
+
+---
+
+## 11. MRTR: Multi Round-Trip Requests
+
+Older server-initiated requests assumed a held-open bidirectional interaction. MCP 2026 restructures flows such as elicitation/sampling around explicit multi-round request/response semantics.
+
+Conceptually:
+
+```text
+client -> original operation
+server -> input_required + requested information
+client -> retry/continue with inputResponses
+server -> result
+```
+
+This preserves interactive workflows without making a permanent session the hidden source of truth.
+
+Think of it as a form asking you for one missing field, not a server reaching through the screen and borrowing your keyboard.
+
+Hosts still decide whether requested user/model interaction is allowed.
+
+---
+
+## 12. MCP Apps
+
+MCP Apps allow a server to associate interactive UI with capabilities. A Host may render that UI in a sandboxed boundary and route actions back through governed MCP interactions.
+
+Critical invariant:
+
+```text
+rendered UI
+!= authority
+```
+
+A button labeled "Delete everything" has not acquired permission merely because it is visually convincing.
+
+The Host still owns consent, authentication, authorization, and execution boundaries.
+
+---
+
+## 13. Cacheable catalogs and deterministic ordering
+
+Capability list responses can be stable/cacheable so clients do not repeatedly rebuild large Tool catalogs and destabilize upstream prompt caches.
+
+This links directly to Stage 06A context engineering:
+
+```text
+server owns many capabilities
+-> client caches/discovers catalog
+-> Host selects relevant subset
+-> only needed Tool schemas enter model context
+```
+
+Protocol discovery and model context are separate layers.
+
+---
+
+## 14. Authorization hardening
+
+MCP's protocol-level authorization direction aligns more closely with standard OAuth/OIDC deployment practices. But keep three questions separate:
+
+```text
+discovery:       what exists?
+authentication: who is the caller?
+authorization:  may this caller perform this action?
+```
+
+A Tool appearing in `tools/list` answers only the first question.
+
+Stage 07 and Stage 10 own the broader runtime/service policy story.
+
+---
+
+## 15. Transport must not leak into Agent logic
+
+Bad:
 
 ```python
 if tool_is_stdio:
@@ -383,42 +387,70 @@ elif tool_is_http:
 Better:
 
 ```text
-Transport
-   ↓
+stdio / HTTP
+    ↓
 MCP Client
-   ↓
+    ↓
 MCPToolBridge
-   ↓
+    ↓
 Tiny-Agent Tool
-   ↓
-Agent logic
+    ↓
+Agent/Workflow logic
 ```
 
-The Agent should care about capability semantics, not whether bytes arrived through a subprocess pipe or HTTP connection.
+The Agent cares about capability semantics; the adapter cares how protocol bytes travel.
 
 ---
 
-## 13. Version migration cheat sheet
+## 16. Version migration cheat sheet
 
-When reading external tutorials, translate mentally:
+When reading older material:
 
 ```text
-FastMCP (older Python SDK v1 high-level name)
+FastMCP (older v1 high-level API)
     -> MCPServer in SDK v2
 
 manual ClientSession + initialize()
-    -> high-level Client context in SDK v2
+    -> high-level Client context for current code
 
-mandatory session-centric mental model
+session-centric transport state
     -> 2026 self-describing/stateless core
 
-legacy standalone SSE transport
-    -> prefer stdio or Streamable HTTP for new work
+legacy standalone SSE
+    -> stdio / Streamable HTTP for new designs
 ```
 
-Do not label old code "wrong." It may simply target an older protocol/SDK revision.
+Do not combine snippets from three generations and then accuse Python of betrayal.
 
-Your job is to identify the version before copying it.
+---
+
+## 17. Worked architecture: long-running data analysis
+
+Suppose an Agent needs an external MCP Tool to process a large dataset.
+
+```text
+Authenticated Agent service
+        ↓
+Agent run_id = run-42
+        ↓
+MCP tools/call(process_dataset)
+        ↓
+MCP task_id = mcp-task-7
+        ↓
+remote worker progresses
+        ↓
+Tiny-Agent persists run/task mapping
+        ↓
+client disconnects / web worker restarts
+        ↓
+new worker loads run-42
+        ↓
+checks mcp-task-7
+        ↓
+result artifact
+```
+
+The MCP task solves remote capability execution. Your service still owns user/tenant identity, run durability, policy, artifact access, and final Agent state.
 
 ---
 
@@ -426,11 +458,15 @@ Your job is to identify the version before copying it.
 
 You should be able to explain:
 
-1. Why older MCP examples contain `initialize()`.
-2. What changed in the 2026-07-28 stateless core.
-3. Why `server/discover` is not the old mandatory initialization handshake.
-4. Why protocol statelessness does not forbid application state.
-5. When stdio is appropriate.
-6. When Streamable HTTP is appropriate.
-7. Why Agent logic should not depend directly on transport type.
-8. Why a modern tutorial should not default to the legacy SSE transport.
+1. why older MCP examples contain `initialize()`;
+2. what the 2026 stateless core changes;
+3. why `server/discover` is not the old mandatory handshake;
+4. why stateless transport does not forbid application state;
+5. stdio vs Streamable HTTP;
+6. why old standalone SSE is legacy for new work;
+7. what Extensions solve;
+8. Tasks vs Agent run/checkpoint/TaskLedger;
+9. how MRTR enables interactive multi-round flows;
+10. why MCP Apps UI does not grant authority;
+11. why discovery, authentication, and authorization remain separate;
+12. why Agent logic should remain transport-independent.

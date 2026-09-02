@@ -1,51 +1,298 @@
-# 02 — Skill format and progressive disclosure
+# 02 — SKILL.md Format and Progressive Disclosure
 
-The open Agent Skills format requires a directory containing `SKILL.md` with YAML frontmatter.
+Tiny-Agent adopts the open Agent Skills format instead of inventing a repository-only skill language.
 
-Minimal form:
+The basic directory is deliberately boring:
+
+```text
+skill-name/
+├── SKILL.md          required
+├── scripts/          optional executable helpers
+├── references/       optional detailed documentation
+└── assets/           optional templates/data/resources
+```
+
+Boring interoperability is often excellent engineering. Nobody has ever won a production incident by proudly announcing, "Good news, our configuration format is unique."
+
+---
+
+## 1. SKILL.md = metadata + instructions
+
+The file starts with YAML frontmatter followed by Markdown:
 
 ```markdown
 ---
 name: research-review
-description: Review a research answer for evidence grounding and citation support. Use after drafting evidence-based research output.
+description: Review research claims against cited evidence. Use when checking literature reviews, research reports, or citation grounding.
+license: MIT
+compatibility: Requires access to the relevant evidence text.
+metadata:
+  owner: tiny-agent
+  version: "1"
 ---
 
-# Instructions
-...
+# Research Review Procedure
+
+1. Enumerate claims.
+2. Find the evidence cited for each claim.
+3. Compare wording strength with evidence strength.
+4. Flag unsupported claims.
 ```
 
-The official specification constrains names and descriptions so catalogs remain predictable.
+The metadata helps discovery. The body teaches the procedure.
 
-## Three levels of disclosure
+---
+
+## 2. Name and description are routing infrastructure
+
+The official format requires a constrained `name` and a meaningful `description`.
+
+Why care so much about description quality?
+
+Because progressive disclosure begins with metadata. If the description is:
 
 ```text
-1. discovery
-   name + description
-
-2. activation
-   full SKILL.md instructions
-
-3. execution/detail
-   scripts / references / assets as needed
+"Helps with stuff."
 ```
 
-This is context engineering applied to procedural knowledge.
+then the router has almost no useful signal.
 
-If 100 skills each contain 3,000 tokens, loading all bodies would consume ~300K tokens before the user asks anything. Loading only metadata lets the Agent decide which skill deserves activation.
+Better:
 
-## Tiny-Agent `SkillCatalog`
+```text
+"Reviews research claims against cited evidence. Use for literature reviews,
+research reports, citation verification, or grounding checks."
+```
+
+A good description explains both **what the Skill does** and **when it should activate**.
+
+---
+
+## 3. Tiny-Agent validates the format
+
+Real `SkillCatalog` discovery, simplified:
 
 ```python
 catalog = SkillCatalog("skills")
 skills = catalog.discover()
-print(catalog.metadata_prompt())
-activated = catalog.activate("research-review")
+
+for skill in skills:
+    print(skill.name, skill.description)
 ```
 
-Discovery parses metadata. Activation loads the instructions and enumerates safe in-root resource files.
+The parser checks important constraints:
 
-## Keep resources focused
+```text
+valid lowercase/hyphen name
+name matches directory
+non-empty bounded description
+frontmatter is a mapping
+metadata is a string map
+allowed-tools has expected shape
+paths remain inside the skill root
+```
 
-Large reference material belongs in `references/`, reusable executable helpers in `scripts/`, and templates/static resources in `assets/`.
+Bad skill:
 
-The main `SKILL.md` should teach the workflow and tell the Agent when deeper material is needed rather than reproducing an entire company wiki.
+```text
+skills/review/SKILL.md
+name: TotallyDifferentName
+```
+
+Tiny-Agent fails instead of quietly creating an ambiguous catalog.
+
+---
+
+## 4. Progressive disclosure has three levels
+
+A useful Skill system does **not** load every file from every installed Skill at startup.
+
+```text
+Level 1: discovery
+    name + description metadata
+
+Level 2: activation
+    full SKILL.md instructions
+
+Level 3: resource access
+    one needed script/reference/asset
+```
+
+The official Agent Skills guidance recommends this shape because many Skills can coexist without consuming the entire context window.
+
+Think of a library:
+
+```text
+catalog card      -> metadata
+borrow the book   -> activate Skill
+open appendix C   -> load reference as needed
+```
+
+You do not photocopy the whole building before asking the librarian a question.
+
+---
+
+## 5. Tiny-Agent metadata vs activation
+
+Startup-sized metadata:
+
+```python
+catalog = SkillCatalog("skills")
+print(catalog.metadata_prompt())
+```
+
+Output shape:
+
+```text
+- code-review: Review code changes for correctness and safety.
+- research-review: Review research claims against evidence.
+```
+
+Activation:
+
+```python
+skill = catalog.activate("research-review")
+
+print(skill.instructions)
+print(skill.references)
+print(skill.scripts)
+print(skill.assets)
+```
+
+Notice that references/scripts/assets are enumerated only after activation.
+
+---
+
+## 6. References should be focused
+
+Bad:
+
+```text
+SKILL.md = 40,000 tokens of every policy, API manual, example, and historical note
+```
+
+Better:
+
+```text
+SKILL.md
+  -> concise operating procedure
+references/
+  -> evidence-policy.md
+  -> output-format.md
+  -> edge-cases.md
+```
+
+Then the Agent can load only the needed reference.
+
+This is the same context-engineering principle from Stage 06A applied to procedural knowledge.
+
+---
+
+## 7. Scripts are executable software
+
+A Skill may contain:
+
+```text
+scripts/check_citations.py
+```
+
+That file is not "just prompt context." It is code.
+
+Before executing third-party scripts, consider:
+
+- source/trust;
+- dependency provenance;
+- sandbox policy;
+- filesystem/network access;
+- credentials exposure;
+- review/signing/version policy.
+
+Stage 09A provides the controlled compute boundary.
+
+A markdown directory becoming executable does not make the supply chain disappear; it merely gives it nicer headings.
+
+---
+
+## 8. `allowed-tools` is not Tiny-Agent authorization
+
+The Agent Skills format defines an experimental `allowed-tools` field. Implementations may use it differently.
+
+Tiny-Agent exposes it on `SkillDescriptor`:
+
+```python
+print(skill.descriptor.allowed_tools)
+```
+
+but deliberately does **not** convert it into runtime permissions.
+
+```text
+Skill metadata says Bash(git:*)
+          ↓
+model may understand intended capability
+          ↓
+Tiny-Agent policy independently decides what is actually allowed
+```
+
+Portable metadata and local authorization are different layers.
+
+---
+
+## 9. Safe file discovery
+
+Third-party Skill resources create a path-boundary problem.
+
+Tiny-Agent resolves every discovered file and verifies it remains under the Skill root. This catches traversal/symlink escapes such as a resource that resolves to:
+
+```text
+../../.ssh/id_rsa
+```
+
+The lesson generalizes:
+
+> A relative-looking path is not trusted until its resolved target is checked against the permitted root.
+
+Stage 09A uses the same principle for Agent workspaces.
+
+---
+
+## 10. Worked design
+
+For a `data-analysis` Skill:
+
+```text
+data-analysis/
+├── SKILL.md
+├── references/
+│   ├── statistical-checks.md
+│   └── chart-guidelines.md
+├── scripts/
+│   └── validate_csv.py
+└── assets/
+    └── report-template.md
+```
+
+Runtime flow:
+
+```text
+user asks to analyze CSV
+-> metadata router selects data-analysis
+-> load SKILL.md
+-> read statistical-checks only if needed
+-> sandbox validate_csv.py if execution is authorized
+-> use report-template at final artifact step
+```
+
+That is progressive disclosure across both context and compute.
+
+---
+
+## Completion check
+
+You should be able to:
+
+1. write valid SKILL.md metadata;
+2. explain why description quality affects routing;
+3. distinguish discovery, activation, and resource loading;
+4. explain why scripts create a supply-chain/execution boundary;
+5. explain why `allowed-tools` is not automatically authorization;
+6. validate paths and keep resource access inside the Skill root.
