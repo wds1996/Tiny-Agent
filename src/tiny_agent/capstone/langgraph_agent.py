@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from typing import Any, Mapping, TypedDict
 from uuid import uuid4
 
@@ -100,68 +101,93 @@ class LangGraphOpenScholarAgent:
                 "metrics": bump(state.get("metrics", {}), model_calls=1),
             }
 
-        async def retrieve_node(state: OpenScholarGraphState) -> dict[str, Any]:
-            plan = state["plan"]
-            warnings = list(state.get("warnings", []))
-            counts = {"local": 0, "external": 0}
+        def retrieve_node(state: OpenScholarGraphState) -> dict[str, Any]:
+            """Run the async retrieval fan-out from a synchronous graph node.
 
-            async def local(query: str):
-                counts["local"] += 1
-                with self.tracer.span("graph.retrieve.local", kind="retrieval"):
-                    results = await asyncio.to_thread(
-                        self.corpus.search,
-                        query,
-                        top_k=self.config.local_top_k,
-                    )
-                return [item for item in results if item.score >= self.config.min_local_score]
+            Stage 11 keeps graph nodes synchronous so Python 3.10 can execute the
+            whole graph with ``graph.invoke`` in one worker thread. Current
+            LangGraph interrupt context is not reliably propagated through its
+            Python 3.10 async runnable path. On Python 3.11+ the graph still uses
+            ``ainvoke``; LangGraph runs this sync node in its executor and this
+            local event loop handles only the bounded retrieval fan-out.
+            """
 
-            async def external(query: str):
-                assert self.scholarly_search is not None
-                counts["external"] += 1
-                try:
-                    with self.tracer.span("graph.retrieve.crossref", kind="tool"):
-                        return list(
-                            await asyncio.to_thread(
-                                self.scholarly_search.search,
-                                query,
-                                limit=self.config.external_top_k,
-                            )
+            async def gather_retrieval() -> dict[str, Any]:
+                plan = state["plan"]
+                warnings = list(state.get("warnings", []))
+                counts = {"local": 0, "external": 0}
+
+                async def local(query: str):
+                    counts["local"] += 1
+                    with self.tracer.span("graph.retrieve.local", kind="retrieval"):
+                        results = await asyncio.to_thread(
+                            self.corpus.search,
+                            query,
+                            top_k=self.config.local_top_k,
                         )
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    warnings.append(f"external_search_failed:{type(exc).__name__}")
-                    return []
+                    return [
+                        item
+                        for item in results
+                        if item.score >= self.config.min_local_score
+                    ]
 
-            tasks = []
-            for subquestion in plan["subquestions"]:
-                tasks.append(asyncio.create_task(local(str(subquestion))))
-                if plan["use_external_search"]:
-                    tasks.append(asyncio.create_task(external(str(subquestion))))
-            batches = await asyncio.gather(*tasks)
-            evidence = normalize_evidence(
-                [item for batch in batches for item in batch],
-                limit=self.config.max_evidence,
-            )
-            fulltext_count = sum(item.kind == "local_fulltext" for item in evidence)
-            return {
-                "evidence": [evidence_to_dict(item) for item in evidence],
-                "warnings": warnings,
-                "metrics": bump(
-                    state.get("metrics", {}),
-                    local_searches=counts["local"],
-                    external_searches=counts["external"],
-                    evidence_items=len(evidence),
-                ),
-                "status": (
-                    "insufficient_evidence"
-                    if fulltext_count < self.config.min_local_evidence
-                    else "running"
-                ),
-            }
+                async def external(query: str):
+                    assert self.scholarly_search is not None
+                    counts["external"] += 1
+                    try:
+                        with self.tracer.span("graph.retrieve.crossref", kind="tool"):
+                            return list(
+                                await asyncio.to_thread(
+                                    self.scholarly_search.search,
+                                    query,
+                                    limit=self.config.external_top_k,
+                                )
+                            )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        warnings.append(
+                            f"external_search_failed:{type(exc).__name__}"
+                        )
+                        return []
+
+                tasks = []
+                for subquestion in plan["subquestions"]:
+                    tasks.append(asyncio.create_task(local(str(subquestion))))
+                    if plan["use_external_search"]:
+                        tasks.append(asyncio.create_task(external(str(subquestion))))
+                batches = await asyncio.gather(*tasks)
+                evidence = normalize_evidence(
+                    [item for batch in batches for item in batch],
+                    limit=self.config.max_evidence,
+                )
+                fulltext_count = sum(
+                    item.kind == "local_fulltext" for item in evidence
+                )
+                return {
+                    "evidence": [evidence_to_dict(item) for item in evidence],
+                    "warnings": warnings,
+                    "metrics": bump(
+                        state.get("metrics", {}),
+                        local_searches=counts["local"],
+                        external_searches=counts["external"],
+                        evidence_items=len(evidence),
+                    ),
+                    "status": (
+                        "insufficient_evidence"
+                        if fulltext_count < self.config.min_local_evidence
+                        else "running"
+                    ),
+                }
+
+            return asyncio.run(gather_retrieval())
 
         def route_after_retrieve(state: OpenScholarGraphState) -> str:
-            return "insufficient" if state.get("status") == "insufficient_evidence" else "draft"
+            return (
+                "insufficient"
+                if state.get("status") == "insufficient_evidence"
+                else "draft"
+            )
 
         def insufficient_node(state: OpenScholarGraphState) -> dict[str, Any]:
             return {
@@ -174,7 +200,9 @@ class LangGraphOpenScholarAgent:
             }
 
         def draft_node(state: OpenScholarGraphState) -> dict[str, Any]:
-            evidence = [evidence_from_dict(item) for item in state.get("evidence", [])]
+            evidence = [
+                evidence_from_dict(item) for item in state.get("evidence", [])
+            ]
             with self.tracer.span("graph.synthesize", kind="model"):
                 answer = self.model.synthesize(
                     question=state["question"],
@@ -187,20 +215,24 @@ class LangGraphOpenScholarAgent:
                 "metrics": bump(state.get("metrics", {}), model_calls=1),
             }
 
-        async def review_node(state: OpenScholarGraphState) -> dict[str, Any]:
+        def review_node(state: OpenScholarGraphState) -> dict[str, Any]:
             if self.config.max_revisions <= 0:
                 return {}
-            evidence = [evidence_from_dict(item) for item in state.get("evidence", [])]
+            evidence = [
+                evidence_from_dict(item) for item in state.get("evidence", [])
+            ]
             answer = state["answer"]
             warnings = list(state.get("warnings", []))
             metrics = dict(state.get("metrics", {}))
             for _ in range(self.config.max_revisions):
                 with self.tracer.span("graph.review.team", kind="agent"):
-                    review = await self.review_team.review(
-                        question=state["question"],
-                        draft=answer,
-                        evidence=evidence,
-                        remembered_context=state.get("remembered_context", {}),
+                    review = asyncio.run(
+                        self.review_team.review(
+                            question=state["question"],
+                            draft=answer,
+                            evidence=evidence,
+                            remembered_context=state.get("remembered_context", {}),
+                        )
                     )
                 metrics = bump(
                     metrics,
@@ -209,7 +241,11 @@ class LangGraphOpenScholarAgent:
                     revisions=review.revisions,
                 )
                 answer = review.draft
-                for warning in ("critic_failed", "critic_invalid_output", "writer_failed"):
+                for warning in (
+                    "critic_failed",
+                    "critic_invalid_output",
+                    "writer_failed",
+                ):
                     if warning in review.notes:
                         warnings.append(warning)
                 if not review.needs_revision or review.revisions == 0:
@@ -228,12 +264,17 @@ class LangGraphOpenScholarAgent:
                 )
             if decision.store:
                 return {}
-            return {"warnings": [*state.get("warnings", []), "memory_write_denied"]}
+            return {
+                "warnings": [
+                    *state.get("warnings", []),
+                    "memory_write_denied",
+                ]
+            }
 
         def route_after_memory(state: OpenScholarGraphState) -> str:
             return "approval_export" if state.get("export_path") else "finalize"
 
-        async def approval_export_node(state: OpenScholarGraphState) -> dict[str, Any]:
+        def approval_export_node(state: OpenScholarGraphState) -> dict[str, Any]:
             requested_path = state.get("export_path")
             if not requested_path:
                 return {}
@@ -243,10 +284,10 @@ class LangGraphOpenScholarAgent:
                 reason="Writing a durable report is an external side effect.",
                 risk="medium",
             )
-            # Keep the interrupt in the async runnable context. On Python 3.10,
-            # a synchronous node may run in an executor thread where LangGraph's
-            # runnable context is not available. No side effect occurs before
-            # interrupt(): this node can restart safely when resumed.
+            # No side effect occurs before interrupt(): this node can safely
+            # restart on resume. Python 3.10 executes the entire graph through
+            # the synchronous compatibility path in one worker thread so this
+            # interrupt retains LangGraph's runnable context.
             decision_payload = interrupt(approval.to_interrupt_payload())
             decision = ApprovalDecision.from_payload(decision_payload)
             resolution = resolve_approval(approval, decision)
@@ -258,15 +299,29 @@ class LangGraphOpenScholarAgent:
             assert resolution.arguments is not None
             relative_path = resolution.arguments.get("relative_path")
             if not isinstance(relative_path, str):
-                return {"warnings": [*warnings, "export_invalid_arguments"]}
+                return {
+                    "warnings": [*warnings, "export_invalid_arguments"]
+                }
             try:
-                exported = self.exporter.export(self._report_from_state(state), relative_path)
+                exported = self.exporter.export(
+                    self._report_from_state(state),
+                    relative_path,
+                )
             except Exception as exc:
-                return {"warnings": [*warnings, f"export_failed:{type(exc).__name__}"]}
+                return {
+                    "warnings": [
+                        *warnings,
+                        f"export_failed:{type(exc).__name__}",
+                    ]
+                }
             return {"exported_path": exported}
 
         def finalize_node(state: OpenScholarGraphState) -> dict[str, Any]:
-            return {"status": "completed"} if state.get("status") == "running" else {}
+            return (
+                {"status": "completed"}
+                if state.get("status") == "running"
+                else {}
+            )
 
         builder = StateGraph(OpenScholarGraphState)
         for name, node in (
@@ -295,7 +350,10 @@ class LangGraphOpenScholarAgent:
         builder.add_conditional_edges(
             "remember",
             route_after_memory,
-            {"approval_export": "approval_export", "finalize": "finalize"},
+            {
+                "approval_export": "approval_export",
+                "finalize": "finalize",
+            },
         )
         builder.add_edge("approval_export", "finalize")
         builder.add_edge("finalize", END)
@@ -327,13 +385,21 @@ class LangGraphOpenScholarAgent:
         with self.tracer.span(
             "openscholar.langgraph",
             kind="agent",
-            attributes={"thread_id": request.thread_id, "run_id": initial["run_id"]},
+            attributes={
+                "thread_id": request.thread_id,
+                "run_id": initial["run_id"],
+            },
         ) as root_span:
             initial["trace_id"] = root_span.trace_id
-            result = await self.graph.ainvoke(initial, config=config)
+            result = await self._invoke_graph(initial, config=config)
         return self._result_to_report(result)
 
-    async def resume(self, *, thread_id: str, decision: ApprovalDecision) -> ResearchReport:
+    async def resume(
+        self,
+        *,
+        thread_id: str,
+        decision: ApprovalDecision,
+    ) -> ResearchReport:
         try:
             from langgraph.types import Command
         except ImportError as exc:  # pragma: no cover
@@ -344,8 +410,34 @@ class LangGraphOpenScholarAgent:
             "feedback": decision.feedback,
         }
         config = {"configurable": {"thread_id": thread_id}}
-        result = await self.graph.ainvoke(Command(resume=payload), config=config)
+        result = await self._invoke_graph(
+            Command(resume=payload),
+            config=config,
+        )
         return self._result_to_report(result)
+
+    async def _invoke_graph(
+        self,
+        value: Any,
+        *,
+        config: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Invoke LangGraph with a Python 3.10 HITL compatibility path.
+
+        Python 3.11 added reliable asyncio ContextVar propagation that current
+        LangGraph relies on for async ``interrupt()``/``get_config()``. On 3.10,
+        run the synchronous graph in a worker thread instead. The graph nodes are
+        intentionally synchronous at their boundary, while the retrieval/review
+        nodes create their own bounded async subflows internally.
+        """
+
+        if sys.version_info < (3, 11):
+            return await asyncio.to_thread(
+                self.graph.invoke,
+                value,
+                config=dict(config),
+            )
+        return await self.graph.ainvoke(value, config=dict(config))
 
     def _result_to_report(self, state: Mapping[str, Any]) -> ResearchReport:
         interrupts = state.get("__interrupt__")
@@ -362,16 +454,26 @@ class LangGraphOpenScholarAgent:
                 citations=base.citations,
                 metrics=base.metrics,
                 warnings=base.warnings,
-                approval_request=(payload if isinstance(payload, Mapping) else {"value": payload}),
+                approval_request=(
+                    payload
+                    if isinstance(payload, Mapping)
+                    else {"value": payload}
+                ),
                 exported_path=base.exported_path,
                 trace_id=base.trace_id,
             )
         return self._report_from_state(state)
 
     def _report_from_state(self, state: Mapping[str, Any]) -> ResearchReport:
-        evidence = tuple(evidence_from_dict(item) for item in state.get("evidence", []))
+        evidence = tuple(
+            evidence_from_dict(item) for item in state.get("evidence", [])
+        )
         status = str(state.get("status") or "completed")
-        if status not in {"completed", "insufficient_evidence", "approval_required"}:
+        if status not in {
+            "completed",
+            "insufficient_evidence",
+            "approval_required",
+        }:
             status = "completed"
         return ResearchReport(
             run_id=str(state.get("run_id") or "unknown"),
@@ -381,7 +483,9 @@ class LangGraphOpenScholarAgent:
             evidence=evidence,
             citations=tuple(item.citation for item in evidence),
             metrics=metrics_from_dict(state.get("metrics", {})),
-            warnings=tuple(str(item) for item in state.get("warnings", [])),
+            warnings=tuple(
+                str(item) for item in state.get("warnings", [])
+            ),
             exported_path=state.get("exported_path"),
             trace_id=state.get("trace_id"),
         )
