@@ -19,7 +19,7 @@ LLM interfaces
     -> reliability / safety / tool governance
     -> evaluation / observability
     -> multi-Agent / A2A interoperability
-    -> production deployment
+    -> production service / deployment
 ```
 
 The goal is not only to make examples run. The goal is to understand **why each abstraction exists, what responsibility it owns, where it fails, and how it maps to maintainable software**.
@@ -40,9 +40,11 @@ The goal is not only to make examples run. The goal is to understand **why each 
 10. **Human approval is not authorization** — reviewed actions still require ordinary validation and application permission checks.
 11. **Least privilege beats persuasive prompting** — capabilities, credentials, roles, approvals, budgets, delegation edges, context projection, and sandbox boundaries are deterministic controls, not instructions the model may reinterpret.
 12. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, retention, privacy, coordination, interoperability, and deployment are not optional afterthoughts.
-13. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, remote capability errors, persistence failures, authorization denials, state-transition errors, and coordination failures are first-class test cases.
+13. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, persistence failures, authorization denials, coordination failures, overload, and dependency failures are first-class test cases.
 14. **Tutorial simplifications are documented** — beginner code may be intentionally small, but its production limitations must be explicit.
 15. **More Agents are not automatically better** — multi-Agent complexity must be justified against a simpler workflow or single-Agent baseline with measurable evidence.
+16. **Process-local is not distributed** — Python dictionaries, semaphores, caches, and in-memory task stores do not become shared state just because an HTTP server has multiple workers.
+17. **Deployment topology is architecture** — worker count, replicas, pools, deadlines, shutdown behavior, external state, and network boundaries change correctness, not only performance.
 
 ---
 
@@ -88,12 +90,10 @@ The project is organized by **capability**, not by calendar day or framework nam
 | [07 — Reliability & Safety](stages/07-reliability-safety/) | typed failures, validation, timeout/retry, budgets, permissions, approval binding, injection/sandbox boundaries | Build a guarded runtime that fails predictably and limits model authority |
 | [08 — Evaluation & Observability](stages/08-evaluation-observability/) | local traces/spans, Agent Tool/trajectory evals, regression datasets/gates, OpenTelemetry, LangSmith | Measure, explain, and regression-test Agent behavior across quality, safety, latency, and cost |
 | [09 — Multi-Agent](stages/09-multi-agent/) | delegation, handoffs, specialists, parallel coordination, OpenAI Agents SDK, A2A 1.0 | Build bounded Agent teams and prove whether coordination beats a simpler baseline |
-| [10 — Production Deployment](stages/10-production-deployment/) | FastAPI, async, PostgreSQL, Redis, Docker, CI | Turn Tiny-Agent into a deployable service |
+| [10 — Production Deployment](stages/10-production-deployment/) | service boundary, FastAPI/SSE, concurrency, Postgres/Redis, health/lifespan, Docker, A2A serving | Turn Tiny-Agent into a bounded, testable, containerized network service |
 | [11 — Enterprise Capstone](stages/11-capstone-enterprise-agent/) | integrated research/knowledge Agent | Combine the learning path into a portfolio-quality system |
 
-For the framework/infrastructure mapping, see:
-
-**[Framework & Tooling Map](docs/framework-and-tooling-map.md)**
+For the framework/infrastructure mapping, see **[Framework & Tooling Map](docs/framework-and-tooling-map.md)**.
 
 ---
 
@@ -203,33 +203,29 @@ For the framework/infrastructure mapping, see:
 - narrow Tool and least-privilege guidance;
 - process termination vs real sandbox distinction;
 - composed `GuardedToolExecutor`;
-- OWASP/Python/jsonschema/Pydantic/Tenacity/LangChain security references;
 - Python 3.10/3.12 compatibility + runnable-example CI.
 
 ## ✅ Stage 08 — Observability, Tracing & Evaluation
 
 - logging vs tracing vs metrics vs evaluation vs audit-log boundaries;
 - framework-neutral `SpanRecord`, nested `LocalTracer`, and `InMemorySpanSink`;
-- privacy-aware `TraceCapturePolicy` with raw input/output capture disabled by default;
+- privacy-aware `TraceCapturePolicy`;
 - observed Stage 07 Tool execution without duplicating governance policy;
 - `EvalExample` / `RunArtifact` / `EvaluationSuite` abstractions;
-- final-response exact-match evaluation;
-- Tool selection precision/recall/F1 and separate Tool-argument evaluation;
-- required-sequence + forbidden-action trajectory evaluation;
+- final-response, Tool selection/arguments, and trajectory evaluators;
 - deterministic graders vs provider-neutral LLM-as-judge boundary;
 - repeated offline evaluation and metric-coverage tracking;
 - higher/lower-is-better regression rules and CI-style release gates;
 - quality/reliability/latency/token/cost evaluation theory;
 - OpenTelemetry adapter and current GenAI semantic-convention caveats;
-- 2026 Span Events API deprecation guidance;
-- current LangSmith `@traceable`, dataset/experiment, offline/online evaluation model;
+- current LangSmith trace/dataset/experiment/online-eval model;
 - Python 3.10/3.12 integration and runnable-example CI.
 
 ## ✅ Stage 09 — Multi-Agent Systems, Handoffs & A2A Interoperability
 
 - single-Agent/workflow baseline before team design;
 - framework-neutral `AgentSpec` / `TeamRuntime` coordination core;
-- explicit manager delegation vs conversation-owning handoff semantics;
+- manager delegation vs conversation-owning handoff semantics;
 - supervisor/worker and specialist-team patterns;
 - `ContextEnvelope` + `ContextPolicy` for minimum context projection;
 - Agent-private context namespaces;
@@ -238,16 +234,34 @@ For the framework/infrastructure mapping, see:
 - repeated-handoff-edge protection;
 - atomic prevalidation before parallel fan-out;
 - application-owned fan-in and failure-policy discussion;
-- worker exception-message redaction and bounded output contract;
 - coordination metrics integrated with Stage 08 concepts;
 - OpenAI Agents SDK `Agent.as_tool()` vs `handoffs` comparison;
 - A2A 1.0 Agent Card / Message / Task / Part / Artifact model;
-- current `a2a-sdk` offline protocol-object compatibility tests;
 - MCP vs A2A interoperability boundary;
-- single-Agent vs multi-Agent quality/latency/cost comparison;
 - Python 3.10/3.12 integration + runnable-example CI.
 
-Stages 10–11 currently contain roadmap scaffolds and will be implemented progressively.
+## ✅ Stage 10 — Production Service & Deployment
+
+- framework-neutral `BoundedAgentService` before the web framework;
+- distinct request/run identity and model-safe public failures;
+- process-local concurrency admission, bounded queue wait, and execution deadline;
+- sync-handler offload without pretending thread timeout is hard termination;
+- thin FastAPI `/v1/runs`, SSE, `/livez`, and `/readyz` adapters;
+- liveness vs readiness and bounded dependency checks;
+- ASGI lifespan for resource startup/shutdown;
+- typed environment configuration and safer secret representation with Pydantic Settings;
+- explicit Psycopg async pool lifecycle;
+- Redis health and distributed fixed-window rate-limit teaching adapter;
+- PostgreSQL durable-state vs Redis ephemeral-coordination semantics;
+- multi-worker/multi-replica memory and pool multiplication guidance;
+- current Starlette `httpx2` test-client compatibility;
+- A2A 1.0 route-factory service adapter with shutdown drain;
+- Dockerfile, non-root runtime user, Compose Postgres/Redis stack, and readiness health check;
+- durable-job vs in-process background-task distinction;
+- graceful shutdown and long-running Agent job architecture;
+- real Postgres/Redis + Docker build integration CI on Python 3.10/3.12.
+
+Stage 11 remains the capstone roadmap and will be implemented progressively.
 
 ---
 
@@ -292,7 +306,6 @@ raw Tool invocation
     -> handwritten retry/budget/permission mechanisms
     -> jsonschema / Pydantic / Tenacity comparison
     -> GuardedToolExecutor
-    -> LangChain middleware/guardrails comparison
 ```
 
 ```text
@@ -301,7 +314,7 @@ print trajectory
     -> RunArtifact + deterministic Agent evaluators
     -> regression dataset/gate
     -> OpenTelemetry
-    -> LangSmith tracing/evaluation
+    -> LangSmith
 ```
 
 ```text
@@ -311,6 +324,16 @@ single Agent / deterministic workflow baseline
     -> OpenAI Agents SDK manager/handoff mapping
     -> A2A 1.0 cross-Agent interoperability
     -> Stage 08 evidence-based architecture comparison
+```
+
+```text
+local Agent call
+    -> framework-neutral service boundary
+    -> FastAPI / SSE transport adapter
+    -> Postgres / Redis lifecycle
+    -> liveness / readiness / graceful shutdown
+    -> A2A route hosting
+    -> Docker / Compose / CI
 ```
 
 This prevents the project from becoming a collection of framework API recipes.
@@ -329,29 +352,15 @@ pytest -q
 ## Optional capability extras
 
 ```bash
-# real OpenAI examples
-python -m pip install -e ".[openai]"
-
-# Stage 03 LangGraph / LangChain
-python -m pip install -e ".[stage03]"
-
-# Stage 04 vector backends
-python -m pip install -e ".[stage04]"
-
-# Stage 05 MCP v2
-python -m pip install -e ".[stage05]"
-
-# Stage 06 persistence / HITL
-python -m pip install -e ".[dev,stage06]"
-
-# Stage 07 reliability / safety comparisons
-python -m pip install -e ".[dev,stage07]"
-
-# Stage 08 observability / evaluation integrations
-python -m pip install -e ".[dev,stage08]"
-
-# Stage 09 multi-Agent / interoperability comparisons
-python -m pip install -e ".[dev,stage09]"
+python -m pip install -e ".[openai]"       # real OpenAI examples
+python -m pip install -e ".[stage03]"      # LangGraph / LangChain
+python -m pip install -e ".[stage04]"      # vector backends
+python -m pip install -e ".[stage05]"      # MCP v2
+python -m pip install -e ".[dev,stage06]"  # persistence / HITL
+python -m pip install -e ".[dev,stage07]"  # reliability / safety
+python -m pip install -e ".[dev,stage08]"  # observability / evaluation
+python -m pip install -e ".[dev,stage09]"  # multi-Agent / A2A objects
+python -m pip install -e ".[dev,stage10]"  # service / deployment stack
 ```
 
 Follow the stage-specific learning orders rather than reading code directories alphabetically.
@@ -360,15 +369,15 @@ Follow the stage-specific learning orders rather than reading code directories a
 
 # Testing philosophy
 
-Tiny-Agent separates deterministic correctness tests from optional framework/backend compatibility and live provider behavior.
+Tiny-Agent separates mechanism correctness from optional backend/framework compatibility and live-provider behavior.
 
 ```text
-Core deterministic tests             Optional integration tests                                       Live examples
-------------------------             --------------------------                                       -------------
-Pure Python                          LangGraph / FAISS / Qdrant / MCP / Postgres                       Real model/API
-Fake models + policy/eval/team tests jsonschema / Tenacity / Pydantic / OTel / LangSmith / A2A SDK   API keys/network
-No token cost                        Local/in-memory + real CI backends                                 Potential cost
-Mechanism correctness                Library/protocol compatibility                                    End-to-end behavior
+Core deterministic tests              Integration / infrastructure tests                       Live examples
+------------------------              ----------------------------------                       -------------
+Pure Python                           LangGraph / FAISS / Qdrant / MCP                         Real model/API
+Fake models + policy/eval/team tests  Postgres / Redis / FastAPI / A2A / OTel / LangSmith    API keys/network
+No token cost                         local containers + current SDK APIs                      Potential cost
+Mechanism correctness                 protocol/lifecycle/deployment compatibility              End-to-end behavior
 ```
 
 Important failure boundaries include:
@@ -377,23 +386,21 @@ Important failure boundaries include:
 - malformed provider responses and structured decisions;
 - invalid graph routes/cycles and plan validation;
 - model-safe error redaction;
-- Tool JSON Schema validation;
-- permission/default-deny behavior;
-- exact-action approval binding;
-- timeout/cancellation/retry semantics;
-- prompt-injection trust-boundary handling;
+- Tool validation, permission/default-deny behavior, and approval binding;
+- timeout/cancellation/retry/idempotency semantics;
+- prompt-injection trust boundaries;
 - checkpoint/interrupt compatibility and durable recovery;
-- retrieval misses and evidence-insufficiency abstention;
+- retrieval misses and evidence insufficiency;
 - MCP discovery/schema normalization and remote errors;
 - memory-write denial and HITL edit/reject behavior;
 - SQLite/PostgreSQL persistence;
-- trace parent/child structure and privacy-safe capture defaults;
-- evaluator shape/coverage and regression-gate behavior;
-- OpenTelemetry/LangSmith integration compatibility without network credentials;
-- denied/unknown Agent delegation and failed handoffs;
-- private Agent-context isolation;
-- handoff-loop and parallel-width limits;
-- A2A/OpenAI Agents SDK object/API compatibility without live model or network calls.
+- trace/evaluator/regression-gate behavior;
+- denied Agent delegation, failed handoffs, private context isolation, and handoff loops;
+- service overload admission and execution deadlines;
+- readiness failures without raw dependency-secret leakage;
+- real Redis/Postgres async lifecycle;
+- current FastAPI/Starlette/A2A SDK compatibility;
+- Docker Compose validation and Stage 10 image build.
 
 ---
 
@@ -429,11 +436,17 @@ Tiny-Agent/
 │   ├── guarded_runtime.py
 │   ├── integrations/
 │   │   ├── a2a.py
-│   │   └── opentelemetry.py
+│   │   ├── a2a_server.py
+│   │   ├── fastapi_app.py
+│   │   ├── opentelemetry.py
+│   │   ├── postgres_backend.py
+│   │   ├── redis_backend.py
+│   │   └── settings.py
 │   ├── memory_policy.py
 │   ├── multi_agent.py
 │   ├── observability.py
 │   ├── observed_runtime.py
+│   ├── production.py
 │   ├── reliability.py
 │   ├── runtime.py
 │   ├── state_graph.py
@@ -469,7 +482,7 @@ See [`LICENSE`](LICENSE) for the full license text.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Good contributions include clearer explanations, runnable examples, exercises/interview questions, deterministic tests, edge cases, bug fixes, diagrams, adapters, governance policies, evaluation cases, coordination policies, and interoperability examples.
+Good contributions include clearer explanations, runnable examples, exercises/interview questions, deterministic tests, edge cases, bug fixes, diagrams, adapters, governance policies, evaluation cases, coordination policies, interoperability examples, deployment checks, and lifecycle fixes.
 
 When adding a capability, update both its educational stage under `stages/` and `src/tiny_agent/` when the capability belongs in the reusable implementation.
 
@@ -477,7 +490,7 @@ When adding a capability, update both its educational stage under `stages/` and 
 
 # References and versioning
 
-Primary references are maintained in the relevant stage documentation. Framework, database, security, observability, multi-Agent, and protocol APIs evolve quickly, so examples should be checked against current official documentation whenever dependencies are updated.
+Primary references are maintained in the relevant stage documentation. Framework, database, security, observability, multi-Agent, web-service, and protocol APIs evolve quickly, so examples should be checked against current official documentation whenever dependencies are updated.
 
 Current optional dependency policy targets stable major-version ranges:
 
@@ -518,6 +531,15 @@ Stage 09
 openai-agents >= 0.22, < 1
 a2a-sdk >= 1.1, < 2
 A2A protocol teaching target: 1.0
+
+Stage 10
+fastapi >= 0.141, < 1
+uvicorn[standard] >= 0.52, < 1
+pydantic-settings >= 2.15, < 3
+redis >= 8.1, < 9
+psycopg[binary,pool] >= 3.3, < 4
+httpx2 >= 2.12, < 3
+a2a-sdk >= 1.1, < 2
 ```
 
 ---
