@@ -37,7 +37,8 @@ jobs:
             --ignore=tests/test_stage06_langgraph.py \
             --ignore=tests/test_stage06_postgres.py \
             --ignore=tests/test_stage07_integrations.py \
-            --ignore=tests/test_stage08_integrations.py
+            --ignore=tests/test_stage08_integrations.py \
+            --ignore=tests/test_stage09_integrations.py
 
   stage03-framework-pytest:
     runs-on: ubuntu-latest
@@ -295,3 +296,43 @@ jobs:
           python stages/08-evaluation-observability/code/opentelemetry_tracing.py
           python stages/08-evaluation-observability/code/langsmith_traceable.py
           python stages/08-evaluation-observability/code/end_to_end_eval.py
+
+  stage09-multi-agent-pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Stage 09 dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,stage09]"
+
+      - name: Run Stage 09 multi-Agent tests
+        run: |
+          pytest -q \
+            tests/test_multi_agent.py \
+            tests/test_stage09_integrations.py
+
+      - name: Smoke-test Stage 09 runnable examples
+        run: |
+          python stages/09-multi-agent/code/one_agent_vs_team.py
+          python stages/09-multi-agent/code/specialist_team.py
+          python stages/09-multi-agent/code/handoff_demo.py
+          python stages/09-multi-agent/code/supervisor_workers.py
+          python stages/09-multi-agent/code/parallel_fanout.py
+          python stages/09-multi-agent/code/context_isolation.py
+          python stages/09-multi-agent/code/delegation_governance.py
+          python stages/09-multi-agent/code/openai_agents_patterns.py
+          python stages/09-multi-agent/code/a2a_protocol_objects.py
+          python stages/09-multi-agent/code/multi_agent_eval.py

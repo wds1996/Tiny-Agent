@@ -18,7 +18,7 @@ LLM interfaces
     -> memory / durable persistence / HITL
     -> reliability / safety / tool governance
     -> evaluation / observability
-    -> multi-Agent
+    -> multi-Agent / A2A interoperability
     -> production deployment
 ```
 
@@ -32,16 +32,17 @@ The goal is not only to make examples run. The goal is to understand **why each 
 2. **Theory and code stay together** — each capability stage contains conceptual notes, runnable examples, tests, and exercises where applicable.
 3. **Educational snapshots are preserved** — later framework code does not erase earlier handwritten implementations.
 4. **Deterministic when possible, agentic when useful** — autonomy is added only where uncertainty justifies it.
-5. **Model output is a proposal, not authority** — routes, plans, ToolCalls, retrieval queries, memory candidates, and actions remain subject to application validation and policy.
+5. **Model output is a proposal, not authority** — routes, plans, ToolCalls, retrieval queries, memory candidates, Agent destinations, and actions remain subject to application validation and policy.
 6. **Runtimes own execution** — LLMs can propose actions; application/runtime code governs execution, observations, budgets, stopping, data access, and durable side effects.
-7. **State is explicit when orchestration demands it** — complex branching, persistence, interruption, and resumption should not be hidden in local variables.
-8. **External evidence and remote capabilities are not authority** — retrieved documents, MCP metadata, remote prompts, Tool results, and remembered content retain explicit trust boundaries.
+7. **State is explicit when orchestration demands it** — complex branching, persistence, interruption, resumption, delegation, and handoffs should not be hidden in local variables.
+8. **External evidence and remote capabilities are not authority** — retrieved documents, MCP metadata, remote prompts, Tool results, remembered content, and remote Agent outputs retain explicit trust boundaries.
 9. **Memory is governed state, not a magic bucket** — thread checkpoints, long-term memory, RAG knowledge, secrets, and audit logs have different semantics and lifecycles.
 10. **Human approval is not authorization** — reviewed actions still require ordinary validation and application permission checks.
-11. **Least privilege beats persuasive prompting** — capabilities, credentials, roles, approvals, budgets, and sandbox boundaries are deterministic controls, not instructions the model may reinterpret.
-12. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, retention, privacy, and deployment are not optional afterthoughts.
-13. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, remote capability errors, persistence failures, authorization denials, and state-transition errors are first-class test cases.
+11. **Least privilege beats persuasive prompting** — capabilities, credentials, roles, approvals, budgets, delegation edges, context projection, and sandbox boundaries are deterministic controls, not instructions the model may reinterpret.
+12. **Production concerns are part of Agent learning** — reliability, permissions, tracing, evaluation, cost, retention, privacy, coordination, interoperability, and deployment are not optional afterthoughts.
+13. **Tests include failure boundaries** — malformed provider data, invalid routes, loop budgets, unsafe failures, retrieval misses, remote capability errors, persistence failures, authorization denials, state-transition errors, and coordination failures are first-class test cases.
 14. **Tutorial simplifications are documented** — beginner code may be intentionally small, but its production limitations must be explicit.
+15. **More Agents are not automatically better** — multi-Agent complexity must be justified against a simpler workflow or single-Agent baseline with measurable evidence.
 
 ---
 
@@ -86,7 +87,7 @@ The project is organized by **capability**, not by calendar day or framework nam
 | [06 — Memory / Persistence / HITL](stages/06-memory-persistence-hitl/) | thread memory, long-term Store, SQLite/Postgres checkpoints, approve/edit/reject HITL | Persist and resume stateful Agents with deliberate memory and human-review policies |
 | [07 — Reliability & Safety](stages/07-reliability-safety/) | typed failures, validation, timeout/retry, budgets, permissions, approval binding, injection/sandbox boundaries | Build a guarded runtime that fails predictably and limits model authority |
 | [08 — Evaluation & Observability](stages/08-evaluation-observability/) | local traces/spans, Agent Tool/trajectory evals, regression datasets/gates, OpenTelemetry, LangSmith | Measure, explain, and regression-test Agent behavior across quality, safety, latency, and cost |
-| [09 — Multi-Agent](stages/09-multi-agent/) | delegation, handoffs, specialists, interoperability | Justify when multiple Agents beat one Agent/workflow |
+| [09 — Multi-Agent](stages/09-multi-agent/) | delegation, handoffs, specialists, parallel coordination, OpenAI Agents SDK, A2A 1.0 | Build bounded Agent teams and prove whether coordination beats a simpler baseline |
 | [10 — Production Deployment](stages/10-production-deployment/) | FastAPI, async, PostgreSQL, Redis, Docker, CI | Turn Tiny-Agent into a deployable service |
 | [11 — Enterprise Capstone](stages/11-capstone-enterprise-agent/) | integrated research/knowledge Agent | Combine the learning path into a portfolio-quality system |
 
@@ -224,7 +225,29 @@ For the framework/infrastructure mapping, see:
 - current LangSmith `@traceable`, dataset/experiment, offline/online evaluation model;
 - Python 3.10/3.12 integration and runnable-example CI.
 
-Stages 09–11 currently contain roadmap scaffolds and will be implemented progressively.
+## ✅ Stage 09 — Multi-Agent Systems, Handoffs & A2A Interoperability
+
+- single-Agent/workflow baseline before team design;
+- framework-neutral `AgentSpec` / `TeamRuntime` coordination core;
+- explicit manager delegation vs conversation-owning handoff semantics;
+- supervisor/worker and specialist-team patterns;
+- `ContextEnvelope` + `ContextPolicy` for minimum context projection;
+- Agent-private context namespaces;
+- default-deny `DelegationPolicy`;
+- run-scoped Agent-call/handoff/parallel budgets;
+- repeated-handoff-edge protection;
+- atomic prevalidation before parallel fan-out;
+- application-owned fan-in and failure-policy discussion;
+- worker exception-message redaction and bounded output contract;
+- coordination metrics integrated with Stage 08 concepts;
+- OpenAI Agents SDK `Agent.as_tool()` vs `handoffs` comparison;
+- A2A 1.0 Agent Card / Message / Task / Part / Artifact model;
+- current `a2a-sdk` offline protocol-object compatibility tests;
+- MCP vs A2A interoperability boundary;
+- single-Agent vs multi-Agent quality/latency/cost comparison;
+- Python 3.10/3.12 integration + runnable-example CI.
+
+Stages 10–11 currently contain roadmap scaffolds and will be implemented progressively.
 
 ---
 
@@ -281,6 +304,15 @@ print trajectory
     -> LangSmith tracing/evaluation
 ```
 
+```text
+single Agent / deterministic workflow baseline
+    -> handwritten delegation + handoff semantics
+    -> context/authority/coordination budgets
+    -> OpenAI Agents SDK manager/handoff mapping
+    -> A2A 1.0 cross-Agent interoperability
+    -> Stage 08 evidence-based architecture comparison
+```
+
 This prevents the project from becoming a collection of framework API recipes.
 
 ---
@@ -317,6 +349,9 @@ python -m pip install -e ".[dev,stage07]"
 
 # Stage 08 observability / evaluation integrations
 python -m pip install -e ".[dev,stage08]"
+
+# Stage 09 multi-Agent / interoperability comparisons
+python -m pip install -e ".[dev,stage09]"
 ```
 
 Follow the stage-specific learning orders rather than reading code directories alphabetically.
@@ -328,17 +363,17 @@ Follow the stage-specific learning orders rather than reading code directories a
 Tiny-Agent separates deterministic correctness tests from optional framework/backend compatibility and live provider behavior.
 
 ```text
-Core deterministic tests             Optional integration tests                              Live examples
-------------------------             --------------------------                              -------------
-Pure Python                          LangGraph / FAISS / Qdrant / MCP / Postgres              Real model/API
-Fake models + policy/eval tests      jsonschema / Tenacity / Pydantic / OTel / LangSmith     API keys/network
-No token cost                        Local/in-memory + real CI backends                        Potential cost
-Mechanism correctness                Library/protocol compatibility                           End-to-end behavior
+Core deterministic tests             Optional integration tests                                       Live examples
+------------------------             --------------------------                                       -------------
+Pure Python                          LangGraph / FAISS / Qdrant / MCP / Postgres                       Real model/API
+Fake models + policy/eval/team tests jsonschema / Tenacity / Pydantic / OTel / LangSmith / A2A SDK   API keys/network
+No token cost                        Local/in-memory + real CI backends                                 Potential cost
+Mechanism correctness                Library/protocol compatibility                                    End-to-end behavior
 ```
 
 Important failure boundaries include:
 
-- loop/step/rewrite/tool/retry budgets;
+- loop/step/rewrite/tool/retry/Agent-call/handoff budgets;
 - malformed provider responses and structured decisions;
 - invalid graph routes/cycles and plan validation;
 - model-safe error redaction;
@@ -354,7 +389,11 @@ Important failure boundaries include:
 - SQLite/PostgreSQL persistence;
 - trace parent/child structure and privacy-safe capture defaults;
 - evaluator shape/coverage and regression-gate behavior;
-- OpenTelemetry/LangSmith integration compatibility without network credentials.
+- OpenTelemetry/LangSmith integration compatibility without network credentials;
+- denied/unknown Agent delegation and failed handoffs;
+- private Agent-context isolation;
+- handoff-loop and parallel-width limits;
+- A2A/OpenAI Agents SDK object/API compatibility without live model or network calls.
 
 ---
 
@@ -389,7 +428,10 @@ Tiny-Agent/
 │   ├── governance.py
 │   ├── guarded_runtime.py
 │   ├── integrations/
+│   │   ├── a2a.py
+│   │   └── opentelemetry.py
 │   ├── memory_policy.py
+│   ├── multi_agent.py
 │   ├── observability.py
 │   ├── observed_runtime.py
 │   ├── reliability.py
@@ -427,7 +469,7 @@ See [`LICENSE`](LICENSE) for the full license text.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Good contributions include clearer explanations, runnable examples, exercises/interview questions, deterministic tests, edge cases, bug fixes, diagrams, adapters, governance policies, and evaluation cases.
+Good contributions include clearer explanations, runnable examples, exercises/interview questions, deterministic tests, edge cases, bug fixes, diagrams, adapters, governance policies, evaluation cases, coordination policies, and interoperability examples.
 
 When adding a capability, update both its educational stage under `stages/` and `src/tiny_agent/` when the capability belongs in the reusable implementation.
 
@@ -435,7 +477,7 @@ When adding a capability, update both its educational stage under `stages/` and 
 
 # References and versioning
 
-Primary references are maintained in the relevant stage documentation. Framework, database, security, observability, and protocol APIs evolve quickly, so examples should be checked against current official documentation whenever dependencies are updated.
+Primary references are maintained in the relevant stage documentation. Framework, database, security, observability, multi-Agent, and protocol APIs evolve quickly, so examples should be checked against current official documentation whenever dependencies are updated.
 
 Current optional dependency policy targets stable major-version ranges:
 
@@ -471,6 +513,11 @@ langsmith >= 0.11, < 1
 opentelemetry-api >= 1.42, < 2
 opentelemetry-sdk >= 1.42, < 2
 OpenTelemetry GenAI semantic conventions are treated as evolving/development guidance
+
+Stage 09
+openai-agents >= 0.22, < 1
+a2a-sdk >= 1.1, < 2
+A2A protocol teaching target: 1.0
 ```
 
 ---
