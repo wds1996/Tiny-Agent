@@ -20,6 +20,7 @@ LLM interfaces
     -> evaluation / observability
     -> multi-Agent / A2A interoperability
     -> production service / deployment
+    -> OpenScholar integrated capstone
 ```
 
 The goal is not only to make examples run. The goal is to understand **why each abstraction exists, what responsibility it owns, where it fails, and how it maps to maintainable software**.
@@ -45,6 +46,7 @@ The goal is not only to make examples run. The goal is to understand **why each 
 15. **More Agents are not automatically better** — multi-Agent complexity must be justified against a simpler workflow or single-Agent baseline with measurable evidence.
 16. **Process-local is not distributed** — Python dictionaries, semaphores, caches, and in-memory task stores do not become shared state just because an HTTP server has multiple workers.
 17. **Deployment topology is architecture** — worker count, replicas, pools, deadlines, shutdown behavior, external state, and network boundaries change correctness, not only performance.
+18. **Evidence type is application truth** — retrieved full text, scholarly metadata, remembered preferences, and remote Agent output must not be flattened into one equally trusted context bucket.
 
 ---
 
@@ -91,7 +93,7 @@ The project is organized by **capability**, not by calendar day or framework nam
 | [08 — Evaluation & Observability](stages/08-evaluation-observability/) | local traces/spans, Agent Tool/trajectory evals, regression datasets/gates, OpenTelemetry, LangSmith | Measure, explain, and regression-test Agent behavior across quality, safety, latency, and cost |
 | [09 — Multi-Agent](stages/09-multi-agent/) | delegation, handoffs, specialists, parallel coordination, OpenAI Agents SDK, A2A 1.0 | Build bounded Agent teams and prove whether coordination beats a simpler baseline |
 | [10 — Production Deployment](stages/10-production-deployment/) | service boundary, FastAPI/SSE, concurrency, Postgres/Redis, health/lifespan, Docker, A2A serving | Turn Tiny-Agent into a bounded, testable, containerized network service |
-| [11 — Enterprise Capstone](stages/11-capstone-enterprise-agent/) | integrated research/knowledge Agent | Combine the learning path into a portfolio-quality system |
+| [11 — OpenScholar Capstone](stages/11-capstone-enterprise-agent/) | integrated academic research Agent, base + LangGraph implementations | Combine Stages 00–10 into one evidence-grounded, evaluated, deployable portfolio system |
 
 For the framework/infrastructure mapping, see **[Framework & Tooling Map](docs/framework-and-tooling-map.md)**.
 
@@ -261,7 +263,24 @@ For the framework/infrastructure mapping, see **[Framework & Tooling Map](docs/f
 - graceful shutdown and long-running Agent job architecture;
 - real Postgres/Redis + Docker build integration CI on Python 3.10/3.12.
 
-Stage 11 remains the capstone roadmap and will be implemented progressively.
+## ✅ Stage 11 — OpenScholar Integrated Capstone
+
+- one complete academic research Agent rather than another isolated framework demo;
+- `BaseOpenScholarAgent` built primarily with ordinary Python/`asyncio` and Tiny-Agent primitives;
+- `LangGraphOpenScholarAgent` using the same domain services with StateGraph/checkpoint/HITL orchestration;
+- explicit `local_fulltext` vs `scholarly_metadata` evidence trust classes;
+- local PDF/JSONL corpus ingestion and inspectable Stage 04 retrieval primitives;
+- open arXiv paper manifest plus local `pypdf` corpus bootstrap;
+- Crossref scholarly metadata discovery without treating titles as evidence of findings;
+- score threshold + evidence sufficiency abstention before synthesis;
+- bounded Supervisor → Critic → optional Writer review team;
+- conservative long-term style-memory write policy;
+- human-approved report export with path authorization and exclusive create;
+- deterministic citation/grounding evaluation and trace integration;
+- MCP corpus capability and A2A whole-Agent service examples;
+- FastAPI base/LangGraph/resume endpoints;
+- Stage 11 Docker artifact and Python 3.10/3.12 dedicated CI;
+- synthetic offline corpus so the complete system is testable without API keys/network.
 
 ---
 
@@ -336,6 +355,15 @@ local Agent call
     -> Docker / Compose / CI
 ```
 
+```text
+all individual capabilities
+    -> shared OpenScholar domain layer
+    -> handwritten base orchestration
+    -> LangGraph orchestration of the same domain
+    -> evidence-grounded evaluation
+    -> HTTP / MCP / A2A / container boundaries
+```
+
 This prevents the project from becoming a collection of framework API recipes.
 
 ---
@@ -361,6 +389,7 @@ python -m pip install -e ".[dev,stage07]"  # reliability / safety
 python -m pip install -e ".[dev,stage08]"  # observability / evaluation
 python -m pip install -e ".[dev,stage09]"  # multi-Agent / A2A objects
 python -m pip install -e ".[dev,stage10]"  # service / deployment stack
+python -m pip install -e ".[dev,stage11]"  # OpenScholar integrated capstone
 ```
 
 Follow the stage-specific learning orders rather than reading code directories alphabetically.
@@ -400,7 +429,12 @@ Important failure boundaries include:
 - readiness failures without raw dependency-secret leakage;
 - real Redis/Postgres async lifecycle;
 - current FastAPI/Starlette/A2A SDK compatibility;
-- Docker Compose validation and Stage 10 image build.
+- Docker Compose validation and Stage 10 image build;
+- OpenScholar evidence trust classes and minimum-score filtering;
+- hallucinated citation detection and grounding gates;
+- LangGraph capstone pause/resume before durable export;
+- MCP corpus vs A2A whole-Agent integration boundaries;
+- Stage 11 image build without downloading external papers.
 
 ---
 
@@ -414,7 +448,8 @@ Tiny-Agent/
 ├── docs/
 │   └── framework-and-tooling-map.md
 ├── .github/workflows/
-│   └── tests.yml
+│   ├── tests.yml
+│   └── stage11-capstone.yml
 ├── stages/
 │   ├── 00-foundations/
 │   ├── 01-react-runtime/
@@ -430,6 +465,19 @@ Tiny-Agent/
 │   └── 11-capstone-enterprise-agent/
 ├── src/tiny_agent/
 │   ├── approval.py
+│   ├── capstone/
+│   │   ├── base_agent.py
+│   │   ├── corpus.py
+│   │   ├── evaluation.py
+│   │   ├── export.py
+│   │   ├── heuristic.py
+│   │   ├── langgraph_agent.py
+│   │   ├── memory.py
+│   │   ├── models.py
+│   │   ├── openai_adapter.py
+│   │   ├── scholarly.py
+│   │   ├── team.py
+│   │   └── utils.py
 │   ├── decision.py
 │   ├── evaluation.py
 │   ├── governance.py
@@ -438,6 +486,7 @@ Tiny-Agent/
 │   │   ├── a2a.py
 │   │   ├── a2a_server.py
 │   │   ├── fastapi_app.py
+│   │   ├── openscholar_api.py
 │   │   ├── opentelemetry.py
 │   │   ├── postgres_backend.py
 │   │   ├── redis_backend.py
@@ -482,7 +531,7 @@ See [`LICENSE`](LICENSE) for the full license text.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Good contributions include clearer explanations, runnable examples, exercises/interview questions, deterministic tests, edge cases, bug fixes, diagrams, adapters, governance policies, evaluation cases, coordination policies, interoperability examples, deployment checks, and lifecycle fixes.
+Good contributions include clearer explanations, runnable examples, exercises/interview questions, deterministic tests, edge cases, bug fixes, diagrams, adapters, governance policies, evaluation cases, coordination policies, interoperability examples, deployment checks, lifecycle fixes, and capstone regression cases.
 
 When adding a capability, update both its educational stage under `stages/` and `src/tiny_agent/` when the capability belongs in the reusable implementation.
 
@@ -540,6 +589,16 @@ redis >= 8.1, < 9
 psycopg[binary,pool] >= 3.3, < 4
 httpx2 >= 2.12, < 3
 a2a-sdk >= 1.1, < 2
+
+Stage 11
+openai >= 2, < 3
+langgraph >= 1.2, < 2
+fastapi >= 0.141, < 1
+uvicorn[standard] >= 0.52, < 1
+httpx2 >= 2.12, < 3
+pypdf >= 6.16, < 7
+mcp[cli] >= 2, < 3
+a2a-sdk[http-server] >= 1.1, < 2
 ```
 
 ---
