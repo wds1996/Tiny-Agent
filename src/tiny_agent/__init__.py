@@ -74,6 +74,18 @@ from .observability import (
     trace_tree_lines,
 )
 from .observed_runtime import ObservedGuardedToolExecutor
+from .production import (
+    BoundedAgentService,
+    DependencyStatus,
+    ReadinessReport,
+    ServiceCapacityError,
+    ServiceError,
+    ServiceRequest,
+    ServiceRunResult,
+    ServiceSnapshot,
+    ServiceTimeoutError,
+    run_readiness_checks,
+)
 from .rag import AgenticRAGWorkflow, AnswerGenerator, BasicRAG, RAGResult
 from .reliability import (
     BudgetExceededError,
@@ -145,6 +157,7 @@ __all__ = [
     "ApprovalRequest",
     "ApprovalResolution",
     "BasicRAG",
+    "BoundedAgentService",
     "BudgetExceededError",
     "BudgetLedger",
     "ConservativeMemoryWritePolicy",
@@ -156,6 +169,7 @@ __all__ = [
     "CoordinationState",
     "DelegationDeniedError",
     "DelegationPolicy",
+    "DependencyStatus",
     "DocumentChunk",
     "END",
     "EmbeddingModel",
@@ -196,6 +210,7 @@ __all__ = [
     "PlanStep",
     "Principal",
     "RAGResult",
+    "ReadinessReport",
     "RegressionGate",
     "RegressionGateResult",
     "RepeatedToolCallDetector",
@@ -210,6 +225,12 @@ __all__ = [
     "START",
     "SafeToolError",
     "SearchResult",
+    "ServiceCapacityError",
+    "ServiceError",
+    "ServiceRequest",
+    "ServiceRunResult",
+    "ServiceSnapshot",
+    "ServiceTimeoutError",
     "SimpleToolArgumentsValidator",
     "SpanRecord",
     "StepFailure",
@@ -249,6 +270,7 @@ __all__ = [
     "format_evidence",
     "memory_namespace",
     "resolve_approval",
+    "run_readiness_checks",
     "tokenize",
     "tool_call_fingerprint",
     "tool_invocations_from_spans",
