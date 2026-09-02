@@ -26,7 +26,7 @@ Compare what the abstraction adds
 | 05 | Standardized capabilities/context | **MCP 2026-07-28**, **MCP Python SDK v2**, stdio, Streamable HTTP, Tiny-Agent MCP bridge |
 | 06 | Memory, durable persistence, HITL | LangGraph **Checkpointer + Store + interrupt**, **SQLite**, **PostgreSQL**, Tiny-Agent memory/approval policies |
 | 07 | Reliability, safety, Tool governance | handwritten policy primitives, **jsonschema**, **Pydantic strict mode**, **Tenacity**, `asyncio` timeout/cancellation, OWASP Agent/LLM risk model |
-| 08 | Evaluation & observability | **LangSmith**, OpenTelemetry concepts, custom eval datasets/graders |
+| 08 | Evaluation & observability | handwritten trace/eval core, **OpenTelemetry**, **LangSmith**, custom datasets/graders/regression gates |
 | 09 | Multi-Agent systems | OpenAI Agents SDK / AutoGen-style patterns for comparison where useful |
 | 10 | Production deployment | **FastAPI**, Docker, PostgreSQL, Redis, CI/CD |
 | 11 | Enterprise capstone | Integrated use of the tools learned above |
@@ -42,6 +42,8 @@ Qdrant chapter
 MCP decorators chapter
 Postgres chapter
 Tenacity chapter
+LangSmith chapter
+OpenTelemetry chapter
 Docker chapter
 ```
 
@@ -88,8 +90,11 @@ raw Tool execution
 
 ```text
 print-based trajectory inspection
-        -> structured traces/spans
-        -> LangSmith / OpenTelemetry
+        -> local trace/span model
+        -> RunArtifact + deterministic Agent evaluators
+        -> regression gate
+        -> OpenTelemetry
+        -> LangSmith
 ```
 
 ```text
@@ -251,6 +256,61 @@ injection detection != access control
 
 These distinctions matter more than memorizing one security library.
 
+## Evaluation / observability learning order
+
+Stage 08 deliberately does **not** begin with a hosted dashboard or a giant LLM judge.
+
+```text
+print/debug output
+    -> trace vs span mental model
+    -> privacy-aware LocalTracer / InMemorySpanSink
+
+Stage 07 guarded Tool execution
+    -> ObservedGuardedToolExecutor
+    -> failure/attempt/latency trace signals
+
+Agent behavior
+    -> EvalExample + RunArtifact
+    -> final-response evaluator
+    -> Tool selection evaluator
+    -> Tool argument evaluator
+    -> trajectory evaluator
+
+subjective quality
+    -> deterministic grader first
+    -> provider-neutral LLMJudgeEvaluator when needed
+    -> calibrate against humans
+
+candidate change
+    -> EvaluationReport
+    -> metric coverage
+    -> absolute / relative RegressionGate
+
+local telemetry model
+    -> OpenTelemetry adapter
+    -> current GenAI semantic conventions
+
+local evaluation model
+    -> LangSmith trace / dataset / experiment / online-eval workflow
+```
+
+Stage 08 preserves these distinctions:
+
+```text
+logging       != tracing
+tracing       != evaluation
+metric        != trace
+evaluation    != test
+trace         != audit log
+final answer  != trajectory quality
+Tool choice   != Tool arguments
+LLM judge     != ground truth
+OpenTelemetry != LangSmith
+observability != authorization
+```
+
+OpenTelemetry's 2026 direction is also reflected explicitly: new event-like telemetry should use log-based events correlated with spans rather than introducing new Span Events API usage. GenAI semantic conventions remain fast-moving, so Tiny-Agent treats current names as versioned integration details rather than its internal domain model.
+
 ## Maintenance rule
 
 When Tiny-Agent introduces a new external tool or framework, the relevant stage should explain:
@@ -264,6 +324,7 @@ When Tiny-Agent introduces a new external tool or framework, the relevant stage 
 7. at least one runnable example and one comparison with the underlying mechanism;
 8. the version/specification target when the ecosystem is evolving quickly;
 9. durability, trust, and ownership boundaries when the tool stores state or executes remote actions;
-10. what deterministic application policy remains necessary even after a mature framework is introduced.
+10. what deterministic application policy remains necessary even after a mature framework is introduced;
+11. what telemetry/evaluation data is collected and how privacy/retention are handled when the tool observes runtime behavior.
 
 This keeps Tiny-Agent focused on **Agent engineering**, while still teaching the mainstream tools expected in real projects.

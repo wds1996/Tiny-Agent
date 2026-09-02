@@ -85,7 +85,7 @@ The project is organized by **capability**, not by calendar day or framework nam
 | [05 — MCP](stages/05-mcp/) | MCP 2026 stateless protocol, Tools/Resources/Prompts, stdio/HTTP, Python SDK v2 | Discover and consume standardized external capabilities through a clean Tiny-Agent bridge |
 | [06 — Memory / Persistence / HITL](stages/06-memory-persistence-hitl/) | thread memory, long-term Store, SQLite/Postgres checkpoints, approve/edit/reject HITL | Persist and resume stateful Agents with deliberate memory and human-review policies |
 | [07 — Reliability & Safety](stages/07-reliability-safety/) | typed failures, validation, timeout/retry, budgets, permissions, approval binding, injection/sandbox boundaries | Build a guarded runtime that fails predictably and limits model authority |
-| [08 — Evaluation & Observability](stages/08-evaluation-observability/) | traces, trajectory eval, quality/cost/latency metrics | Measure whether Agent behavior actually works |
+| [08 — Evaluation & Observability](stages/08-evaluation-observability/) | local traces/spans, Agent Tool/trajectory evals, regression datasets/gates, OpenTelemetry, LangSmith | Measure, explain, and regression-test Agent behavior across quality, safety, latency, and cost |
 | [09 — Multi-Agent](stages/09-multi-agent/) | delegation, handoffs, specialists, interoperability | Justify when multiple Agents beat one Agent/workflow |
 | [10 — Production Deployment](stages/10-production-deployment/) | FastAPI, async, PostgreSQL, Redis, Docker, CI | Turn Tiny-Agent into a deployable service |
 | [11 — Enterprise Capstone](stages/11-capstone-enterprise-agent/) | integrated research/knowledge Agent | Combine the learning path into a portfolio-quality system |
@@ -205,7 +205,26 @@ For the framework/infrastructure mapping, see:
 - OWASP/Python/jsonschema/Pydantic/Tenacity/LangChain security references;
 - Python 3.10/3.12 compatibility + runnable-example CI.
 
-Stages 08–11 currently contain roadmap scaffolds and will be implemented progressively.
+## ✅ Stage 08 — Observability, Tracing & Evaluation
+
+- logging vs tracing vs metrics vs evaluation vs audit-log boundaries;
+- framework-neutral `SpanRecord`, nested `LocalTracer`, and `InMemorySpanSink`;
+- privacy-aware `TraceCapturePolicy` with raw input/output capture disabled by default;
+- observed Stage 07 Tool execution without duplicating governance policy;
+- `EvalExample` / `RunArtifact` / `EvaluationSuite` abstractions;
+- final-response exact-match evaluation;
+- Tool selection precision/recall/F1 and separate Tool-argument evaluation;
+- required-sequence + forbidden-action trajectory evaluation;
+- deterministic graders vs provider-neutral LLM-as-judge boundary;
+- repeated offline evaluation and metric-coverage tracking;
+- higher/lower-is-better regression rules and CI-style release gates;
+- quality/reliability/latency/token/cost evaluation theory;
+- OpenTelemetry adapter and current GenAI semantic-convention caveats;
+- 2026 Span Events API deprecation guidance;
+- current LangSmith `@traceable`, dataset/experiment, offline/online evaluation model;
+- Python 3.10/3.12 integration and runnable-example CI.
+
+Stages 09–11 currently contain roadmap scaffolds and will be implemented progressively.
 
 ---
 
@@ -255,8 +274,11 @@ raw Tool invocation
 
 ```text
 print trajectory
-    -> structured trace/event model
-    -> LangSmith / OpenTelemetry
+    -> local trace/span model
+    -> RunArtifact + deterministic Agent evaluators
+    -> regression dataset/gate
+    -> OpenTelemetry
+    -> LangSmith tracing/evaluation
 ```
 
 This prevents the project from becoming a collection of framework API recipes.
@@ -292,6 +314,9 @@ python -m pip install -e ".[dev,stage06]"
 
 # Stage 07 reliability / safety comparisons
 python -m pip install -e ".[dev,stage07]"
+
+# Stage 08 observability / evaluation integrations
+python -m pip install -e ".[dev,stage08]"
 ```
 
 Follow the stage-specific learning orders rather than reading code directories alphabetically.
@@ -303,12 +328,12 @@ Follow the stage-specific learning orders rather than reading code directories a
 Tiny-Agent separates deterministic correctness tests from optional framework/backend compatibility and live provider behavior.
 
 ```text
-Core deterministic tests             Optional integration tests                      Live examples
-------------------------             --------------------------                      -------------
-Pure Python                          LangGraph / FAISS / Qdrant / MCP / Postgres      Real model/API
-Fake models + policy tests           jsonschema / Tenacity / Pydantic                 API keys/network
-No token cost                        Local/in-memory + real CI backends                Potential cost
-Mechanism correctness                Library/protocol compatibility                   End-to-end behavior
+Core deterministic tests             Optional integration tests                              Live examples
+------------------------             --------------------------                              -------------
+Pure Python                          LangGraph / FAISS / Qdrant / MCP / Postgres              Real model/API
+Fake models + policy/eval tests      jsonschema / Tenacity / Pydantic / OTel / LangSmith     API keys/network
+No token cost                        Local/in-memory + real CI backends                        Potential cost
+Mechanism correctness                Library/protocol compatibility                           End-to-end behavior
 ```
 
 Important failure boundaries include:
@@ -326,7 +351,10 @@ Important failure boundaries include:
 - retrieval misses and evidence-insufficiency abstention;
 - MCP discovery/schema normalization and remote errors;
 - memory-write denial and HITL edit/reject behavior;
-- SQLite/PostgreSQL persistence.
+- SQLite/PostgreSQL persistence;
+- trace parent/child structure and privacy-safe capture defaults;
+- evaluator shape/coverage and regression-gate behavior;
+- OpenTelemetry/LangSmith integration compatibility without network credentials.
 
 ---
 
@@ -357,9 +385,13 @@ Tiny-Agent/
 ├── src/tiny_agent/
 │   ├── approval.py
 │   ├── decision.py
+│   ├── evaluation.py
 │   ├── governance.py
 │   ├── guarded_runtime.py
+│   ├── integrations/
 │   ├── memory_policy.py
+│   ├── observability.py
+│   ├── observed_runtime.py
 │   ├── reliability.py
 │   ├── runtime.py
 │   ├── state_graph.py
@@ -403,7 +435,7 @@ When adding a capability, update both its educational stage under `stages/` and 
 
 # References and versioning
 
-Primary references are maintained in the relevant stage documentation. Framework, database, security, and protocol APIs evolve quickly, so examples should be checked against current official documentation whenever dependencies are updated.
+Primary references are maintained in the relevant stage documentation. Framework, database, security, observability, and protocol APIs evolve quickly, so examples should be checked against current official documentation whenever dependencies are updated.
 
 Current optional dependency policy targets stable major-version ranges:
 
@@ -433,6 +465,12 @@ jsonschema >= 4.25, < 5
 tenacity >= 9, < 10
 pydantic >= 2.11, < 3
 security reference baseline: OWASP Top 10 for LLM Applications 2025
+
+Stage 08
+langsmith >= 0.11, < 1
+opentelemetry-api >= 1.42, < 2
+opentelemetry-sdk >= 1.42, < 2
+OpenTelemetry GenAI semantic conventions are treated as evolving/development guidance
 ```
 
 ---
