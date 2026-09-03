@@ -14,8 +14,8 @@ Stage 02 因此介绍从基础 ReAct loop 到 Stage 03 stateful graph orchestrat
 
 完成：
 
-- `../00-foundations/`
-- `../01-react-runtime/`
+- [Stage 00 中文教程](../00-foundations/README.zh-CN.md)
+- [Stage 01 中文教程](../01-react-runtime/README.zh-CN.md)
 
 并确认你理解：
 
@@ -88,12 +88,12 @@ Open-ended autonomous Agent
 
 ### Part A — Workflow vs Agent
 
-1. `theory/01-agent-vs-workflow.md`
+1. [Agent vs Workflow](theory/01-agent-vs-workflow.zh-CN.md)
 2. `code/deterministic_router.py`
 
 ### Part B — Routing
 
-3. `theory/02-routing-patterns.md`
+3. [Routing Patterns](theory/02-routing-patterns.zh-CN.md)
 4. `../../src/tiny_agent/decision.py`
 5. `../../src/tiny_agent/models/openai_structured.py`
 6. `../../src/tiny_agent/workflows.py`
@@ -101,18 +101,18 @@ Open-ended autonomous Agent
 
 ### Part C — Planning / Execution
 
-8. `theory/03-planning-and-replanning.md`
-9. `theory/04-planner-executor.md`
+8. [Planning 与 Replanning](theory/03-planning-and-replanning.zh-CN.md)
+9. [Planner / Executor](theory/04-planner-executor.zh-CN.md)
 10. `code/planner_executor_agent.py`
 11. `code/bounded_replanning.py`
 
 ### Part D — Review
 
-12. `exercises/review-questions.md`
+12. [复习题](exercises/review-questions.zh-CN.md)
 13. `../../tests/test_workflows.py`
 14. `../../tests/test_structured_decision.py`
 
-中文理论与练习使用同目录 `*.zh-CN.md`；代码、tests 仍共用同一份实现。
+代码与 tests 继续与英文版共用同一份真实实现；本页所有课程文档链接均直接指向简体中文版。
 
 ## Pattern 1 — Deterministic Workflow
 
