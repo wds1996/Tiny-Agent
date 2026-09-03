@@ -1,146 +1,181 @@
-"""Stage 00: a framework-free minimal tool-use loop.
-
-This file deliberately avoids LangChain/LangGraph/Agent SDKs.  The model is
-represented by a tiny scripted fake so the control flow is deterministic and
-can be run without API keys.
+"""Stage 00: a minimal real OpenAI Tool Calling loop.
 
 Run:
     python stages/00-foundations/code/minimal_tool_loop.py
+
+Required environment:
+    OPENAI_API_KEY=...
+
+Optional:
+    OPENAI_MODEL=gpt-5.6-luna
+
+The weather Tool intentionally returns deterministic mock data. The lesson is
+not weather integration; it is the exact control flow:
+
+    model proposes ToolCall
+        -> Runtime validates/executes Python
+        -> Runtime returns function_call_output
+        -> model continues
+
+No Agent framework is used in this file.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable
+import json
+import os
+from typing import Any
+
+from openai import OpenAI
 
 
-@dataclass
-class ToolCall:
-    """A normalized tool call proposed by a model."""
+MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
 
-    name: str
-    arguments: dict[str, Any]
+INSTRUCTIONS = (
+    "You are a travel assistant. "
+    "Use the provided Tools for weather lookup and temperature conversion; "
+    "do not guess or perform the conversion yourself. "
+    "The weather data in this course is mocked, so state that clearly in the final answer."
+)
+
+TOOLS = [
+    {
+        "type": "function",
+        "name": "get_weather",
+        "description": (
+            "Get deterministic mock weather data used by this Stage 00 course example. "
+            "This is not a live weather service."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "City name, for example Tokyo.",
+                }
+            },
+            "required": ["city"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+    {
+        "type": "function",
+        "name": "celsius_to_fahrenheit",
+        "description": "Convert a Celsius temperature to Fahrenheit.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "temperature_c": {
+                    "type": "number",
+                    "description": "Temperature in degrees Celsius.",
+                }
+            },
+            "required": ["temperature_c"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+]
 
 
-@dataclass
-class ModelOutput:
-    """A minimal model output used by this teaching example."""
+def get_weather(city: str) -> dict[str, Any]:
+    """Return deterministic teaching data, not real-time weather."""
 
-    tool_call: ToolCall | None = None
-    final_answer: str | None = None
+    if not isinstance(city, str) or not city.strip():
+        raise ValueError("city must be a non-empty string")
 
+    if city.strip().lower() not in {"tokyo", "东京"}:
+        raise ValueError("this course example only contains Tokyo weather data")
 
-ToolHandler = Callable[..., Any]
-
-
-def add(a: float, b: float) -> float:
-    return a + b
-
-
-def multiply(a: float, b: float) -> float:
-    return a * b
+    return {
+        "city": "Tokyo",
+        "temperature_c": 18.0,
+        "source": "Tiny-Agent Stage 00 mock data",
+    }
 
 
-TOOLS: dict[str, ToolHandler] = {
-    "add": add,
-    "multiply": multiply,
-}
+def celsius_to_fahrenheit(temperature_c: float) -> dict[str, float]:
+    """Convert Celsius to Fahrenheit after simple Runtime-side validation."""
+
+    if not isinstance(temperature_c, (int, float)) or isinstance(temperature_c, bool):
+        raise ValueError("temperature_c must be a number")
+
+    temperature_f = temperature_c * 9 / 5 + 32
+    return {"temperature_f": round(temperature_f, 1)}
 
 
-class ScriptedModel:
-    """A deterministic stand-in for an LLM.
+def execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Runtime-owned dispatch.
 
-    The purpose is to teach the runtime loop, not provider-specific APIs.
-    A real provider adapter would translate its native response into
-    ``ModelOutput`` / ``ToolCall`` objects with the same meaning.
+    The model only proposes `name` and `arguments`. This function is the first
+    deterministic execution boundary: unknown Tools are rejected rather than
+    guessed or dynamically imported.
     """
 
-    def __init__(self) -> None:
-        self.turn = 0
+    if name == "get_weather":
+        return get_weather(**arguments)
+    if name == "celsius_to_fahrenheit":
+        return celsius_to_fahrenheit(**arguments)
 
-    def generate(self, messages: list[dict[str, Any]]) -> ModelOutput:
-        self.turn += 1
-
-        if self.turn == 1:
-            return ModelOutput(
-                tool_call=ToolCall(
-                    name="multiply",
-                    arguments={"a": 23, "b": 17},
-                )
-            )
-
-        if self.turn == 2:
-            multiplication_result = messages[-1]["content"]
-            return ModelOutput(
-                tool_call=ToolCall(
-                    name="add",
-                    arguments={"a": multiplication_result, "b": 41},
-                )
-            )
-
-        result = messages[-1]["content"]
-        return ModelOutput(final_answer=f"The final result is {result}.")
+    raise ValueError(f"Unknown Tool: {name}")
 
 
-def execute_tool(call: ToolCall) -> Any:
-    """Execute a proposed call on the runtime side.
+def run_tool_loop(user_input: str, max_steps: int = 6) -> str:
+    """Run a bounded model -> Tool -> observation loop."""
 
-    Notice that the model never receives the Python callable itself.  It only
-    proposes ``name`` and ``arguments``.  The runtime owns the registry and the
-    real function execution.
-    """
+    client = OpenAI()
 
-    if call.name not in TOOLS:
-        raise ValueError(f"Unknown tool: {call.name}")
-
-    handler = TOOLS[call.name]
-    return handler(**call.arguments)
-
-
-def run_tool_loop(user_input: str, max_steps: int = 8) -> str:
-    model = ScriptedModel()
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": user_input},
-    ]
+    response = client.responses.create(
+        model=MODEL,
+        instructions=INSTRUCTIONS,
+        input=user_input,
+        tools=TOOLS,
+        parallel_tool_calls=False,
+    )
 
     for step in range(1, max_steps + 1):
-        output = model.generate(messages)
+        function_calls = [
+            item for item in response.output if item.type == "function_call"
+        ]
 
-        if output.final_answer is not None:
-            print(f"[step {step}] final: {output.final_answer}")
-            return output.final_answer
+        if not function_calls:
+            final_answer = response.output_text
+            print("final:", final_answer)
+            return final_answer
 
-        if output.tool_call is None:
-            raise RuntimeError("Model produced neither a tool call nor a final answer")
+        # parallel_tool_calls=False keeps this teaching example to one proposed
+        # function call at a time so the state transition is easy to inspect.
+        call = function_calls[0]
+        arguments = json.loads(call.arguments)
 
-        call = output.tool_call
-        print(f"[step {step}] action: {call.name}({call.arguments})")
+        print(f"step {step}: model -> {call.name}({arguments})")
 
-        # Runtime executes the action.
-        observation = execute_tool(call)
-        print(f"[step {step}] observation: {observation}")
+        # The Runtime, not the model, executes the real Python function.
+        result = execute_tool(call.name, arguments)
+        print(f"step {step}: tool  -> {result}")
 
-        # The observation becomes new model context.
-        messages.append(
-            {
-                "role": "assistant",
-                "tool_call": {
-                    "name": call.name,
-                    "arguments": call.arguments,
-                },
-            }
-        )
-        messages.append(
-            {
-                "role": "tool",
-                "name": call.name,
-                "content": observation,
-            }
+        # The model does not automatically know local Python variables. Return
+        # the real observation and preserve `call_id` correlation.
+        response = client.responses.create(
+            model=MODEL,
+            instructions=INSTRUCTIONS,
+            previous_response_id=response.id,
+            tools=TOOLS,
+            parallel_tool_calls=False,
+            input=[
+                {
+                    "type": "function_call_output",
+                    "call_id": call.call_id,
+                    "output": json.dumps(result, ensure_ascii=False),
+                }
+            ],
         )
 
     raise RuntimeError(f"Tool loop exceeded max_steps={max_steps}")
 
 
 if __name__ == "__main__":
-    answer = run_tool_loop("Calculate (23 * 17) + 41")
-    assert answer == "The final result is 432."
+    run_tool_loop(
+        "What is the mock Tokyo weather in Celsius, and what is it in Fahrenheit?"
+    )

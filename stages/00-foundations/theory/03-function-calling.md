@@ -1,282 +1,620 @@
-# Function Calling / Tool Calling
+# 03 — The Model Does Not “Run Python”: What Tool Calling Actually Means
 
-## 1. What function calling really is
+> Language: English | [简体中文](03-function-calling.zh-CN.md)
 
-Function calling is frequently described as "the LLM calls a function." That phrasing is convenient, but technically misleading.
+The previous chapter solved one problem: returning model output in a structure that software can consume.
 
-A language model normally does **not** execute your local Python function, access your database, or send an HTTP request by itself. Instead, the application provides a machine-readable description of available tools. The model may then generate a structured request indicating which tool it wants to use and with what arguments.
-
-Conceptually:
-
-```text
-Available tool:
-get_weather(city: string)
-
-User:
-What is the weather in Tokyo?
-
-Model output:
-ToolCall(
-    name="get_weather",
-    arguments={"city": "Tokyo"}
-)
-```
-
-The **application runtime** receives that request and decides what to do next.
-
-## 2. The four layers of a tool
-
-A useful mental model separates four things that are often mixed together.
-
-### 2.1 Tool name
-
-```text
-get_weather
-```
-
-The name is part of the interface the model sees.
-
-### 2.2 Tool description
-
-```text
-Get the current weather for a city.
-```
-
-Descriptions matter because tool selection is partly a language-understanding problem. A vague or overlapping description can cause the model to choose the wrong tool.
-
-### 2.3 Argument schema
+Our travel assistant can now recognize:
 
 ```json
 {
-  "type": "object",
-  "properties": {
-    "city": {"type": "string"}
-  },
-  "required": ["city"]
+  "city": "Tokyo",
+  "needs_weather": true
 }
 ```
 
-The schema defines the shape of the proposed action.
+But recognizing that weather is needed is not the same thing as obtaining weather.
 
-### 2.4 Executable handler
+Real weather lives outside the model. It may come from an HTTP API, a database, an MCP server, or one of our own Python functions.
+
+So the next question is:
+
+> **How can a model use capabilities that it does not inherently possess?**
+
+Many tutorials shorten the answer to “the LLM calls a function.” Convenient phrase, misleading mental model.
+
+A more accurate statement is:
+
+> **The model generates a structured ToolCall proposal; the application Runtime validates and executes the real Tool, then returns the result to the model.**
+
+Understand this chapter and you can already see half of the Stage 01 Agent loop.
+
+---
+
+## 1. Fix the most common misconception first
+
+Suppose Python contains:
 
 ```python
-def get_weather(city: str) -> str:
+def get_weather(city: str) -> dict:
     ...
 ```
 
-This function belongs to the application/runtime side. The model does not need the Python source code in order to propose the tool call.
+The model does not automatically acquire that function because it exists in your process.
 
-## 3. Tool schema and executable function are different objects
+It also does not mysteriously jump into your interpreter and execute:
 
-This separation is essential:
-
-```text
-             MODEL SIDE
-                |
-                v
-     name + description + schema
-                |
-          proposes action
-                |
-                v
-             RUNTIME
-                |
-                v
-        executable handler
+```python
+get_weather("Tokyo")
 ```
 
-Why keep them separate?
+What the model sees is an **interface description** supplied by the application:
 
-Because the same logical tool may be exposed through:
-
-- a local Python function;
-- an HTTP API;
-- a database driver;
-- a remote worker;
-- an MCP server;
-- a sandboxed execution environment.
-
-The model-facing contract can remain stable while the execution mechanism changes.
-
-## 4. A complete function-calling turn
-
-A typical sequence is:
-
-```text
-1. Application sends user message + tool schemas to model.
-2. Model proposes a tool call.
-3. Runtime validates the requested tool and arguments.
-4. Runtime executes the tool.
-5. Runtime converts the result into a tool observation.
-6. Application sends the observation back to the model.
-7. Model produces the next decision or final answer.
+```python
+TOOLS = [
+    {
+        "type": "function",
+        "name": "get_weather",
+        "description": "Get weather data for a city.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"}
+            },
+            "required": ["city"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    }
+]
 ```
 
-The important point is Step 6.
-
-A tool result is not automatically known to the model merely because your Python process executed a function. The observation must become part of the next model context.
-
-## 5. Why tool results must go back to the model
-
-Suppose the model proposes:
+From that description, the model may emit something equivalent to:
 
 ```text
-calculator(a=23, b=17)
+function_call
+name = "get_weather"
+arguments = {"city": "Tokyo"}
 ```
 
-The runtime computes:
+At this point **the weather function has still not executed**.
+
+The model has only said:
+
+> “I think the next step should use `get_weather` with Tokyo as the argument.”
+
+Execution still belongs to your application.
+
+---
+
+## 2. One Tool lives in two different worlds
+
+This is the diagram worth remembering:
 
 ```text
-391
+              MODEL-FACING WORLD
+┌─────────────────────────────────┐
+│ name: get_weather               │
+│ description: get city weather   │
+│ parameters: {city: string}      │
+└─────────────────────────────────┘
+                 │
+                 │ model proposes ToolCall
+                 ▼
+              RUNTIME BOUNDARY
+┌─────────────────────────────────┐
+│ Does the Tool exist?            │
+│ Are arguments valid?            │
+│ Is the caller authorized?       │
+│ Is approval required?           │
+└─────────────────────────────────┘
+                 │
+                 │ execute only if allowed
+                 ▼
+              EXECUTION WORLD
+┌─────────────────────────────────┐
+│ def get_weather(city):          │
+│     call API / DB / local code  │
+└─────────────────────────────────┘
 ```
 
-The model cannot reliably continue from the real result unless the application supplies that result in the next turn.
+Therefore:
 
 ```text
-User: calculate 23 * 17
-Assistant: tool_call calculator(...)
-Tool: 391
-Assistant: 23 * 17 = 391
+Tool schema
+!=
+Tool handler
 ```
 
-This creates the first important feedback loop in Agent systems.
+The Tool schema is the model-facing contract.
 
-## 6. Multiple tool calls
+The Tool handler is executable application code.
 
-A task may require several external actions:
+The implementation behind the same interface might later be:
 
 ```text
-User
-  |
-  v
-Model -> weather("Tokyo")
-  ^            |
-  |            v
-  +------ 31 C observation
-  |
-  +-> calculator(celsius_to_fahrenheit)
-               |
-               v
-             87.8 F
-               |
-               v
-             Model
-               |
-               v
-          Final answer
+local Python
+HTTP API
+database query
+remote worker
+MCP server
+sandbox
 ```
 
-At this point the application is no longer handling one isolated function call. It is managing an iterative tool-use process.
+The model-facing contract can remain stable while execution infrastructure changes.
 
-That is the bridge from function calling to an Agent loop.
+---
 
-## 7. Tool selection is a model decision, execution is a runtime decision
+## 3. A complete OpenAI Tool Calling loop
 
-This distinction should be memorized:
+The following example intentionally avoids LangChain, LangGraph, and the Agents SDK.
 
-> **LLM proposes; runtime executes.**
-
-The runtime should remain authoritative over:
-
-- whether a requested tool exists;
-- whether the caller has permission;
-- whether arguments are valid;
-- whether approval is required;
-- whether the tool may run in the current environment;
-- timeouts;
-- retries;
-- rate limits;
-- logging;
-- sandboxing.
-
-A model-generated tool call is therefore a **proposal**, not an unconditional command.
-
-## 8. Tool-call validation
-
-Never assume that generated arguments are correct.
-
-Possible failures:
+It uses the OpenAI Responses API with two local Tools:
 
 ```text
-Unknown tool
-Missing required argument
-Wrong argument type
-Invalid enum value
-Unsafe path
-Out-of-range number
-Unauthorized operation
+get_weather(city)
+celsius_to_fahrenheit(temperature_c)
 ```
 
-A robust runtime validates the call before executing it.
+Weather is deterministic mock course data so the lesson is Tool orchestration rather than signing up for a third-party weather API.
 
-Later Tiny-Agent stages will introduce explicit error classes, permissions, retries, approval gates, and sandbox concepts.
+```python
+import json
+from openai import OpenAI
 
-## 9. Tool errors are useful observations
+client = OpenAI()
 
-If a tool fails, one option is to crash the whole program. A more Agent-friendly design is often to represent a recoverable error as an observation:
+TOOLS = [
+    {
+        "type": "function",
+        "name": "get_weather",
+        "description": "Get mock weather data used by this course example.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"}
+            },
+            "required": ["city"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+    {
+        "type": "function",
+        "name": "celsius_to_fahrenheit",
+        "description": "Convert a Celsius temperature to Fahrenheit.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "temperature_c": {"type": "number"}
+            },
+            "required": ["temperature_c"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+]
+
+
+def get_weather(city: str) -> dict:
+    # Fixed teaching data, not live weather.
+    if city not in {"Tokyo", "东京"}:
+        raise ValueError("This course example only contains Tokyo data")
+    return {"city": "Tokyo", "temperature_c": 18.0}
+
+
+def celsius_to_fahrenheit(temperature_c: float) -> dict:
+    value = temperature_c * 9 / 5 + 32
+    return {"temperature_f": round(value, 1)}
+
+
+def execute_tool(name: str, arguments: dict) -> dict:
+    if name == "get_weather":
+        return get_weather(**arguments)
+    if name == "celsius_to_fahrenheit":
+        return celsius_to_fahrenheit(**arguments)
+    raise ValueError(f"Unknown Tool: {name}")
+
+
+instructions = (
+    "You are a travel assistant. "
+    "Use the provided Tools for weather and temperature conversion instead of guessing. "
+    "The weather data in this course is mocked, so say that explicitly."
+)
+
+response = client.responses.create(
+    model="gpt-5.6-luna",
+    instructions=instructions,
+    input="What is the mock Tokyo weather in Celsius, and what is it in Fahrenheit?",
+    tools=TOOLS,
+    parallel_tool_calls=False,
+)
+
+for step in range(1, 6):
+    calls = [item for item in response.output if item.type == "function_call"]
+
+    if not calls:
+        print("final:", response.output_text)
+        break
+
+    call = calls[0]
+    arguments = json.loads(call.arguments)
+    print(f"step {step}: model -> {call.name}({arguments})")
+
+    result = execute_tool(call.name, arguments)
+    print(f"step {step}: tool  -> {result}")
+
+    response = client.responses.create(
+        model="gpt-5.6-luna",
+        instructions=instructions,
+        previous_response_id=response.id,
+        tools=TOOLS,
+        parallel_tool_calls=False,
+        input=[
+            {
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": json.dumps(result),
+            }
+        ],
+    )
+else:
+    raise RuntimeError("Tool loop exceeded the maximum number of steps")
+```
+
+Runnable version:
+
+[`../code/minimal_tool_loop.py`](../code/minimal_tool_loop.py)
+
+### Expected output
+
+Exact wording and call choices can vary, but a reasonable run looks like:
 
 ```text
-ToolError: city must be a non-empty string
+step 1: model -> get_weather({'city': 'Tokyo'})
+step 1: tool  -> {'city': 'Tokyo', 'temperature_c': 18.0}
+step 2: model -> celsius_to_fahrenheit({'temperature_c': 18.0})
+step 2: tool  -> {'temperature_f': 64.4}
+final: The course's mock Tokyo weather is 18°C, which is about 64.4°F. This is mock data, not live weather.
 ```
 
-The model may then:
+The point is not that the code is longer. The point is to see exactly which component owns every step.
 
-- repair arguments;
-- select a different tool;
-- ask the user for missing information;
-- explain that the operation failed.
+---
 
-Not every error should be recoverable, but external action failures are part of the environment the Agent must learn to handle.
+## 4. On the first turn, the model executed no Python
 
-## 10. Function calling is not yet a full production Agent
-
-A minimal tool loop gives us:
+The first request provides:
 
 ```text
-model -> action -> observation -> model
+user task
++ instructions
++ Tool names, descriptions, and parameter schemas
 ```
 
-But a production Agent still needs answers to questions such as:
+The response may contain an output item such as:
 
-- When does the loop stop?
-- How many steps may it use?
-- How is state represented?
-- How are errors classified?
-- How do we persist/resume execution?
-- Which actions require approval?
-- How do we trace decisions?
-- How do we evaluate success?
-- How do we limit cost and latency?
+```python
+item.type == "function_call"
+item.name == "get_weather"
+item.arguments == '{"city":"Tokyo"}'
+```
 
-Stage 01 introduces the first explicit Agent runtime abstraction.
+The arguments are still model-generated data.
 
-## 11. Function calling vs structured output
+Treat them as:
 
-A useful comparison:
+```text
+untrusted proposal
+```
 
-| Concept | Main purpose |
-|---|---|
-| Natural-language output | communicate with humans |
-| Structured output | return machine-readable data |
-| Function/tool calling | propose an external action |
+not:
 
-A tool call is usually structured, but not every structured output is a tool call.
+```text
+already-authorized command
+```
 
-## 12. Key takeaways
+Even with `strict=True`, schema enforcement mainly constrains shape. Business validity and authorization remain Runtime responsibilities.
 
-- The model normally does not execute your Python function.
-- The model sees a tool interface; the runtime owns the implementation.
-- Tool descriptions and schemas are part of the model-facing contract.
-- Generated arguments must be validated.
-- Tool results must be returned to the model as observations.
-- Multiple tool-use turns naturally lead to the Agent loop.
-- Tool execution is a security and reliability boundary controlled by the runtime.
+---
 
-## Review questions
+## 5. Why `call_id` matters
 
-1. What exactly does a model generate when it "calls" a tool?
-2. Why is a tool handler not the same thing as a tool schema?
-3. Who decides whether a dangerous tool call is actually executed?
-4. Why does the model need the tool result in a later message?
-5. What additional runtime concerns appear once tool calls can repeat?
+A function call contains a correlation identifier:
+
+```python
+call.call_id
+```
+
+That identifier connects:
+
+```text
+this particular model-proposed ToolCall
+```
+
+with:
+
+```text
+this particular Tool result returned by your code
+```
+
+So the application returns:
+
+```python
+{
+    "type": "function_call_output",
+    "call_id": call.call_id,
+    "output": json.dumps(result),
+}
+```
+
+You can read it as:
+
+> “The real execution result for the call you identified as `call_xxx` is here.”
+
+Do not correlate Tool results only by Tool name. A model may call the same Tool multiple times; `call_id` identifies the individual call.
+
+---
+
+## 6. Why call the model again after Python has the result?
+
+Suppose Python executes:
+
+```python
+result = get_weather("Tokyo")
+```
+
+and obtains:
+
+```python
+{"city": "Tokyo", "temperature_c": 18.0}
+```
+
+The model does not automatically learn that variable just because it now exists in the same Python process.
+
+There is no telepathy between model inference and your local memory.
+
+You must provide the observation in the next model request:
+
+```python
+input=[
+    {
+        "type": "function_call_output",
+        "call_id": call.call_id,
+        "output": json.dumps(result),
+    }
+]
+```
+
+This creates the fundamental Agent feedback loop:
+
+```text
+Model
+  ↓ ToolCall
+Runtime
+  ↓ execute
+Environment / Python / API
+  ↓ result
+Runtime
+  ↓ function_call_output
+Model
+```
+
+That is the smallest useful **action → observation** cycle.
+
+---
+
+## 7. Why explicitly provide `instructions` and `tools` again?
+
+The continuation call still includes:
+
+```python
+instructions=instructions,
+tools=TOOLS,
+previous_response_id=response.id,
+```
+
+This is not accidental repetition. It teaches an important habit:
+
+> **The application should explicitly construct what the current turn is allowed to see, follow, and use.**
+
+Do not build safety or control policy around “the previous turn probably still remembers it.”
+
+Later runtimes will package these concerns behind cleaner abstractions, but the underlying responsibility remains.
+
+---
+
+## 8. Why `strict=True` is still not a security boundary
+
+A schema such as:
+
+```json
+{
+  "city": {"type": "string"}
+}
+```
+
+can constrain the city argument to be a string.
+
+It cannot answer:
+
+```text
+Is this user authorized?
+Does this Tool have side effects?
+Is this filesystem path allowed?
+Does this amount exceed a business limit?
+Is human approval required?
+```
+
+For example:
+
+```text
+delete_database(database="production")
+```
+
+may be perfectly schema-valid and still be forbidden.
+
+Keep these layers separate:
+
+```text
+schema-valid
+!=
+business-valid
+!=
+authorized
+!=
+safe to execute
+```
+
+Stage 07 turns these Runtime policies into a full topic, but the boundary should already be correct here.
+
+---
+
+## 9. Tool descriptions are part of the interface, not decoration
+
+Tool selection depends heavily on:
+
+```text
+Tool name
+Tool description
+argument descriptions
+current task Context
+```
+
+If two Tools are called `search` and `find`, and both descriptions merely say “Search something,” the model has little semantic help choosing correctly.
+
+A useful Tool description explains:
+
+```text
+what the Tool does
+when it should be used
+what it returns
+important limitations
+```
+
+For example:
+
+```text
+search_papers:
+Search scholarly metadata and return titles, authors, DOIs, and abstract metadata.
+This Tool does not return full paper text, so metadata should not be treated as
+full-text evidence of a paper's findings.
+```
+
+The Tool interface is part of the Agent-Computer Interface. Stage 01 develops this further.
+
+---
+
+## 10. Tool failure is a Runtime design problem
+
+Our teaching function may raise:
+
+```python
+ValueError("This course example only contains Tokyo data")
+```
+
+A toy program can simply crash.
+
+A mature Agent Runtime must distinguish cases such as:
+
+```text
+repairable argument error
+    -> safe Tool failure observation may help the model repair
+
+permission denial
+    -> retries must not bypass policy
+
+internal exception
+    -> do not dump sensitive stack text into model Context
+
+transient network failure
+    -> retry only if the operation itself is safe to repeat
+```
+
+You do not need to implement all of that in Stage 00. You do need to understand that Tool failure is part of Runtime semantics, not merely `try/except` syntax.
+
+---
+
+## 11. What separates this from a real Agent Runtime?
+
+We already have:
+
+```text
+model
+  ↓ proposes action
+runtime
+  ↓ executes
+observation
+  ↓
+model
+```
+
+That is close to a ReAct loop.
+
+But the teaching script still lacks:
+
+```text
+explicit message/state types
+ToolRegistry
+validation layer
+step budget
+cost budget
+timeout
+retry policy
+permissions
+approval
+persistence
+tracing
+evaluation
+```
+
+That is why Stage 01 exists.
+
+Stage 01 is not “now use a fancier framework.” It asks:
+
+> **Now that the model and Tools can interact repeatedly, how do we turn this loop into a clear, testable, bounded Runtime?**
+
+---
+
+## 12. The chain you should be able to draw from memory
+
+```text
+user
+ ↓
+application exposes Tool schema to model
+ ↓
+model emits function_call
+ ↓
+Runtime reads name + arguments
+ ↓
+Runtime validates / authorizes
+ ↓
+Python / API actually executes
+ ↓
+Runtime obtains result
+ ↓
+returns function_call_output + call_id
+ ↓
+model sees observation
+ ↓
+model calls another Tool or gives final answer
+```
+
+If you can assign an owner to every arrow, you understand the core of Tool Calling.
+
+Avoid saying:
+
+> “The model executed my Python function.”
+
+Prefer:
+
+> **The model proposed a ToolCall; the Runtime executed the Tool.**
+
+That wording protects an important architectural boundary for the rest of the course.
+
+---
+
+## Official references
+
+- OpenAI Responses API: <https://developers.openai.com/api/reference/resources/responses>
+- OpenAI Function Calling: <https://help.openai.com/en/articles/8555517-function-calling-in-the-openai-api>

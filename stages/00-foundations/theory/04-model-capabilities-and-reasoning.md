@@ -1,269 +1,462 @@
-# 04 — Model Capabilities, Reasoning, and Model Selection
+# 04 — Models Are Not Interchangeable: Capabilities, Reasoning Effort, and Selection
 
-An Agent architecture should never begin with the assumption that **"an LLM is an LLM."** Models differ in capability, latency, cost, context limits, tool support, multimodality, and reliability on structured control decisions.
+> Language: English | [简体中文](04-model-capabilities-and-reasoning.zh-CN.md)
 
-The important engineering question is not:
+The first three chapters quietly assumed a simple step:
 
-> Which model is the smartest?
+```text
+choose a model, then call it
+```
 
-It is:
+Real Agent systems quickly make that assumption uncomfortable. Different steps ask the model to do very different kinds of work:
 
-> Which model/configuration satisfies this task's quality target under the application's latency, cost, safety, and capability constraints?
+```text
+classify whether the user needs weather
+extract a city and date
+choose a Tool
+plan around several constraints
+write a natural final answer
+```
 
-A Formula 1 car is excellent engineering. It is still a suspicious choice for delivering groceries through a school zone.
+Using the strongest, most expensive, highest-reasoning configuration for every step can work. It is not automatically good engineering.
+
+This chapter is not a model leaderboard. It teaches a more durable question:
+
+> **What capability does this task require, and what evaluated model configuration meets that requirement under our latency and cost constraints?**
 
 ---
 
-## 1. Model capability is a contract surface
+## 1. Treat a model name as a capability profile, not a magic label
 
-A provider may expose models that differ in:
+When you write:
 
-- reasoning quality and configurable reasoning effort;
-- context-window and output limits;
-- latency and throughput;
-- input/output price;
-- Function Calling reliability;
-- Structured Output / schema support;
-- image, audio, or video input/output;
-- built-in web, file, code, or computer capabilities;
-- fine-tuning, distillation, caching, or batch options.
-
-Do not reduce model selection to a single leaderboard score. An Agent repeatedly asks models to do **different jobs**.
-
-```text
-router           -> short classification / enum decision
-planner          -> multi-step semantic decomposition
-writer           -> long grounded synthesis
-embedding model  -> text -> vector
-vision model     -> screenshot/image understanding
+```python
+model="gpt-5.6-luna"
 ```
 
-The best model for one role may be wasteful or incapable in another.
+that model ID represents a collection of provider capabilities and tradeoffs, potentially including:
+
+```text
+reasoning quality
+Tool Calling
+Structured Output
+multimodal input
+Context limits
+output limits
+latency
+throughput
+price
+configurable reasoning effort
+```
+
+Different models can vary substantially along those dimensions.
+
+So “Is model A stronger than model B?” is often too vague.
+
+A better question is:
+
+> **Is this model good enough for this specific role?**
 
 ---
 
-## 2. Model capability != runtime capability
+## 2. Different Agent roles may deserve different models
 
-This distinction prevents many architectural mistakes.
+Imagine the travel assistant growing into:
 
 ```text
-model capability
-    = what the inference API can represent, understand, or propose
-
-runtime capability
-    = what the application actually exposes, authorizes, and executes
+user request
+   ↓
+intent classification
+   ↓
+trip planning
+   ↓
+Tools / retrieval
+   ↓
+final answer
 ```
 
-Examples:
+### Intent classification
+
+The output may only be:
 
 ```text
-model supports Function Calling
-!= model can access your database
-
-model supports computer use
-!= model may click the production console
-
-model supports 1M context
-!= application should send 1M tokens
+WEATHER
+TRANSPORT
+HOTEL
+OTHER
 ```
 
-The model is the reasoning component. The runtime owns credentials, Tool registration, authorization, budgets, sandbox boundaries, and side effects.
-
-If the model says "I can delete the database," that is a proposal. It is not a promotion to DBA.
-
----
-
-## 3. Reasoning effort is a budget, not a magical intelligence slider
-
-Reasoning-oriented APIs may expose a control that trades more inference work for potentially better results.
-
-Use higher effort when the task benefits from it:
-
-- difficult planning;
-- ambiguous multi-constraint decisions;
-- non-trivial code or mathematical reasoning;
-- complex evidence synthesis.
-
-Do not automatically maximize it for:
-
-- deterministic routing;
-- trivial extraction;
-- schema conversion;
-- simple Tool selection;
-- decisions that code can make exactly.
-
-The correct loop is empirical:
+Priorities may be:
 
 ```text
+low latency
+low cost
+reliable Structured Output
+```
+
+Maximum reasoning effort may add little value.
+
+### Trip planning
+
+Now consider:
+
+> Build a two-day Tokyo itinerary for an elderly traveler with limited walking, at most three attractions per day, transport constraints, and rainy-day alternatives.
+
+This is a multi-constraint planning problem.
+
+Priorities may become:
+
+```text
+reasoning quality
+constraint satisfaction
+plan consistency
+```
+
+### Final writing
+
+The final answer may emphasize:
+
+```text
+natural presentation
+completeness
+faithful use of Tool-confirmed facts
+```
+
+Model selection is therefore a systems problem:
+
+```text
+task role
+   ↓
+required capability
+   ↓
 candidate model/configuration
-        ↓
-evaluation dataset
-        ↓
-quality + latency + cost + failure profile
-        ↓
-smallest configuration meeting the product target
+   ↓
+evaluation
 ```
 
-"More reasoning" without an evaluation set is just a more expensive superstition.
+not a brand preference.
 
 ---
 
-## 4. Build a capability matrix before a router
+## 3. A current GPT-5.6 example
 
-A simple application-owned matrix is often enough:
+At the time of this course version, OpenAI's GPT-5.6 family includes models positioned for different workloads, for example:
 
-| Role | Required capability | Priority |
-| --- | --- | --- |
-| ticket router | structured enum output | latency/cost |
-| research planner | strong reasoning + structured plan | quality |
-| report writer | long grounded generation | quality/context |
-| image inspector | vision input | capability |
+```text
+gpt-5.6-luna   -> efficient, high-volume workloads
+gpt-5.6-terra  -> balance of intelligence and cost
+gpt-5.6-sol    -> flagship capability / quality-first work
+```
 
-Conceptually, selection can stay deterministic:
+Those names and exact positioning are **versioned provider details**.
+
+Do not turn the lesson into:
+
+> “Extraction must always use luna; planning must always use sol.”
+
+Instead define requirements such as:
+
+```text
+intent classification: low latency + Structured Output + sufficient accuracy
+complex planning: reasoning quality first, higher latency acceptable
+batch extraction: throughput and unit cost first
+```
+
+Then map those requirements to the current model catalog.
+
+If the catalog changes, the architecture still makes sense.
+
+---
+
+## 4. Reasoning effort is a budget, not an IQ slider
+
+Current GPT-5.6 models expose configurable reasoning effort.
+
+For example:
+
+```python
+from openai import OpenAI
+
+client = OpenAI()
+
+response = client.responses.create(
+    model="gpt-5.6-terra",
+    input=(
+        "Design a two-day Tokyo itinerary for an elderly traveler. "
+        "Minimize walking, use at most three attractions per day, "
+        "and include rainy-day alternatives."
+    ),
+    reasoning={"effort": "medium"},
+    text={"verbosity": "low"},
+)
+
+print(response.output_text)
+```
+
+### Expected output
+
+Exact wording varies, but a useful answer should visibly honor the constraints, for example:
+
+```text
+Day 1
+- Morning: Asakusa ...
+- Afternoon: ...
+- Rain alternative: ...
+
+Day 2
+- ...
+
+Transport choices are selected to reduce walking.
+```
+
+`reasoning.effort="medium"` does not mean “set the model's intelligence to medium.”
+
+A better interpretation is:
+
+> **Allocate a different amount of internal inference work to this request.**
+
+That may affect quality, latency, Token use, and cost.
+
+Whether more reasoning is worthwhile should be measured on your task distribution.
+
+---
+
+## 5. Why not use maximum reasoning for every request?
+
+Suppose the task is only:
+
+> Does this request require weather information?
+
+and the output is:
+
+```json
+{"needs_weather": true}
+```
+
+If a lightweight configuration already achieves the target accuracy, more reasoning may simply mean:
+
+```text
+slower
+more expensive
+little measurable quality gain
+```
+
+That is like convening an expert committee to decide whether a door is open.
+
+For tasks with many constraints, conflicting evidence, or difficult planning, higher reasoning may be worth the cost.
+
+A useful engineering loop is:
+
+```text
+start with the cheapest viable baseline
+        ↓
+identify representative failures
+        ↓
+try a stronger model / more reasoning
+        ↓
+compare quality, latency, and cost
+        ↓
+upgrade only where the gain matters
+```
+
+---
+
+## 6. A simple application-owned model policy
+
+Stage 00 does not need an LLM-powered model router. A deterministic mapping is often clearer:
 
 ```python
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True)
-class ModelProfile:
-    name: str
-    supports_structured: bool
-    supports_vision: bool
-    tier: str
+class ModelConfig:
+    model: str
+    reasoning_effort: str
 
 
-def choose_model(task: str, profiles: list[ModelProfile]) -> ModelProfile:
-    if task == "vision":
-        return next(p for p in profiles if p.supports_vision)
-    if task in {"route", "extract"}:
-        return next(p for p in profiles if p.tier == "fast" and p.supports_structured)
-    return next(p for p in profiles if p.tier == "reasoning")
+MODEL_BY_ROLE = {
+    "extract": ModelConfig(
+        model="gpt-5.6-luna",
+        reasoning_effort="low",
+    ),
+    "plan": ModelConfig(
+        model="gpt-5.6-terra",
+        reasoning_effort="medium",
+    ),
+    "hard_reasoning": ModelConfig(
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+    ),
+}
 ```
 
-The important idea is not this toy policy. It is that **model selection itself is application policy**.
-
----
-
-## 5. Dynamic model routing: useful, but bounded
-
-Sometimes task complexity is semantic, so an LLM/router can help classify it.
-
-Safe shape:
+The important part is not the three names. It is:
 
 ```text
-request
-  -> bounded complexity classifier
-  -> enum: FAST | REASONING | VISION
-  -> application maps enum to approved model
+model selection is application policy
 ```
 
-Bad shape:
+Do not let arbitrary user text become an unrestricted provider model ID.
 
-```python
-# user/model text becomes an arbitrary provider model id
-model = provider.create(user_supplied_model_name)
-```
-
-A semantic router may choose among **approved classes**. It should not silently become a configuration-injection interface.
-
----
-
-## 6. Capability detection should fail clearly
-
-Suppose an application requires strict structured output but the selected provider/model path does not support the needed schema behavior.
-
-Bad behavior:
+If you later add semantic routing, a safer pattern is:
 
 ```text
-try anyway
--> receive prose
--> regex it
--> hope Tuesday is a lucky day
+model chooses approved class
+FAST | BALANCED | HARD
+        ↓
+application maps class to approved configuration
 ```
 
-Better behavior:
+The principle is identical to Tool Calling:
+
+> **The model may propose; the application owns the final configuration.**
+
+---
+
+## 7. Model capability and Runtime capability are different
+
+This follows directly from the previous chapter.
 
 ```text
-required capability unavailable
--> reject configuration / choose approved fallback
--> record why fallback occurred
+model supports Function Calling
+!=
+model can access your database
 ```
 
-Provider adapters exist partly to keep these fast-changing capability details outside the core Agent runtime.
+The model can only propose `query_database(...)` if the application exposes that Tool contract, and execution remains Runtime-controlled.
 
----
-
-## 7. Model upgrades are software changes
-
-A model version change can alter:
-
-- Tool-call frequency;
-- plan length;
-- formatting behavior;
-- refusal/abstention rate;
-- latency;
-- token usage;
-- how often a critic requests revision.
-
-Therefore model upgrades deserve regression evaluation just like library upgrades.
-
-A useful evaluation table:
+Likewise:
 
 ```text
-                    old config    candidate
-route accuracy         96%          97%
-research success       82%          88%
-p95 latency           1.2s         2.1s
-mean tokens            900         1450
-cost / successful run  $X          $Y
+model supports vision
+!= model automatically sees your desktop
+
+model supports computer use
+!= model is authorized to operate production systems
+
+model supports a large Context
+!= application should send every available token
 ```
 
-The candidate is not automatically better because one quality number increased.
+Model capability answers:
+
+> What can the inference interface understand or propose?
+
+Runtime capability answers:
+
+> What has this application actually exposed, authorized, and allowed to execute?
+
+Confusing the two is a serious Agent architecture error.
 
 ---
 
-## 8. Worked example: one Agent, three model roles
+## 8. Why a model upgrade deserves regression evaluation
 
-Imagine a research Agent:
+Swap model A for model B and behavior can change even if the API remains compatible:
 
 ```text
-user question
-   ↓
-fast router: "needs research?"
-   ↓ yes
-reasoning planner: subquestions + evidence plan
-   ↓
-retrieval / tools
-   ↓
-writer model: grounded synthesis
+Tool-call frequency
+plan length
+Structured Output semantic accuracy
+verbosity
+refusal rate
+Token use
+latency
 ```
 
-Why not use the strongest model three times?
+Therefore:
 
-Because the first decision may be easy and high-volume. Spending maximum reasoning on `needs_research=true` is like hiring a Supreme Court justice to check a cinema ticket.
+```text
+“the new model is stronger”
+```
 
-Why not use the cheapest model everywhere?
+is not equivalent to:
 
-Because the planner may be the step where semantic quality determines the entire downstream trajectory.
+```text
+“our Agent is better”
+```
 
-Model routing is therefore a systems optimization problem, not a brand preference.
+Evaluate on your workload.
+
+A comparison might look like:
+
+| Configuration | Route accuracy | Task success | p95 latency | Mean Tokens | Cost / successful task |
+|---|---:|---:|---:|---:|---:|
+| baseline | 96% | 83% | 1.2s | 900 | X |
+| candidate | 97% | 89% | 2.0s | 1450 | Y |
+
+Then ask whether the quality gain is worth the extra latency and cost.
+
+Stage 08 makes Evaluation a full discipline. Stage 00 only needs to establish the habit.
 
 ---
 
-## 9. Interview-ready distinction
+## 9. Do not use visible chain-of-thought as your correctness test
 
-A strong answer to "How do you select models in an Agent system?" is:
+Reasoning models may perform substantial internal reasoning. A production architecture should not depend on obtaining or inspecting a full hidden chain-of-thought as a correctness guarantee.
 
-> I separate model capabilities from runtime permissions, define the capability and quality requirements of each Agent role, restrict routing to an approved model set, and evaluate candidate configurations on task success, latency, cost, and failure behavior. I use stronger reasoning only where it measurably improves the task rather than making every step maximally expensive.
+Measure observable behavior instead:
+
+```text
+Is the final answer correct?
+Are structured fields correct?
+Was the right Tool selected?
+Does evidence support the claim?
+Are latency and cost acceptable?
+```
+
+When debugging, use supported observable signals—Tool trajectories, traces, evaluations, and reasoning summaries where available—rather than treating hidden reasoning as a Runtime interface.
 
 ---
 
-## 10. Provider details are versioned
+## 10. Why Context, Tokens, cost, and latency come next
 
-Model names, parameters, and response shapes change faster than the architectural ideas in this repository.
+We now know that one Agent task may contain several model calls, potentially with different configurations.
 
-Tiny-Agent therefore isolates provider behavior behind adapters.
+The cost question therefore evolves from:
 
-Remember the invariant:
+```text
+“How expensive is one API call?”
+```
 
-> **Choose model capability through explicit application policy, verify it through evaluation, and never confuse what a model can propose with what the runtime allows it to do.**
+into:
+
+```text
+“How many model calls does one task make?”
+“How much Context does each turn carry?”
+“Does the Tool loop resend large history repeatedly?”
+“How does reasoning effort change latency and Token use?”
+```
+
+That leads directly to the next chapter:
+
+> **Why are Context, Tokens, cost, and latency part of Agent architecture rather than mere billing statistics?**
+
+---
+
+## Chapter takeaway
+
+An experienced Agent engineer is usually not asking:
+
+> “Which model is the smartest?”
+
+The better question is:
+
+> **What capability does this step require, and which evaluated configuration meets the quality target under the product's latency and cost constraints?**
+
+Keep these distinctions:
+
+```text
+model capability != Runtime authority
+more reasoning != always better
+newer model != automatically better Agent
+model selection = application policy
+```
+
+---
+
+## Official references
+
+- OpenAI current model guidance: <https://developers.openai.com/api/docs/guides/latest-model>
+- OpenAI Responses API: <https://developers.openai.com/api/reference/resources/responses>

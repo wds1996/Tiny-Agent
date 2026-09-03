@@ -1,282 +1,547 @@
-# 05 — Context Windows, Tokens, Cost, and Latency
+# 05 — Every Call Has a Budget: Context, Tokens, Cost, and Latency
 
-Every model call consumes a finite resource budget. In Agent systems that call models repeatedly, token and latency decisions become architecture, not accounting trivia.
+> Language: English | [简体中文](05-context-tokens-cost-latency.zh-CN.md)
 
-A context window is a suitcase, not a challenge to prove you can pack every sock you own.
+The first four chapters focused mostly on whether the model can perform the task.
+
+Now place the travel assistant inside a real loop:
+
+```text
+user question
+   ↓
+model decides to get weather
+   ↓
+Tool returns weather
+   ↓
+model requests a conversion
+   ↓
+Tool returns result
+   ↓
+model writes final answer
+```
+
+One user request may already contain three model calls.
+
+If each turn carries large history, Tool schemas, documents, and instructions, “just add a little more Context” becomes an expense paid repeatedly across the trajectory.
+
+The core intuition of this chapter is therefore:
+
+> **Context, Tokens, model-call count, and latency are finite resources that the Runtime must manage.**
 
 ---
 
-## 1. The basic budget
+## 1. Context is not “everything the model knows”
 
-Conceptually:
+In Tiny-Agent, **Context** means the information actually available to the model for the current inference step.
+
+It may include:
 
 ```text
-input context
-+ model-generated/reasoning/output usage
+application instructions
+current user task
+conversation history
+Tool schemas
+Tool results
+retrieved evidence
+selected Memory
+few-shot examples
+workspace/progress summaries
+```
+
+The word **selected** matters.
+
+Your application may own:
+
+```text
+1,000,000 database rows
+100,000 indexed documents
+20 GB of files
+months of user Memory
+```
+
+That is the application's available information universe. It is not automatically the current model Context.
+
+```text
+exists in Storage / State
+!=
+visible to the current model call
+```
+
+Only selected information placed into the current request becomes model Context.
+
+That is why later chapters distinguish:
+
+```text
+Context != State
+Context != Memory
+Context != RAG corpus
+Context != Checkpoint
+```
+
+---
+
+## 2. What is a Token, and why not count words?
+
+Models do not meter input directly by English words or Chinese characters. Text is encoded into Tokens.
+
+A Token may correspond to:
+
+```text
+a whole word
+part of a word
+punctuation
+one or more characters
+```
+
+Exact segmentation depends on the model/tokenizer.
+
+So code such as:
+
+```python
+estimated_tokens = len(text.split())
+```
+
+should not be treated as precise accounting.
+
+After a real request, provider usage metadata is one of the best sources of actual metered usage.
+
+---
+
+## 3. Inspect OpenAI Token usage directly
+
+```python
+from openai import OpenAI
+
+client = OpenAI()
+
+response = client.responses.create(
+    model="gpt-5.6-luna",
+    instructions="Answer in one concise sentence.",
+    input="Why should an Agent Runtime manage Context?",
+)
+
+print(response.output_text)
+print("input_tokens =", response.usage.input_tokens)
+print("output_tokens =", response.usage.output_tokens)
+print("total_tokens =", response.usage.total_tokens)
+```
+
+### Example output
+
+Exact counts vary with model version, request shape, and generated text. A plausible sample might look like:
+
+```text
+An Agent Runtime manages Context because the model only reasons over the information supplied to the current call, while irrelevant excess increases cost, latency, and distraction.
+input_tokens = 39
+output_tokens = 30
+total_tokens = 69
+```
+
+Do not memorize `39`.
+
+Notice instead that a model call has observable input and output Token usage. If one task makes five or ten calls, those quantities accumulate.
+
+---
+
+## 4. A Context window is capacity, not a packing target
+
+A simplified budget looks like:
+
+```text
+input Context
++ room for model output / reasoning
 <= model/API limits
 ```
 
-Exact accounting differs by provider and model, so production metering should use provider tokenizer/usage metadata. For architecture, treat capacity as finite and explicitly budgeted.
+A common beginner instinct is:
 
-Possible input contributors include:
+> “If the model supports a very large Context, why not send everything?”
 
-```text
-system/developer instructions
-current user task
-few-shot examples
-conversation history
-long-term memory
-retrieved evidence
-Tool schemas
-Tool observations
-Skill instructions
-workspace/progress notes
-```
+A large suitcase does not mean a three-day trip improves when you force it to contain 30 kilograms of belongings.
 
-Information stored in a database, checkpoint, vector store, or file does **not** become model knowledge until the application selects it for the current request.
+Large capacity means:
+
+> **When the task genuinely needs more relevant information, you have room.**
+
+It does not make irrelevant information useful.
 
 ---
 
-## 2. Reserve room before filling the window
+## 5. Reserve room before filling the request
 
-A useful planning equation is:
-
-```text
-available input
-= max context
-- output reserve
-- runtime/tool reserve
-```
-
-Example:
+Use teaching numbers for a simple budget:
 
 ```text
-model context limit       32,000
-reserve final output       4,000
-reserve tool continuation  2,000
---------------------------------
-input planning budget     26,000
+maximum working budget        32,000
+reserve final output           4,000
+reserve Runtime/Tool turns     2,000
+------------------------------------
+planned input budget          26,000
 ```
 
-Stage 06A makes this explicit:
+In Python:
 
 ```python
-from tiny_agent import ContextBudget
+max_context = 32_000
+reserve_output = 4_000
+reserve_runtime = 2_000
 
-budget = ContextBudget(
-    max_context_tokens=32_000,
-    reserve_output_tokens=4_000,
-    reserve_runtime_tokens=2_000,
+available_input = (
+    max_context
+    - reserve_output
+    - reserve_runtime
 )
 
-assert budget.available_input_tokens == 26_000
+print(available_input)  # 26000
 ```
 
-If required instructions already exceed the budget, silently deleting safety rules is not "context optimization." It is a broken request construction policy.
+Runnable example:
+
+[`../code/context_budget_basics.py`](../code/context_budget_basics.py)
+
+Why reserve room?
+
+Because an Agent request may still need:
+
+```text
+a model answer
+Tool observations
+another model turn
+a larger final synthesis
+```
+
+If the first turn fills the working capacity completely, continuation becomes fragile.
+
+The 32K/4K/2K values are teaching numbers, not fixed specifications of any particular model. Production systems should use the actual limits of the selected model/API.
 
 ---
 
-## 3. Cost compounds across loops
+## 6. Why loops multiply cost
 
-A rough run cost is:
-
-```text
-Σ(model input usage × input price)
-+ Σ(model output usage × output price)
-+ Tool/API costs
-+ retrieval/vector costs
-+ sandbox/compute time
-```
-
-Now add Agent loops:
+A normal chat interaction may be:
 
 ```text
-plan          1 model call
-search loop   3 model calls
-critic        1 model call
-rewrite       1 model call
-----------------------------
-              6 model calls
+one user question
+→ one model call
 ```
 
-A prompt that is 10K tokens larger is not paid once; it may be paid repeatedly.
+An Agent trajectory may be:
 
-This is why context engineering, Tool exposure, and multi-Agent design have economic consequences.
+```text
+route         1 call
+plan          1 call
+Tool loop     3 calls
+review        1 call
+rewrite       1 call
+-------------------
+              7 calls
+```
+
+If every turn carries an extra 10,000 Tokens of history and documents, those Tokens may be repeatedly included rather than paid once.
+
+The rough intuition:
+
+```text
+extra Context × repeated model calls
+```
+
+explains why Agent cost optimization is often broader than choosing a cheaper model.
+
+Removing irrelevant Context, reducing unnecessary model turns, and narrowing exposed Tools can all affect total cost.
 
 ---
 
-## 4. Latency is a critical path problem
+## 7. Measure cost per successful task, not only cost per call
 
-End-to-end latency can include:
+End-to-end cost may include:
+
+```text
+model input Tokens
++ model output Tokens
++ Tool / external API charges
++ retrieval / vector infrastructure
++ sandbox / compute
++ retries
+```
+
+Comparing only:
+
+```text
+model A is cheaper per call
+model B is more expensive per call
+```
+
+can be misleading.
+
+For example:
+
+```text
+cheap configuration: $0.2 per call, often retries four times
+stronger configuration: $0.5 per call, usually succeeds once
+```
+
+A more meaningful product metric is often:
+
+> **cost per successful task**
+
+Stage 08 formalizes evaluation metrics. Stage 00 only needs to establish the habit.
+
+---
+
+## 8. Latency is more than model response time
+
+End-to-end Agent latency can include:
 
 ```text
 queue wait
 model inference
 retrieval
-Tool/network calls
+Tool network calls
+database access
 sandbox startup
 retries
 human approval
-multi-Agent fan-out/fan-in
+other Agents
 ```
 
-Serial composition adds latency:
+A serial path might be:
 
 ```text
-model 2s
--> search 1s
--> model 2s
--> API 3s
-= roughly 8s + overhead
+model          2s
+weather API    1s
+model          2s
+another API    3s
+----------------
+roughly        8s + overhead
 ```
+
+Dependent work must remain serial.
 
 Independent work can sometimes run concurrently:
 
 ```text
-             +-> search A 1.2s -+
-planner 2s --+-> search B 1.0s -+-> synthesize 2s
-             +-> search C 1.4s -+
+             ┌─ search A 1.2s ─┐
+planner 2s ──┼─ search B 1.0s ─┼─ synthesize 2s
+             └─ search C 1.4s ─┘
 ```
 
-The retrieval portion is closer to the slowest branch than the sum—provided concurrency is safe and bounded.
+Then the search portion is closer to the slowest branch than the sum.
 
-`asyncio.gather()` is a scheduling primitive, not a permission slip for 10,000 simultaneous requests.
-
----
-
-## 5. Throughput, latency, and concurrency are different
+But concurrency is not free. Excessive concurrency can cause:
 
 ```text
-latency     = how long one run takes
-throughput  = how much work the service completes per unit time
-concurrency = how many operations are in flight at once
+rate limits
+connection exhaustion
+memory growth
+downstream queues
+correlated failure bursts
 ```
 
-Increasing concurrency may improve throughput for I/O-bound work but also increase:
-
-- provider rate-limit pressure;
-- database connections;
-- memory use;
-- queueing downstream;
-- correlated failure bursts.
-
-Stage 10 introduces bounded service admission precisely because "async" is not the same as "infinite resources."
+Stage 10 later introduces bounded concurrency and backpressure.
 
 ---
 
-## 6. Large context can still reduce quality
+## 9. More Context can reduce quality
 
-Even if everything fits, unnecessary context can create:
+Suppose the model can technically fit:
 
-- attention competition;
-- stale constraints;
-- contradictory history;
-- irrelevant evidence;
-- larger prompt-injection surface;
-- higher latency and cost.
+```text
+all conversation history
+all Memory
+all retrieved documents
+all Tools
+all Skills
+all workspace files
+```
 
-Bad policy:
+“Fits” does not mean “helps.”
+
+Extra Context can introduce:
+
+```text
+attention competition
+stale instructions
+contradictory history
+duplicate facts
+low-quality evidence
+larger prompt-injection surface
+higher cost
+higher latency
+```
+
+So:
 
 ```python
-context = all_history + all_memories + all_docs + all_tools + all_skills
+context = all_history + all_memory + all_docs + all_tools
 ```
 
-Better mental model:
+is usually Context dumping, not Context Engineering.
+
+A better mental model is:
 
 ```text
-application owns a large state universe
-             ↓
-current decision requirements
-             ↓
-small high-signal context
+application owns lots of information
+       ↓
+what does this decision actually need?
+       ↓
+select high-signal information
+       ↓
+construct current Context
 ```
 
-Large context gives you **capacity**. It does not remove the need for selection.
+Stage 06A turns selection, compaction, priority, provenance, and trust into an explicit system.
 
 ---
 
-## 7. Cache/reuse does not make irrelevant tokens free
+## 10. Does prompt caching solve the problem?
 
-Some providers or runtimes can reuse/cache repeated prompt prefixes. That can improve latency or pricing, but two cautions remain:
+No.
 
-1. cached tokens still occupy attention/context capacity according to the API's semantics;
-2. a cheap irrelevant token can still distract the model or expose untrusted instructions.
+Caching stable repeated prefixes can improve latency or price characteristics, and current OpenAI models provide prompt-caching capabilities.
 
-Optimization order should normally be:
+But caching does not turn irrelevant information into useful information.
 
-```text
-remove unnecessary context
--> make stable context reusable/cache-friendly
--> measure provider-specific benefit
-```
-
-not:
+Even a cheaper piece of Context may still:
 
 ```text
-cache everything
--> declare architecture solved
+occupy Context capacity
+compete for attention
+increase exposure to untrusted instructions
 ```
+
+A better optimization order is usually:
+
+```text
+Do we need to send this content at all?
+        ↓
+If yes, can stable content be arranged for efficient reuse/caching?
+```
+
+not the reverse.
 
 ---
 
-## 8. Worked example: the runaway research Agent
+## 11. How a research Agent loses control of Context
 
-Suppose a research Agent retrieves 20 chunks per search and performs four searches. A beginner concatenates every chunk into every subsequent model call.
+Suppose a research Agent retrieves 20 chunks per search and performs four searches.
+
+A beginner implementation may do:
 
 ```text
-80 chunks
-× repeated planning/review turns
-= expensive, slow, noisy context
+turn 1: carry 20 chunks
+turn 2: carry old 20 + new 20
+turn 3: carry 60
+turn 4: carry 80
+final synthesis: carry all 80 again
 ```
 
-A better design separates stages:
+Then add:
+
+```text
+full chat history
+all Tool schemas
+Memory
+planning notes
+```
+
+The system becomes slower and it becomes harder to know which information actually influenced the answer.
+
+A more deliberate pipeline might be:
 
 ```text
 retrieve broad candidates
--> filter/rerank/diversify
--> select evidence
--> compact older progress
--> provide only needed Tool/Skill schemas
--> synthesize
+   ↓
+filter / rerank / deduplicate
+   ↓
+select useful evidence
+   ↓
+compact old progress
+   ↓
+expose only currently needed Tools / Skills
+   ↓
+synthesize
 ```
 
-The model now sees less text but more useful information.
-
-This is one of the recurring paradoxes of Agent engineering: sometimes the path to a "more capable" Agent is to show it fewer things.
+Sometimes making an Agent more capable means helping it see **less irrelevant information**, not more total text.
 
 ---
 
-## 9. Measure the entire run
+## 12. Metrics worth noticing from now on
 
-Useful metrics include:
+Stage 00 does not ask you to build an observability stack, but you should know what will matter:
 
 ```text
-success rate
-input/output tokens per run
-model calls per run
-Tool calls per run
+task success rate
+model calls per task
+input/output Tokens per task
+Tool calls per task
 p50 / p95 latency
-queue time
-cost per successful run
-context truncation/drop rate
+retry count
+cost per successful task
+Context truncation/drop rate
 ```
 
-`cost per request` can be misleading if a cheaper configuration fails more often and triggers retries. Prefer **cost per successful task** when possible.
+These become formal Evaluation and Observability topics in Stage 08.
+
+For now, develop one habit:
+
+> **Do not only ask whether the model answered well. Ask how many resources and steps the system needed to complete the task.**
 
 ---
 
-## 10. Bridge to Context Engineering
+## 13. Why Instructions and Context Construction come next
 
-Stage 00 gives the resource model. Stage 06A turns it into a policy engine:
+This chapter established:
 
 ```text
-ContextBudget
-+ ContextItem priority/trust/provenance
-+ required vs optional
-+ compaction
-= context selected for this decision
+Context is a finite decision-time resource
 ```
 
-Remember:
+The next question should therefore not be:
 
-> **A context window is a finite decision-time resource. Treat tokens, latency, and model calls as budgets owned by the application, not as unlimited background scenery.**
+> “What else can I stuff into the prompt?”
+
+It should be:
+
+> **“What does this turn actually need, and which pieces are instructions, task data, evidence, Memory, or optional background?”**
+
+That moves us from informal prompt tweaking toward a more structural problem:
+
+```text
+How should the application construct a model request?
+```
+
+The next chapter separates:
+
+```text
+Instructions
+Task
+Evidence
+Memory
+Tool schemas
+Examples
+```
+
+into explicit semantic roles.
+
+---
+
+## Chapter takeaway
+
+Keep four distinctions:
+
+```text
+application-owned data != current Context
+Context-window capacity != useful Context
+cost per call != cost per completed task
+concurrency != infinite resources
+```
+
+Once an Agent loops, Tokens, Context, model-call count, and latency become architecture.
+
+---
+
+## Official references
+
+- OpenAI Responses API usage: <https://developers.openai.com/api/reference/resources/responses>
+- OpenAI model guidance / prompt caching: <https://developers.openai.com/api/docs/guides/latest-model>
