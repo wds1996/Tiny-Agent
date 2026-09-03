@@ -497,7 +497,7 @@ Optional integration：
 pytest -q tests/test_stage07_integrations.py
 ```
 
-GitHub Actions 会在 Python 3.10 与 3.12 上运行 Stage 07 suite/examples，并继续保留 Stage 00–06 compatibility jobs。
+学习本阶段时直接运行这些测试；仓库维护自动化不属于课程树中的教学内容。
 
 ---
 

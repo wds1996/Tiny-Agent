@@ -30,7 +30,7 @@ Starlette/FastAPI ASGI app
 Uvicorn / deployment
 ```
 
-具体 helper/class name 属于 versioned SDK surface。Tiny-Agent 用 CI 覆盖 integration code，是为了避免教程把某一版 SDK snapshot“冻成永恒真理”。
+具体 helper/class name 属于 versioned SDK surface。Tiny-Agent 用显式 integration tests 覆盖这些 integration code，是为了避免教程把某一版 SDK snapshot“冻成永恒真理”。
 
 先学 responsibility，再记 API。
 
@@ -230,7 +230,7 @@ SDK helper names
     -> versioned adapter + integration tests
 ```
 
-旧教程和当前 tested SDK range 冲突时，以 current official docs 与 CI 为准，不要把不同时代的 snippet 拼成一锅。
+旧教程和当前 tested SDK range 冲突时，以 current official docs 与仓库测试结果为准，不要把不同时代的 snippet 拼成一锅。
 
 ---
 

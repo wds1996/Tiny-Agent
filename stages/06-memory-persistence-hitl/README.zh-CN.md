@@ -288,7 +288,7 @@ Stage 06 使用它，因为 durability 可见、容易复现。
 
 作为 production-oriented shared persistence 示例。
 
-Stage 06 不是只展示 import，而是真正包含 Postgres CI integration tests。
+Stage 06 不是只展示 import，而是真正包含 Postgres integration test。
 
 安装：
 
@@ -488,7 +488,7 @@ LangGraph + SQLite + local Store：
 pytest -q tests/test_stage06_langgraph.py
 ```
 
-Postgres integration 在 GitHub Actions 自动运行；本地需要数据库：
+Postgres integration 需要测试数据库；设置 `TEST_POSTGRES_URI` 后可显式运行：
 
 ```bash
 TEST_POSTGRES_URI='postgresql://...' \

@@ -495,7 +495,7 @@ Optional-library compatibility:
 pytest -q tests/test_stage07_integrations.py
 ```
 
-GitHub Actions runs the Stage 07 suite and examples on Python 3.10 and 3.12 while preserving Stage 00–06 compatibility jobs.
+Run these tests directly while studying the stage; repository-maintenance automation is intentionally outside the curriculum tree.
 
 ---
 

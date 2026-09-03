@@ -76,9 +76,9 @@ Agent harness
 ## 版本锚点（2026 年 9 月）
 
 - MCP 教学目标：协议 `2026-07-28`，Python SDK v2。
-- A2A 教学目标：协议 1.0，以及 CI 当前验证的 Python SDK 版本线。
+- A2A 教学目标：协议 1.0，以及仓库测试当前覆盖的 Python SDK 版本线。
 - LangGraph / LangChain：`pyproject.toml` 中固定并测试的稳定 1.x 版本线。
 - OpenAI provider 示例：OpenAI Python 2.x 与当前 GPT-5.6 family guidance。
 - Agent Skills：agentskills.io 的开放 `SKILL.md` specification。
 
-所有强版本相关的框架集成都应该进入 CI，因为框架文档通常比其背后的架构机制老化得更快。
+所有强版本相关的框架集成都应该有明确的 regression / integration tests，因为框架文档通常比其背后的架构机制老化得更快。

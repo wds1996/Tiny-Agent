@@ -224,7 +224,7 @@ The verification suite covers:
 - durable job leases and long-horizon resume;
 - OpenScholar evidence/citation/semantic-support and authenticated bounded serving.
 
-CI simply runs these Agent mechanism and integration checks across supported environments; it is not a separate learning track.
+Run these Agent mechanism and integration checks directly with `pytest`; repository-maintenance automation is intentionally kept outside the learning tree.
 
 ---
 
@@ -272,7 +272,7 @@ Tiny-Agent tracks current concepts/APIs rather than freezing old tutorials:
 - OWASP GenAI Security — https://genai.owasp.org/
 - OpenTelemetry — https://opentelemetry.io/
 
-Version-specific framework code is covered by CI; if an external tutorial conflicts with current official docs or the repository's tested dependency range, prefer the current official docs.
+Version-specific framework code is covered by deterministic and integration tests in `tests/`; if an external tutorial conflicts with current official docs or the repository's dependency range, prefer the current official docs.
 
 ---
 
@@ -282,4 +282,4 @@ Tiny-Agent is a learning repository, but “learning” is not an excuse for arc
 
 Teaching implementations are intentionally small and inspectable, while limitations are named explicitly. Production examples then add the missing mechanisms rather than retroactively pretending the small example was enterprise-ready all along.
 
-MIT licensed. Contributions should preserve the project's mechanism-first order, runnable examples, Agent mechanism verification, and explicit scope/limitations.
+MIT licensed. The repository intentionally keeps learner-facing theory, runnable examples, reusable runtime code, and mechanism tests together.

@@ -74,9 +74,9 @@ Do not interpret this as a checklist requiring every box. A read-only classifica
 ## Version anchors (September 2026)
 
 - MCP teaching target: protocol `2026-07-28`, Python SDK v2.
-- A2A teaching target: protocol 1.0, current Python SDK line used by CI.
+- A2A teaching target: protocol 1.0, current Python SDK line exercised by the repository tests.
 - LangGraph/LangChain target: stable 1.x lines pinned in `pyproject.toml`.
 - OpenAI provider examples: OpenAI Python 2.x and current GPT-5.6 family guidance.
 - Agent Skills: open `SKILL.md` specification at agentskills.io.
 
-All version-specific integrations belong in CI because framework documentation ages faster than the architecture beneath it.
+Version-specific integrations should have explicit regression or integration tests because framework documentation ages faster than the architecture beneath it.

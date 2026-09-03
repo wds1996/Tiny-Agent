@@ -28,7 +28,7 @@ Starlette/FastAPI ASGI app
 Uvicorn / deployment
 ```
 
-Exact helper/class names are versioned SDK surface. Tiny-Agent keeps integration code covered by CI so tutorials do not fossilize one SDK snapshot as eternal truth.
+Exact helper/class names are versioned SDK surface. Tiny-Agent keeps integration code covered by explicit integration tests so tutorials do not fossilize one SDK snapshot as eternal truth.
 
 Learn the responsibilities first.
 
@@ -252,7 +252,7 @@ SDK helper names
     -> versioned adapter + integration tests
 ```
 
-If an old tutorial conflicts with the project's tested SDK range, prefer current official docs/CI behavior rather than combining snippets from incompatible versions.
+If an old tutorial conflicts with the project's tested SDK range, prefer current official docs and repository test behavior rather than combining snippets from incompatible versions.
 
 ---
 

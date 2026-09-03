@@ -398,7 +398,7 @@ Current SDK compatibility tests:
 pytest -q tests/test_stage09_integrations.py
 ```
 
-The dedicated CI matrix runs both Python 3.10 and 3.12 and smoke-tests every public Stage 09 example.
+Run the Stage 09 tests directly while studying the stage; repository-maintenance automation is intentionally outside the curriculum tree.
 
 ---
 

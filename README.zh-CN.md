@@ -224,7 +224,7 @@ Stage 06A、09A 与 10A 的手写机制主要依赖标准库与 Tiny-Agent core�
 - durable job leases 与 long-horizon resume；
 - OpenScholar evidence / citation / semantic support，以及经过身份验证的 bounded serving。
 
-CI 只是自动运行这些 Agent 机制与集成验证，不作为一条额外的学习主线。
+这些 Agent 机制与集成验证直接通过 `pytest` 运行；仓库维护自动化不作为学习内容提交到课程树中。
 
 ---
 
@@ -270,7 +270,7 @@ Tiny-Agent 跟踪当前概念与 API，而不是把旧教程冻结成永久答�
 - OWASP GenAI Security — https://genai.owasp.org/
 - OpenTelemetry — https://opentelemetry.io/
 
-版本相关的框架代码必须由 CI 覆盖，因为框架文档的老化速度通常快于底层架构。若外部教程与当前官方文档或仓库测试过的依赖范围冲突，应优先相信当前官方文档。
+版本相关的框架代码由 `tests/` 中的确定性测试与集成测试覆盖；若外部教程与当前官方文档或仓库依赖范围冲突，应优先相信当前官方文档。
 
 ---
 
@@ -280,4 +280,4 @@ Tiny-Agent 是学习仓库，但“教学”不是传播危险架构习惯的理
 
 教学实现刻意保持小而可检查，并明确写出限制；生产示例再补上缺失机制，而不是事后把一个小 Demo 包装成“本来就企业级”。
 
-MIT License。贡献代码应继续保持：机制优先、示例可运行、Agent 机制可验证，并明确说明适用范围与限制。
+MIT License。仓库主体只保留面向学习者的理论、可运行示例、可复用 runtime 代码与机制验证。
