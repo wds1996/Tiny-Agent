@@ -121,8 +121,8 @@ MCP 不替代 Agent runtime，它只是给 runtime 提供一个标准化的 capa
 
 阅读：
 
-1. [`theory/01-mcp-mental-model.md`](theory/01-mcp-mental-model.md)
-2. [`theory/02-tools-resources-prompts.md`](theory/02-tools-resources-prompts.md)
+1. [MCP Mental Model](theory/01-mcp-mental-model.zh-CN.md)
+2. [Tools、Resources 与 Prompts](theory/02-tools-resources-prompts.zh-CN.md)
 3. [`code/protocol_message_walkthrough.py`](code/protocol_message_walkthrough.py)
 
 到这里必须能自然区分：
@@ -148,7 +148,7 @@ Prompt    = reusable model-facing template
 
 阅读：
 
-4. [`theory/03-stateless-protocol-and-transports.md`](theory/03-stateless-protocol-and-transports.md)
+4. [Stateless Protocol 与 Transports](theory/03-stateless-protocol-and-transports.zh-CN.md)
 
 本章取代旧 roadmap 中的：
 
@@ -278,7 +278,7 @@ remote/service integration
 
 阅读：
 
-10. [`theory/05-python-sdk-v2-and-tiny-agent-bridge.md`](theory/05-python-sdk-v2-and-tiny-agent-bridge.md)
+10. [Python SDK v2 与 Tiny-Agent Bridge](theory/05-python-sdk-v2-and-tiny-agent-bridge.zh-CN.md)
 11. [`../../src/tiny_agent/mcp_bridge.py`](../../src/tiny_agent/mcp_bridge.py)
 12. [`code/tiny_agent_mcp_bridge.py`](code/tiny_agent_mcp_bridge.py)
 13. [`../../src/tiny_agent/tool.py`](../../src/tiny_agent/tool.py)
@@ -306,8 +306,9 @@ await client.call_tool(...)
 
 最后阅读：
 
-16. [`theory/04-mcp-security-boundaries.md`](theory/04-mcp-security-boundaries.md)
-17. [`exercises/review-questions.md`](exercises/review-questions.md)
+16. [MCP Security Boundaries](theory/04-mcp-security-boundaries.zh-CN.md)
+17. [复习题](exercises/review-questions.zh-CN.md)
+18. [2026 MCP 扩展：Tasks、MRTR 与 MCP Apps](advanced/README.zh-CN.md)
 
 顺序是刻意的：先知道 protocol 能做什么，再讨论 Host 应允许它做什么。
 
