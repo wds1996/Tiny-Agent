@@ -52,7 +52,7 @@ minimal multi-turn Tool loop
 8. `code/minimal_tool_loop.py`
 9. [复习题](exercises/review-questions.zh-CN.md)
 
-代码与测试继续与英文版共用同一份真实实现；本页所有课程文档链接均直接指向简体中文版。
+
 
 ## 核心心智模型
 
