@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/tiny-agent-hero.jpg" alt="Tiny-Agent — Learn Modern AI Agents from First Principles" width="100%" />
+  <img src="assets/agent_readme.png" alt="Tiny-Agent — Learn Modern AI Agents from First Principles" width="100%" />
 </p>
 
 <h1 align="center">Tiny-Agent</h1>
