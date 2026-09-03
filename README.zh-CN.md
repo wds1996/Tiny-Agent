@@ -1,6 +1,12 @@
-# Tiny-Agent
+<p align="center">
+  <img src="assets/tiny-agent-hero.jpg" alt="Tiny-Agent —— 从第一性原理学习现代 AI Agent" width="100%" />
+</p>
 
-[English](README.md) | **简体中文**
+<h1 align="center">Tiny-Agent</h1>
+
+<p align="center">
+  🌐 语言 / Language：<strong>中文</strong> | <a href="README.md"><strong>English</strong></a>
+</p>
 
 **一条以机制为先、面向生产工程的现代 AI Agent 学习路线：从一次 ToolCall 出发，逐步学习上下文工程、MCP、记忆、安全、评估、多 Agent 互操作、受控工作区、可恢复的长时程 harness，最终完成一个完整的研究型 Agent capstone。**
 
@@ -195,11 +201,11 @@ Stage 06A、09A 与 10A 的手写机制主要依赖标准库与 Tiny-Agent core�
 
 ---
 
-# 测试与 CI
+# Agent 机制验证
 
-Tiny-Agent 将轻量机制测试与框架 / 基础设施兼容性测试分开。
+`tests/` 目录属于 Agent 学习内容的一部分：它用于展示课程里讲到的 runtime semantics 应该如何用确定性方式验证，**不再承担与 Agent 学习无关的仓库维护检查**。
 
-覆盖内容包括：
+当前验证内容包括：
 
 - runtime / Tool 边界条件；
 - Structured Output / provider adapters；
@@ -218,7 +224,7 @@ Tiny-Agent 将轻量机制测试与框架 / 基础设施兼容性测试分开。
 - durable job leases 与 long-horizon resume；
 - OpenScholar evidence / citation / semantic support，以及经过身份验证的 bounded serving。
 
-主兼容性矩阵覆盖 Python 3.10 与 3.12。单独的 modern-extensions workflow 还会在 Ubuntu 上 smoke-test Docker sandbox。
+CI 只是自动运行这些 Agent 机制与集成验证，不作为一条额外的学习主线。
 
 ---
 
@@ -274,4 +280,4 @@ Tiny-Agent 是学习仓库，但“教学”不是传播危险架构习惯的理
 
 教学实现刻意保持小而可检查，并明确写出限制；生产示例再补上缺失机制，而不是事后把一个小 Demo 包装成“本来就企业级”。
 
-MIT License。贡献代码应继续保持：机制优先、示例可运行、有测试、明确说明适用范围与限制。
+MIT License。贡献代码应继续保持：机制优先、示例可运行、Agent 机制可验证，并明确说明适用范围与限制。

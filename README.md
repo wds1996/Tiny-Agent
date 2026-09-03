@@ -1,4 +1,12 @@
-# Tiny-Agent
+<p align="center">
+  <img src="assets/tiny-agent-hero.jpg" alt="Tiny-Agent — Learn Modern AI Agents from First Principles" width="100%" />
+</p>
+
+<h1 align="center">Tiny-Agent</h1>
+
+<p align="center">
+  🌐 Language / 语言：<a href="README.zh-CN.md"><strong>中文</strong></a> | <strong>English</strong>
+</p>
 
 **A mechanism-first, production-minded learning path for modern AI Agent systems — from one ToolCall to context engineering, MCP, memory, safety, evaluation, multi-Agent interoperability, sandboxed workspaces, durable long-horizon harnesses, and a complete research Agent capstone.**
 
@@ -193,11 +201,11 @@ Stages 06A, 09A, and 10A use the standard library plus Tiny-Agent core for their
 
 ---
 
-# Tests and CI
+# Agent mechanism verification
 
-Tiny-Agent separates lightweight mechanism tests from framework/infrastructure compatibility tests.
+The `tests/` directory is part of the Agent learning material: it shows how the runtime semantics taught in the course are verified deterministically. It is **not** a place for unrelated repository-maintenance checks.
 
-Coverage includes:
+The verification suite covers:
 
 - runtime/tool edge cases;
 - Structured Output/provider adapters;
@@ -216,7 +224,7 @@ Coverage includes:
 - durable job leases and long-horizon resume;
 - OpenScholar evidence/citation/semantic-support and authenticated bounded serving.
 
-CI targets Python 3.10 and 3.12 for the main compatibility matrix. A dedicated modern-extensions workflow also smoke-tests the Docker sandbox on Ubuntu.
+CI simply runs these Agent mechanism and integration checks across supported environments; it is not a separate learning track.
 
 ---
 
@@ -274,4 +282,4 @@ Tiny-Agent is a learning repository, but “learning” is not an excuse for arc
 
 Teaching implementations are intentionally small and inspectable, while limitations are named explicitly. Production examples then add the missing mechanisms rather than retroactively pretending the small example was enterprise-ready all along.
 
-MIT licensed. Contributions should preserve the project's mechanism-first order, runnable examples, tests, and explicit scope/limitations.
+MIT licensed. Contributions should preserve the project's mechanism-first order, runnable examples, Agent mechanism verification, and explicit scope/limitations.
