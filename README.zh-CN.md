@@ -280,4 +280,48 @@ Tiny-Agent 是学习仓库，但“教学”不是传播危险架构习惯的理
 
 教学实现刻意保持小而可检查，并明确写出限制；生产示例再补上缺失机制，而不是事后把一个小 Demo 包装成“本来就企业级”。
 
-MIT License。仓库主体只保留面向学习者的理论、可运行示例、可复用 runtime 代码与机制验证。
+---
+
+# ⭐ 支持 Tiny-Agent
+
+如果 Tiny-Agent 对你理解或构建现代 AI Agent 有帮助，欢迎给项目一个 Star。它既是对项目最直接的支持，也能让更多学习者发现这套课程。
+
+<p align="center">
+  <a href="https://github.com/wds1996/Tiny-Agent"><strong>⭐ 如果这个项目对你有帮助，请给 Tiny-Agent 一个 Star！</strong></a>
+</p>
+
+---
+
+# Star History
+
+<p align="center">
+  <a href="https://www.star-history.com/wds1996/Tiny-Agent">
+    <img src="https://api.star-history.com/badge?repo=wds1996/Tiny-Agent&type=rank" alt="Tiny-Agent Star History Rank" />
+  </a>
+</p>
+
+<p align="center">在 Star History 查看 Tiny-Agent 的成长轨迹。</p>
+
+---
+
+# 🙏 致谢
+
+Tiny-Agent 建立在众多开放规范、开源工具与技术社区的工作之上，特别感谢：
+
+- [OpenAI](https://openai.com/) 及 OpenAI API / Agents 生态，为模型、Tool Calling、评估与 Agent runtime 提供了重要参考；
+- [LangChain / LangGraph](https://docs.langchain.com/)，为 stateful orchestration、persistence、memory 与 Agent framework pattern 提供了大量公开实践；
+- [Model Context Protocol（MCP）](https://modelcontextprotocol.io/) 社区，为开放的 capability / context interoperability 提供规范；
+- [A2A](https://a2a-protocol.org/) 社区，为 Agent-to-Agent interoperability 提供开放协议；
+- [Agent Skills](https://agentskills.io/) 开放规范，为可移植的程序性知识提供标准化表达；
+- [OWASP GenAI Security](https://genai.owasp.org/)，为 Agent security threat model 与工程安全实践提供公开参考；
+- [Happy-LLM](https://github.com/datawhalechina/happy-llm) 以及其他优秀开源学习项目，它们展示了如何把复杂 AI 知识做成更友好、更易读、更适合持续学习的开源内容；
+- [Star History](https://www.star-history.com/)，为开源项目成长轨迹提供可视化工具；
+- 每一位阅读、学习、指出表述不清之处，或把 Tiny-Agent 分享给其他学习者的人。
+
+以上致谢仅表示技术参考与项目启发，并不代表 Tiny-Agent 与上述组织或项目存在官方合作、隶属或背书关系。
+
+---
+
+# License
+
+Tiny-Agent 基于 [MIT License](LICENSE) 开源。

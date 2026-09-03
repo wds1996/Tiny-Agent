@@ -282,4 +282,48 @@ Tiny-Agent is a learning repository, but “learning” is not an excuse for arc
 
 Teaching implementations are intentionally small and inspectable, while limitations are named explicitly. Production examples then add the missing mechanisms rather than retroactively pretending the small example was enterprise-ready all along.
 
-MIT licensed. The repository intentionally keeps learner-facing theory, runnable examples, reusable runtime code, and mechanism tests together.
+---
+
+# ⭐ Support Tiny-Agent
+
+If Tiny-Agent helps you understand or build modern AI Agents, a GitHub Star is one of the simplest ways to support the project and help more learners discover it.
+
+<p align="center">
+  <a href="https://github.com/wds1996/Tiny-Agent"><strong>⭐ If Tiny-Agent helps you, please consider giving it a Star!</strong></a>
+</p>
+
+---
+
+# Star History
+
+<p align="center">
+  <a href="https://www.star-history.com/wds1996/Tiny-Agent">
+    <img src="https://api.star-history.com/badge?repo=wds1996/Tiny-Agent&type=rank" alt="Tiny-Agent Star History Rank" />
+  </a>
+</p>
+
+<p align="center">Track Tiny-Agent's growth on Star History.</p>
+
+---
+
+# 🙏 Acknowledgements
+
+Tiny-Agent stands on the work of a broad open-source and standards community. Special thanks to:
+
+- [OpenAI](https://openai.com/) and the OpenAI API / Agents ecosystem for model, Tool Calling, evaluation, and Agent-runtime references;
+- [LangChain / LangGraph](https://docs.langchain.com/) for stateful orchestration, persistence, memory, and Agent framework patterns;
+- the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) community for open capability/context interoperability;
+- the [A2A](https://a2a-protocol.org/) community for Agent-to-Agent interoperability;
+- the [Agent Skills](https://agentskills.io/) open specification for portable procedural knowledge;
+- [OWASP GenAI Security](https://genai.owasp.org/) for practical threat models and security guidance;
+- [Happy-LLM](https://github.com/datawhalechina/happy-llm) and other excellent open-source learning projects for demonstrating how complex AI topics can be made approachable and well-presented;
+- [Star History](https://www.star-history.com/) for open-source project growth visualization;
+- every learner, reader, and developer who studies the material, reports unclear explanations, or shares Tiny-Agent with others.
+
+These acknowledgements recognize technical references and inspiration; they do not imply affiliation with or endorsement by the organizations and projects listed above.
+
+---
+
+# License
+
+Tiny-Agent is released under the [MIT License](LICENSE).
