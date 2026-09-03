@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/tiny-agent-hero.jpg" alt="Tiny-Agent —— 从第一性原理学习现代 AI Agent" width="100%" />
+  <img src="assets/agent_readme.png" alt="Tiny-Agent —— 从第一性原理学习现代 AI Agent" width="100%" />
 </p>
 
 <h1 align="center">Tiny-Agent</h1>
