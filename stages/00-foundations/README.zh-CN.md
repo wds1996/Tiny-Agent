@@ -42,17 +42,17 @@ minimal multi-turn Tool loop
 
 ## 推荐顺序
 
-1. `theory/01-llm-api-and-messages.md`
-2. `theory/02-structured-output.md`
-3. `theory/03-function-calling.md`
-4. `theory/04-model-capabilities-and-reasoning.md`
-5. `theory/05-context-tokens-cost-latency.md`
+1. [LLM API 与消息](theory/01-llm-api-and-messages.zh-CN.md)
+2. [Structured Output](theory/02-structured-output.zh-CN.md)
+3. [Function / Tool Calling](theory/03-function-calling.zh-CN.md)
+4. [模型能力与 Reasoning](theory/04-model-capabilities-and-reasoning.zh-CN.md)
+5. [Context、Token、Cost 与 Latency](theory/05-context-tokens-cost-latency.zh-CN.md)
 6. `code/context_budget_basics.py`
-7. `theory/06-instructions-prompts-and-context-construction.md`
+7. [Instructions、Prompts 与 Context Construction](theory/06-instructions-prompts-and-context-construction.zh-CN.md)
 8. `code/minimal_tool_loop.py`
-9. `exercises/review-questions.md`
+9. [复习题](exercises/review-questions.zh-CN.md)
 
-中文阅读时，对应理论与练习使用同目录 `*.zh-CN.md`；代码始终与英文教程共用同一份真实实现。
+代码与测试继续与英文版共用同一份真实实现；本页所有课程文档链接均直接指向简体中文版。
 
 ## 核心心智模型
 
