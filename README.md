@@ -314,10 +314,10 @@ If Tiny-Agent helps you understand or build modern AI Agents, a GitHub Star is o
  </picture>
 </a>
 
-<p align="center">
+<!-- <p align="center">
   <a href="https://www.star-history.com/wds1996/Tiny-Agent">
     <img src="https://api.star-history.com/badge?repo=wds1996/Tiny-Agent&type=rank" alt="Tiny-Agent Star History Rank" />
   </a>
-</p>
+</p> -->
 
 <p align="center">Track Tiny-Agent's growth on Star History.</p>
