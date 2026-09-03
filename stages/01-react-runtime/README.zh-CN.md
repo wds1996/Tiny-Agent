@@ -24,7 +24,7 @@ runtime errors                    output normalization
 
 ## 前置要求
 
-先完成 [`../00-foundations/`](../00-foundations/)，或者确认你已经理解：
+先完成 [Stage 00 中文教程](../00-foundations/README.zh-CN.md)，或者确认你已经理解：
 
 - message-based LLM API；
 - Structured Output；
@@ -57,30 +57,30 @@ runtime errors                    output normalization
 
 ### Part A — 理解 Agent Loop
 
-1. `theory/01-react-and-agent-loop.md`
-2. `theory/02-runtime-architecture.md`
+1. [ReAct 与 Agent Loop](theory/01-react-and-agent-loop.zh-CN.md)
+2. [Runtime Architecture](theory/02-runtime-architecture.zh-CN.md)
 3. `code/minimal_react_runtime.py`
 
 ### Part B — 接入真实 Model
 
-4. `theory/03-model-provider-adapter.md`
+4. [Model Provider Adapter](theory/03-model-provider-adapter.zh-CN.md)
 5. `../../src/tiny_agent/models/openai.py`
 6. `../../tests/test_openai_adapter.py`
 7. `code/openai_multi_tool_agent.py`
 
 ### Part C — 理解边界
 
-8. `theory/04-scope-and-production-limitations.md`
+8. [Scope 与 Production Limitations](theory/04-scope-and-production-limitations.zh-CN.md)
 9. `../../tests/test_runtime_edges.py`
 10. `../../tests/test_openai_adapter_edges.py`
 
 ### Part D — Review / Extend
 
 11. 阅读 `../../src/tiny_agent/` 的 integrated implementation；
-12. `exercises/review-questions.md`
-13. `exercises/provider-adapter-exercises.md`
+12. [复习题](exercises/review-questions.zh-CN.md)
+13. [Provider Adapter 练习](exercises/provider-adapter-exercises.zh-CN.md)
 
-中文理论与练习使用同目录 `*.zh-CN.md`，所有 `.py` 与测试仍共用英文教程同一份真实实现。
+代码与测试继续与英文版共用同一份真实实现；本页所有课程文档链接均直接指向简体中文版。
 
 ## Stage Architecture
 
@@ -231,7 +231,7 @@ provider-native conversation state 与 persisted reasoning 会在后续 stage �
 
 进入下一阶段前必须阅读：
 
-`theory/04-scope-and-production-limitations.md`
+[Scope 与 Production Limitations](theory/04-scope-and-production-limitations.zh-CN.md)
 
 Stage 01 **尚未提供**：
 

@@ -72,9 +72,9 @@ Document
 
 按顺序：
 
-1. [`theory/01-rag-fundamentals.md`](theory/01-rag-fundamentals.md)
-2. [`theory/02-chunking-and-embeddings.md`](theory/02-chunking-and-embeddings.md)
-3. [`theory/03-vector-search-and-similarity.md`](theory/03-vector-search-and-similarity.md)
+1. [RAG Fundamentals](theory/01-rag-fundamentals.zh-CN.md)
+2. [Chunking 与 Embeddings](theory/02-chunking-and-embeddings.zh-CN.md)
+3. [Vector Search 与 Similarity](theory/03-vector-search-and-similarity.zh-CN.md)
 4. [`code/embedding_similarity_from_scratch.py`](code/embedding_similarity_from_scratch.py)
 5. [`../../src/tiny_agent/retrieval.py`](../../src/tiny_agent/retrieval.py)
 6. [`../../tests/test_retrieval.py`](../../tests/test_retrieval.py)
@@ -85,9 +85,9 @@ Document
 
 # Part B — FAISS 与 vector database
 
-7. [`theory/04-faiss-vs-vector-database.md`](theory/04-faiss-vs-vector-database.md)
+7. [FAISS vs Vector Database](theory/04-faiss-vs-vector-database.zh-CN.md)
 8. [`code/faiss_vector_retriever.py`](code/faiss_vector_retriever.py)
-9. [`theory/05-qdrant-and-metadata-filtering.md`](theory/05-qdrant-and-metadata-filtering.md)
+9. [Qdrant 与 Metadata Filtering](theory/05-qdrant-and-metadata-filtering.zh-CN.md)
 10. [`code/qdrant_vector_database.py`](code/qdrant_vector_database.py)
 11. [`../../src/tiny_agent/retrievers/faiss.py`](../../src/tiny_agent/retrievers/faiss.py)
 12. [`../../src/tiny_agent/retrievers/qdrant.py`](../../src/tiny_agent/retrievers/qdrant.py)
@@ -108,7 +108,7 @@ Qdrant
 
 13. [`code/langchain_retriever_adapter.py`](code/langchain_retriever_adapter.py)
 14. [`../../src/tiny_agent/retrievers/langchain_adapter.py`](../../src/tiny_agent/retrievers/langchain_adapter.py)
-15. [`theory/06-retrieval-and-reranking.md`](theory/06-retrieval-and-reranking.md)
+15. [Retrieval 与 Reranking](theory/06-retrieval-and-reranking.zh-CN.md)
 16. [`code/reranking_pipeline.py`](code/reranking_pipeline.py)
 
 LangChain 故意放在 Retriever 机制之后。
@@ -130,7 +130,7 @@ Adapter 提供 interoperability，但不改变 retrieval 的基本语义。
 # Part D — Basic RAG 到 Agentic RAG
 
 17. [`code/basic_rag.py`](code/basic_rag.py)
-18. [`theory/07-agentic-rag.md`](theory/07-agentic-rag.md)
+18. [Agentic RAG](theory/07-agentic-rag.zh-CN.md)
 19. [`code/agentic_retrieval.py`](code/agentic_retrieval.py)
 20. [`code/evidence_answering.py`](code/evidence_answering.py)
 21. [`../../src/tiny_agent/rag.py`](../../src/tiny_agent/rag.py)
@@ -157,10 +157,10 @@ question
 
 # Part E — Evaluation
 
-23. [`theory/08-rag-evaluation.md`](theory/08-rag-evaluation.md)
+23. [RAG Evaluation](theory/08-rag-evaluation.zh-CN.md)
 24. [`code/retrieval_evaluation.py`](code/retrieval_evaluation.py)
 25. [`../../tests/test_stage04_vector_backends.py`](../../tests/test_stage04_vector_backends.py)
-26. [`exercises/review-questions.md`](exercises/review-questions.md)
+26. [复习题](exercises/review-questions.zh-CN.md)
 
 不要只看 final answer。至少拆成：
 

@@ -62,8 +62,8 @@ streaming / checkpoint / interrupt
 
 ## Part A — 为什么需要显式状态？
 
-1. [`theory/01-why-explicit-state.md`](theory/01-why-explicit-state.md)
-2. [`theory/02-state-machines-for-agents.md`](theory/02-state-machines-for-agents.md)
+1. [为什么需要显式 State](theory/01-why-explicit-state.zh-CN.md)
+2. [Agent 的状态机](theory/02-state-machines-for-agents.zh-CN.md)
 3. [`code/handwritten_state_graph.py`](code/handwritten_state_graph.py)
 4. [`../../src/tiny_agent/state_graph.py`](../../src/tiny_agent/state_graph.py)
 5. [`../../tests/test_state_graph.py`](../../tests/test_state_graph.py)
@@ -72,27 +72,27 @@ streaming / checkpoint / interrupt
 
 ## Part B — LangGraph 基础
 
-6. [`theory/03-langgraph-core-concepts.md`](theory/03-langgraph-core-concepts.md)
+6. [LangGraph Core Concepts](theory/03-langgraph-core-concepts.zh-CN.md)
 7. [`code/langgraph_state_graph.py`](code/langgraph_state_graph.py)
-8. [`theory/04-loop-vs-graph.md`](theory/04-loop-vs-graph.md)
+8. [Loop vs Graph](theory/04-loop-vs-graph.zh-CN.md)
 9. [`code/langgraph_react_agent.py`](code/langgraph_react_agent.py)
 10. [`../../src/tiny_agent/langgraph_runtime.py`](../../src/tiny_agent/langgraph_runtime.py)
 11. [`code/planner_executor_graph.py`](code/planner_executor_graph.py)
 
 ## Part C — LangChain 在哪里？
 
-12. [`theory/05-langchain-vs-langgraph.md`](theory/05-langchain-vs-langgraph.md)
+12. [LangChain vs LangGraph](theory/05-langchain-vs-langgraph.zh-CN.md)
 13. [`code/langchain_component_examples.py`](code/langchain_component_examples.py)
 
 ## Part D — Stateful runtime 能力
 
-14. [`theory/06-persistence-streaming-and-interrupts.md`](theory/06-persistence-streaming-and-interrupts.md)
+14. [Persistence、Streaming 与 Interrupts](theory/06-persistence-streaming-and-interrupts.zh-CN.md)
 15. [`code/checkpoint_interrupt_demo.py`](code/checkpoint_interrupt_demo.py)
 16. [`../../tests/test_stage03_frameworks.py`](../../tests/test_stage03_frameworks.py)
 
 ## Part E — 复习
 
-17. [`exercises/review-questions.md`](exercises/review-questions.md)
+17. [复习题](exercises/review-questions.zh-CN.md)
 
 ---
 
