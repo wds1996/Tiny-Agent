@@ -107,8 +107,8 @@ node restart on resume
 
 阅读：
 
-1. [`theory/01-context-state-checkpoint-memory.md`](theory/01-context-state-checkpoint-memory.md)
-2. [`theory/02-short-term-memory-and-context-management.md`](theory/02-short-term-memory-and-context-management.md)
+1. [Context、State、Checkpoint 与 Memory](theory/01-context-state-checkpoint-memory.zh-CN.md)
+2. [Short-term Memory 与 Context Management](theory/02-short-term-memory-and-context-management.zh-CN.md)
 
 运行：
 
@@ -146,7 +146,7 @@ RAG knowledge
 
 阅读：
 
-3. [`theory/03-long-term-memory-and-write-policy.md`](theory/03-long-term-memory-and-write-policy.md)
+3. [Long-term Memory 与 Write Policy](theory/03-long-term-memory-and-write-policy.zh-CN.md)
 
 运行：
 
@@ -217,7 +217,6 @@ from langgraph.store.memory import InMemoryStore
 
 store = InMemoryStore()
 namespace = ("user-42", "memories")
-
 store.put(
     namespace,
     "preferred-language",
@@ -235,7 +234,7 @@ memory = store.get(namespace, "preferred-language")
 
 阅读：
 
-4. [`theory/04-durable-persistence-and-resume.md`](theory/04-durable-persistence-and-resume.md)
+4. [Durable Persistence 与 Resume](theory/04-durable-persistence-and-resume.zh-CN.md)
 
 运行：
 
@@ -319,7 +318,7 @@ PostgresStore -> cross-thread long-term memory
 
 阅读：
 
-5. [`theory/05-human-in-the-loop-and-approval.md`](theory/05-human-in-the-loop-and-approval.md)
+5. [Human-in-the-Loop 与 Approval](theory/05-human-in-the-loop-and-approval.zh-CN.md)
 
 运行：
 
@@ -405,7 +404,7 @@ Reviewer 不需要 original Python process 一直活着。
 
 阅读：
 
-6. [`theory/06-memory-governance-and-production.md`](theory/06-memory-governance-and-production.md)
+6. [Memory Governance 与 Production](theory/06-memory-governance-and-production.zh-CN.md)
 
 包括：
 
@@ -422,7 +421,7 @@ Reviewer 不需要 original Python process 一直活着。
 
 然后完成：
 
-[`exercises/review-questions.md`](exercises/review-questions.md)
+[复习题](exercises/review-questions.zh-CN.md)
 
 ---
 
@@ -463,12 +462,12 @@ postgres_persistence.py
 
 ```text
 theory/
-├── 01-context-state-checkpoint-memory.md
-├── 02-short-term-memory-and-context-management.md
-├── 03-long-term-memory-and-write-policy.md
-├── 04-durable-persistence-and-resume.md
-├── 05-human-in-the-loop-and-approval.md
-└── 06-memory-governance-and-production.md
+├── 01-context-state-checkpoint-memory.zh-CN.md
+├── 02-short-term-memory-and-context-management.zh-CN.md
+├── 03-long-term-memory-and-write-policy.zh-CN.md
+├── 04-durable-persistence-and-resume.zh-CN.md
+├── 05-human-in-the-loop-and-approval.zh-CN.md
+└── 06-memory-governance-and-production.zh-CN.md
 ```
 
 ---
