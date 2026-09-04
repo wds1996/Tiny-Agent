@@ -1,47 +1,145 @@
-# Advanced — Tool / Agent-Computer Interface Design
+# Advanced — Tool / Agent-Computer Interface Design: A Correct Runtime Cannot Rescue a Bad Tool Interface
 
-Function Calling quality depends heavily on the interface the model sees.
+> Language: English | [简体中文](tool-interface-design.zh-CN.md)
 
-A runtime can be perfectly implemented and still fail because its tools are ambiguous, overlapping, too broad, or return unusable observations.
+The previous chapters focused on Runtime boundaries. There is another failure source that is easy to underestimate:
 
-## Design dimensions
+> **What interface does the model actually see when it decides which capability to use?**
 
-### Names
+That interface is the Tool definition.
 
-Prefer stable, specific verbs/nouns:
+Many Agent failures are not caused by a broken Runtime or a weak model. The Tool interface is simply ambiguous, overlapping, too broad, or returns unusable observations.
+
+Think of a Tool schema as the control panel through which the Agent uses a computer capability.
+
+---
+
+## 1. Start with a bad Tool
+
+```python
+Tool(
+    name="do_task",
+    description="Do a task.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "action": {"type": "string"},
+            "payload": {"type": "string"},
+        },
+        "required": ["action", "payload"],
+    },
+    handler=do_task,
+)
+```
+
+The Python handler may be perfectly valid. The model, however, sees an interface with unanswered questions: which actions are legal, what format `payload` uses, when this Tool is appropriate, and what it does not support.
+
+Application policy has been pushed back into free-form model guessing.
+
+---
+
+## 2. A good Tool first explains when to use it
+
+A weak description:
 
 ```text
+Weather tool.
+```
+
+A stronger one:
+
+```python
+Tool(
+    name="get_mock_weather",
+    description=(
+        "Return the course's deterministic mock weather for one city. "
+        "Use it only when the task asks for the course mock weather. "
+        "It does not provide live weather data."
+    ),
+    ...
+)
+```
+
+The description answers four things:
+
+```text
+What does it do?
+When should it be used?
+When should it not be used?
+What is the data boundary?
+```
+
+Tool selection is partly a language-understanding problem. A vague interface makes incorrect selection unsurprising.
+
+---
+
+## 3. Tool names should describe stable capabilities
+
+Prefer:
+
+```text
+get_weather
 search_papers
 read_document_chunk
 create_report_draft
 ```
 
-Avoid opaque names such as `do_task_2`.
+Avoid opaque implementation names such as:
 
-### Descriptions
+```text
+do_task_2
+api_v4_call
+handle_request
+execute_misc
+```
 
-Explain:
+The model uses the Tool name as a semantic signal. Humans maintaining the system do too.
 
-- what the tool does;
-- when it should be used;
-- important limits;
-- what it does **not** do.
+---
 
-Tool selection is partly a language-understanding problem.
+## 4. Put deterministic constraints in the schema
 
-### Schemas
+If units are limited to Celsius and Fahrenheit, do not expose:
 
-Use constrained enums/ranges/required fields where the application already knows the valid domain. Do not ask the model to encode policy through free-form strings.
+```python
+{"units": {"type": "string"}}
+```
 
-### Granularity
+and hope the model never emits `F`, `fahrenheit please`, or `kelvin`.
+
+Express the known domain:
+
+```python
+{
+    "units": {
+        "type": "string",
+        "enum": ["celsius", "fahrenheit"],
+    }
+}
+```
+
+Use `required`, enums, ranges, and `additionalProperties=False` where the application already knows the constraint.
+
+A durable rule is:
+
+> **Deterministic constraints belong in schema/code whenever practical, not only in prompt wording.**
+
+---
+
+## 5. Granularity: too narrow and too broad are both expensive
 
 Too narrow:
 
 ```text
-one Tool per tiny implementation detail
+resolve_city_name
+lookup_city_id
+build_weather_query
+send_weather_http
+parse_weather_json
+extract_temperature
 ```
 
-creates long Tool chains.
+forces the model to plan through implementation details that ordinary code could hide.
 
 Too broad:
 
@@ -50,36 +148,163 @@ shell(command)
 http(method, url, headers, body)
 ```
 
-greatly expands authority and ambiguity.
+creates huge authority and ambiguity.
 
-Prefer task-relevant capabilities with minimum required privilege.
+Prefer the smallest task-relevant capability that gives the model useful autonomy without exposing unnecessary implementation or privilege.
 
-### Outputs
+For the travel assistant, `get_weather(city)` is usually a better interface than raw HTTP access.
 
-Tool output becomes future model context. Return structured, bounded, provenance-rich observations rather than 5 MB of logs.
+---
 
-## Dynamic exposure
+## 6. Tool output becomes future model Context
 
-Large systems may own hundreds of tools. Context engineering can expose only the subset relevant to the current task/domain.
+Input design gets attention; output design often does not.
 
-Remember:
+Bad outputs include megabytes of logs, raw HTML, huge database dumps, or stack traces. They increase context cost and make the next decision harder.
 
-```text
-visible to model != authorized to execute
+Prefer bounded, structured, provenance-rich observations:
+
+```json
+{
+  "city": "Tokyo",
+  "temperature_c": 18.0,
+  "condition": "cloudy",
+  "source": "course_mock"
+}
 ```
 
-The runtime must still validate permission after a ToolCall is proposed.
+Tool output is upstream of Context Engineering.
 
-## Evaluate the interface
+---
 
-Build a dataset of tasks and measure:
+## 7. Description is not authorization
 
-- correct Tool selection;
-- argument accuracy;
-- unnecessary calls;
-- recovery after errors;
-- output token/context cost.
+A Tool description may say:
 
-Tool design is an Agent-computer interface problem, not only a Python function-wrapping problem.
+```text
+Only use this Tool for administrators.
+```
 
-Reference: https://www.anthropic.com/engineering/writing-tools-for-agents
+That helps model selection. It is not a permission system.
+
+Model compliance is probabilistic. Authorization must be enforced deterministically by Runtime/policy.
+
+Keep the distinction:
+
+```text
+visible to model
+!=
+authorized to execute
+```
+
+---
+
+## 8. Overlapping Tools create an unnecessary classification problem
+
+A Tool set containing:
+
+```text
+search
+web_search
+internet_search
+search_web
+browser_search
+```
+
+with nearly identical descriptions forces the model to solve a pointless selection problem.
+
+Merge equivalent capabilities or make boundaries explicit:
+
+```text
+search_papers
+  -> scholarly metadata
+
+search_web
+  -> public web pages
+
+search_internal_docs
+  -> indexed company documents
+```
+
+A larger action space does not automatically make an Agent smarter.
+
+---
+
+## 9. Dynamic exposure is useful, but it is not authorization
+
+Large systems may own hundreds of Tools. Exposing all of them on every turn increases context size, selection difficulty, distraction, and attack surface.
+
+Later Context Engineering stages will select a relevant subset before model invocation.
+
+Still:
+
+```text
+exposure selection
+!=
+authorization
+```
+
+A visible Tool may still be denied at execution time.
+
+---
+
+## 10. Evaluate the Tool interface with tasks
+
+Do not rely only on “the description looks clear.” Build a task set covering:
+
+```text
+tasks that require Tool A
+tasks that require Tool B
+tasks that require no Tool
+confusable arguments
+recoverable Tool failures
+```
+
+Measure:
+
+```text
+Tool-selection accuracy
+argument accuracy
+unnecessary calls
+recovery after failure
+step count
+Token/Context cost
+```
+
+For the travel assistant:
+
+| Task | Expected behavior |
+|---|---|
+| “Get the course mock Tokyo weather” | `get_mock_weather` |
+| “Convert 18°C to °F” | `celsius_to_fahrenheit` |
+| “Is Tokyo the capital of Japan?” | no Tool |
+| “Get live Tokyo weather” | do not misrepresent the mock Tool as live data |
+
+That is more meaningful than one successful demo.
+
+---
+
+## 11. Questions an experienced Tool designer asks
+
+Not only:
+
+```text
+Can the Python function be called?
+```
+
+But:
+
+```text
+Does the model know when to use it?
+Does the model know when not to use it?
+Can known constraints move into the schema?
+Is the capability granularity appropriate?
+Will output pollute future Context?
+Are Tools unnecessarily overlapping?
+Is authorization really enforced by the Runtime?
+Can the interface be evaluated on a dataset?
+```
+
+That is why Tool Calling is not merely “wrap a Python function in JSON Schema.”
+
+It is an **Agent-Computer Interface (ACI)** design problem. The Runtime determines whether execution is governed correctly; the Tool interface strongly influences whether the model can use those capabilities correctly.

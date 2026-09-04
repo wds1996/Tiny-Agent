@@ -1,199 +1,223 @@
-# Provider Adapter 练习
+# Provider Adapter 专项练习：把“换模型不改 Runtime”真正练会
 
-这些练习的目标是把 provider / runtime boundary 真正做实。不要通过“把 provider-specific logic 搬进 `AgentRuntime`”来完成它们。
+> Language: [English](provider-adapter-exercises.md) | 简体中文
 
-## Exercise 1 — 手动追踪 Protocol
+这一组练习只盯住一件事：
 
-给定 Tiny-Agent message history：
+> **Provider-specific protocol 应该停在 Adapter 边界，不能渗进 `AgentRuntime`。**
+
+如果你完成练习时不得不修改 `AgentRuntime.run()`，先不要急着继续写。问自己：
+
+> “我是在补一个真正 provider-neutral 的 Runtime capability，还是只是让 Runtime 知道某家 provider 的细节？”
+
+---
+
+## Exercise 1 — 手工做一次 protocol translation
+
+Tiny-Agent transcript：
 
 ```python
 [
-    {"role": "user", "content": "What is 9 * 8?"},
+    {"role": "user", "content": "查询东京课程模拟天气"},
     {
         "role": "assistant",
         "tool_calls": [
             {
-                "id": "call_9x8",
-                "name": "multiply",
-                "arguments": {"a": 9, "b": 8},
+                "id": "call_weather",
+                "name": "get_mock_weather",
+                "arguments": {"city": "Tokyo"},
             }
         ],
     },
     {
         "role": "tool",
-        "tool_call_id": "call_9x8",
-        "name": "multiply",
-        "content": "72",
+        "tool_call_id": "call_weather",
+        "name": "get_mock_weather",
+        "content": "18.0",
     },
 ]
 ```
 
-手工写出等价 Responses API input items。
+请手工写出对应的 Responses API input items。
 
 然后回答：
 
-1. 哪个 field 把 Tool result 与原始 model request 关联起来？
-2. 为什么仅靠 Tool name 不足以 correlation？
-3. 为什么 provider 侧 arguments 用 JSON 编码，而 Tiny-Agent 内部存 Python dict？
+1. 哪个字段负责把 Tool result 与原始 function call 对应起来？
+2. 为什么 Tool name 不能代替 `call_id`？
+3. 为什么 Tiny-Agent 内部存 `dict`，而 provider wire format 中 arguments 可能是 JSON string？
+4. 如果未来 provider 的 ToolCall 字段完全不同，哪一层应该变化？
 
 ---
 
-## Exercise 2 — 增加 `subtract` Tool
+## Exercise 2 — 自己实现 `_extract_tool_calls`
 
-在 `code/openai_multi_tool_agent.py` 中增加：
+不要看 `src/tiny_agent/models/openai.py`。
+
+给定一个 fake provider response，其中：
+
+```text
+response.output
+```
+
+可能同时包含：
+
+```text
+message
+function_call
+reasoning item
+function_call
+```
+
+实现：
 
 ```python
-def subtract(a: float, b: float) -> float:
+def extract_tool_calls(response) -> list[ToolCall]:
     ...
 ```
 
-测试：
+要求：
 
-```text
-Calculate (80 - 17) * 3 + 5.
-```
+- 只提取 `function_call`；
+- `arguments` 必须 `json.loads`；
+- JSON 解析失败明确报 protocol error；
+- JSON 解码后不是 `dict` 也必须拒绝；
+- 保留 `call_id`；
+- 同一轮多个 call 全部提取。
 
-运行前先预测一个合法 Tool trajectory，再与实际结果比较。
-
-思考：
-
-- model 是否选择了与你相同的 grouping？
-- trajectory 不同但 final answer 是否仍然正确？
-- 哪些步骤 deterministic，哪些属于 model decision？
+写至少四个 deterministic tests。
 
 ---
 
-## Exercise 3 — 故意破坏 Strict Schema
+## Exercise 3 — 故意制造 malformed JSON
 
-从某一个 Tool schema 删除：
+Fake provider 返回：
+
+```text
+{city: Tokyo}
+```
+
+而不是：
+
+```json
+{"city": "Tokyo"}
+```
+
+验证：
+
+```text
+Adapter 失败
+Runtime 不执行 Tool
+handler 从未被调用
+```
+
+然后解释为什么这属于：
+
+```text
+provider/protocol boundary
+```
+
+而不是 Tool handler failure。
+
+---
+
+## Exercise 4 — JSON 合法，但 shape 错了
+
+Fake provider 返回：
+
+```json
+["Tokyo"]
+```
+
+`json.loads` 会成功。
+
+但 function arguments 应该是 object。
+
+验证 Adapter 仍然拒绝。
+
+这个练习专门让你区分：
+
+```text
+syntactically valid JSON
+!=
+valid normalized ToolCall arguments
+```
+
+---
+
+## Exercise 5 — 证明 `generate()` 只做一个 model turn
+
+写一个 FakeClient，并记录：
+
+```text
+client.responses.create
+```
+
+被调用多少次。
+
+执行一次：
+
+```python
+model.generate(messages, tools)
+```
+
+断言只发生一次 provider request。
+
+然后让 provider response 返回 ToolCall。
+
+确认：
+
+```text
+Adapter 没有执行 Tool
+Adapter 没有再次调用 provider
+Adapter 只是返回 ModelResponse(tool_calls=[...])
+```
+
+最后回答：
+
+> 如果 Adapter 偷偷跑完整 loop，permission / tracing / checkpoint 为什么会变难？
+
+---
+
+## Exercise 6 — Tool schema translation
+
+给定 Tiny-Agent Tool：
+
+```python
+{
+    "name": "get_mock_weather",
+    "description": "Return course mock weather for one city.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "city": {"type": "string"},
+        },
+        "required": ["city"],
+        "additionalProperties": False,
+    },
+}
+```
+
+手工写成 OpenAI function Tool definition。
+
+然后故意删除：
 
 ```python
 "additionalProperties": False
 ```
 
-同时保持：
+讨论：
 
-```python
-strict_tools=True
-```
-
-观察 provider behavior，然后恢复 strict-compatible schema。
-
-解释：为什么 schema correctness 属于 Agent reliability？
+1. provider-side strict schema 带来什么价值？
+2. 为什么 Runtime 以后仍应该做 local validation？
+3. schema correctness 属于 Tool design、Adapter 还是 Runtime validation？为什么这三个层次不能混为一谈？
 
 ---
 
-## Exercise 4 — Fake Provider 返回 Invalid JSON
+## Exercise 7 — 把 OpenAI 换成 Qwen，但不改 Runtime
 
-在 `tests/test_openai_adapter.py` 增加一个 fake response，其 arguments 是：
+Stage 00 已经演示过 Qwen 的 OpenAI-compatible 调用。
 
-```text
-{a: 1, b: 2}
-```
-
-而不是合法 JSON：
-
-```json
-{"a": 1, "b": 2}
-```
-
-验证 adapter 在 runtime 尝试 Tool execution **之前**就 raise error。
-
-解释为什么这个 error 属于 provider / protocol boundary，而不是 Tool handler。
-
----
-
-## Exercise 5 — JSON 合法，但 Shape 错误
-
-构造 fake provider call，decoded arguments 是：
-
-```json
-[1, 2]
-```
-
-JSON 语法合法，但 Function arguments 应该是 object。
-
-验证 Tiny-Agent 会拒绝它。
-
-这个练习展示：
-
-```text
-valid JSON
-```
-
-与：
-
-```text
-valid function-call arguments
-```
-
-不是一回事。
-
----
-
-## Exercise 6 — Multiple Independent ToolCalls
-
-创建两个 read-only Tool：
-
-```text
-get_city_temperature(city)
-get_city_population(city)
-```
-
-提出一个可能同时需要两者的问题，观察 model 是否在同一 turn 发出 multiple calls。
-
-然后设置：
-
-```python
-parallel_tool_calls=False
-```
-
-比较 trajectory。
-
-最重要的问题：
-
-> `parallel_tool_calls=True` 是否表示 Tiny-Agent 当前会并发执行 Python handler？
-
-答案：**不是。**
-
-它只允许 model 在一次 decision 中请求多个 ToolCall；当前 runtime 仍然同步循环执行 handler。
-
-physical parallel execution 属于另一层 runtime concern。
-
----
-
-## Exercise 7 — Serial Dependency
-
-用 arithmetic Tool 完成：
-
-```text
-Calculate (23 * 17) + 41.
-```
-
-解释为什么 `add` 必须依赖 `multiply` 的 observation。
-
-再与：
-
-```text
-Find the temperatures of Tokyo and Paris.
-```
-
-比较，分别画出 dependency graph。
-
----
-
-## Exercise 8 — Provider Substitution 思考实验
-
-假设增加：
-
-```python
-class QwenModel:
-    ...
-```
-
-列出理想情况下需要修改的 files。
-
-一个好的 architecture 应该允许新增 provider adapter + tests，而不修改以下 core semantics：
+现在重新做一次，但要求更严格：
 
 ```text
 AgentRuntime
@@ -201,50 +225,179 @@ ToolRegistry
 Tool handlers
 ```
 
-如果你认为 runtime 必须修改，请明确指出：到底缺少了哪一个 **provider-independent capability**。
+全部不允许修改。
+
+你只能新增或配置：
+
+```text
+Qwen Adapter
+provider config
+provider-specific tests
+```
+
+目标接口仍然是：
+
+```python
+class Model(Protocol):
+    def generate(
+        self,
+        messages,
+        tools,
+    ) -> ModelResponse:
+        ...
+```
+
+完成后写一段说明：
+
+```text
+哪些 provider 差异被 Adapter 吸收？
+哪些能力确实应该提升成 Runtime 的通用 capability？
+```
+
+如果你发现自己写：
+
+```python
+if provider == "qwen":
+```
+
+到 `AgentRuntime.run()` 里，请解释为什么。
 
 ---
 
-# 面试题
+## Exercise 8 — Provider compatibility 不是 provider identity
 
-1. Agent runtime 与 model provider adapter 有什么区别？
-2. 为什么 Tiny-Agent 要把 provider output normalize 成 `ModelResponse`？
-3. `call_id` 解决什么问题？
-4. 为什么 `generate()` 表示一个 model turn，而不是完整 Agent run？
-5. strict function calling 约束什么？
-6. malformed JSON 与 semantically invalid Tool arguments 有什么区别？
-7. 为什么一个 model turn 可以包含多个 ToolCall？
-8. 为什么 multiple ToolCall 不等于 concurrent Tool execution？
-9. 为什么 unit test 使用 fake OpenAI client？
-10. live integration test 应测试哪些 unit test 无法证明的事情？
-11. provider-neutral transcript 有什么价值？
-12. provider-native reasoning / session state 变重要后，会暴露哪些当前 adapter limitation？
+假设 OpenAI 和 Qwen 都能通过类似：
 
-# Completion Challenge
-
-构建一个三 Tool calculator：
-
-```text
-add
-multiply
-subtract
+```python
+client.responses.create(...)
 ```
 
-至少展示三种 trajectory：
+调用。
 
-1. direct one-Tool task；
-2. serial two-or-more-Tool task；
-3. model 正确判断不需要 Tool 的 task。
-
-每次 run 记录：
+列出至少八种它们仍可能不同的地方，例如：
 
 ```text
-user input
-model action(s)
-Tool arguments
-observation(s)
-final answer
+API Key
+base_url
+model IDs
+supported parameters
+Tool Calling details
+Structured Output support
+error semantics
+rate limits
+usage metadata
+provider extensions
+```
+
+然后回答：
+
+> 为什么“OpenAI-compatible”降低 Adapter 实现成本，却没有让 Adapter 这个 architecture layer 失去意义？
+
+---
+
+## Exercise 9 — Serial dependency vs same-turn multiple calls
+
+场景 A：
+
+```text
+get_mock_weather(Tokyo)
+        ↓
+      18°C
+        ↓
+celsius_to_fahrenheit(18)
+```
+
+场景 B：
+
+```text
+get_mock_weather(Tokyo)
+get_mock_weather(Paris)
+```
+
+画出 dependency graph。
+
+回答：
+
+1. 为什么 A 通常需要多个 model turns？
+2. 为什么 B 可能一轮返回两个 ToolCall？
+3. `parallel_tool_calls=True` 到底允许了什么？
+4. 为什么它没有自动让 Python Tool 并发执行？
+
+---
+
+## Exercise 10 — FakeClient unit test vs live integration test
+
+设计两套测试。
+
+### Unit test
+
+使用 FakeClient 验证：
+
+```text
+request translation
+Tool schema translation
+JSON decoding
+call_id preservation
+multiple calls
+invalid role
+empty provider response
+```
+
+### Live integration
+
+使用真实模型验证：
+
+```text
+真实 provider 接口仍兼容
+模型会合理选择 Tool
+真实 trajectory 能完成任务
+延迟 / usage 在合理范围
+```
+
+然后解释：
+
+> 为什么这两类 test 谁都不能代替谁？
+
+---
+
+## Completion Challenge — 写一个真正 provider-neutral 的双 Provider Demo
+
+目标：
+
+```text
+同一个 AgentRuntime
+同一个 ToolRegistry
+同一组 travel Tools
+```
+
+只通过配置切换：
+
+```text
+OpenAI
+Qwen
+```
+
+要求最终都能处理：
+
+```text
+查询课程模拟东京天气
+→ 得到 Celsius
+→ 使用转换 Tool 得到 Fahrenheit
+→ 最终解释
+```
+
+记录两次 trajectory，并比较：
+
+```text
+Tool selection
+arguments
 step count
+final answer
+provider latency
 ```
 
-不要只看 final answer。**同时检查 trajectory。**
+最后写一段架构总结：
+
+> **哪些变化属于 provider substitution，哪些变化才应该推动 core Runtime contract 演化？**
+
+如果你能把这个问题答清楚，就真正理解了 Adapter，而不只是会写一个包装类。

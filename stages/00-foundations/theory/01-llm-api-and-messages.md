@@ -319,7 +319,7 @@ python stages/00-foundations/code/provider_adapter_demo.py --provider qwen
 
 Both commands enter the **same** `run_teacher_example()` function. Provider change happens in configuration and the Adapter, not in the Runtime's core logic.
 
-Stage 01 extends the same idea into a real Agent model adapter that normalizes provider text, Function Calls, usage, and exceptions into Runtime-owned internal types.
+Stage 01 extends the same idea into a real Agent model adapter: provider text and Function Calls are normalized into Runtime-owned `ModelResponse` / `ToolCall` types, while provider request errors remain explicit at the Adapter boundary and richer usage metadata is introduced later rather than forced into the minimal contract.
 
 ---
 

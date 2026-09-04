@@ -1,182 +1,344 @@
-# Stage 01 Scope and Production Limitations
+# 04 — Where Does This Runtime Still Break? From Correct Boundaries to Production Thinking
 
-Stage 01 deliberately implements a **small, inspectable Agent runtime**. Its purpose is to make the control loop and provider boundary visible. It should not be mistaken for a production-ready runtime.
+> Language: English | [简体中文](04-scope-and-production-limitations.zh-CN.md)
 
-A high-quality learning project should be explicit about what an implementation guarantees and what it does not.
-
-## What Stage 01 does guarantee
-
-The current implementation demonstrates these ideas correctly:
-
-- the model proposes tool calls but does not execute Python functions itself;
-- the runtime owns tool execution and the Agent loop;
-- tool observations are returned to the model before the next decision;
-- provider-specific request/response objects stay behind an adapter;
-- `call_id` correlates a provider tool request with its observation;
-- multiple tool calls from one model turn can be represented;
-- a maximum-step bound prevents an unbounded loop;
-- unit tests can use fake models and fake provider clients.
-
-These are the concepts learners should carry forward.
-
-## What Stage 01 intentionally does **not** solve
-
-### 1. Tool exceptions are returned too directly
-
-The teaching runtime currently converts a handler exception to a string such as:
+At this point we have a clean minimal Runtime:
 
 ```text
-ToolError[ValueError]: detailed message
+Model proposes ToolCall
+    ↓
+Adapter normalizes
+    ↓
+Runtime owns the loop
+    ↓
+ToolRegistry executes
+    ↓
+Observation returns to the next turn
 ```
 
-and returns it to the model as an observation.
+Those boundaries are sound.
 
-This is useful for demonstrating recovery, but production systems should not blindly expose raw exception messages. Exceptions may contain:
+But sound boundaries are not the same thing as production readiness.
 
-- file paths;
-- internal service names;
-- SQL details;
-- stack-specific information;
-- sensitive values.
+A weak tutorial often runs a ten-line demo and immediately says “you built an Agent.” A more useful statement is:
 
-A production runtime normally classifies errors and exposes only a safe model-facing representation while keeping detailed diagnostics in logs/traces.
+> **We built an Agent Runtime that makes the core control model explicit. It still lacks many production constraints.**
 
-We will address this in Stage 07 (Reliability, Safety & Tool Governance).
+This chapter studies those missing pieces through concrete failure scenarios.
 
-### 2. Tool arguments are not locally schema-validated
+---
 
-Tiny-Agent currently relies on provider-side strict function schemas when available and then calls:
+## 1. Failure: the model never stops
+
+An endless model can keep requesting the same Tool:
+
+```text
+get_mock_weather(Tokyo)
+-> get_mock_weather(Tokyo)
+-> get_mock_weather(Tokyo)
+-> ...
+```
+
+Stage 01 already solves one part of this problem with:
 
 ```python
-handler(**arguments)
+max_steps
 ```
 
-The runtime does not yet validate the generated arguments against the tool's JSON Schema before execution.
+`tests/test_runtime_edges.py` verifies that an `EndlessToolModel` is forcibly stopped.
 
-A production implementation should validate at the application boundary as well. Provider guarantees are useful, but runtime validation protects the application from:
-
-- provider differences;
-- future adapters;
-- manually constructed calls;
-- malformed test fixtures;
-- schema drift.
-
-### 3. Multiple calls are represented together but executed sequentially
-
-A model can return several independent tool calls in one turn:
+But `max_steps` answers only:
 
 ```text
-weather(Tokyo)
-weather(Paris)
+How many model turns may occur?
 ```
 
-The Stage 01 runtime stores both calls, but executes them with a normal Python loop.
+It does not answer how long one Tool may run, how many ToolCalls may exist in one step, how much money may be spent, or how cancellation works.
 
-Therefore:
+Those are separate budgets and control mechanisms.
+
+---
+
+## 2. Failure: model-generated arguments are wrong
+
+A model may propose:
 
 ```text
-multiple tool calls in one model turn
+celsius_to_fahrenheit(temperature_c="eighteen")
 ```
 
-is **not the same thing as**:
+Provider-side strict schemas are useful, but an application should not conclude:
 
 ```text
-concurrent physical execution
+provider says it is valid
+=
+Runtime never needs validation
 ```
 
-Actual concurrency requires an async/task execution layer, cancellation semantics, error aggregation, and concurrency limits. Those belong to later production stages.
+Future calls may come from another provider, an old checkpoint, MCP, a manually constructed test fixture, or a drifting schema.
 
-### 4. The OpenAI adapter is intentionally stateless
+Production Runtimes therefore need application-side argument validation too.
 
-`OpenAIResponsesModel` reconstructs the visible Tiny-Agent transcript on each request. Stage 01 defaults to `reasoning_effort="none"` to keep this lesson focused on protocol translation.
+Stage 01 intentionally leaves full JSON-Schema validation out of the smallest loop so the control model remains visible. That is a teaching deferment, not a claim that validation is unnecessary.
 
-It does not yet teach:
+---
 
-- `previous_response_id`;
-- provider-native conversation state;
-- persisted reasoning context;
-- checkpoint/resume;
-- session ownership.
+## 3. Failure: Tool exceptions leak internals
 
-These are Stage 03 and Stage 06 topics.
+A common teaching shortcut is:
 
-### 5. Mixed text + tool-call output is simplified
-
-A provider response can contain more than one output-item type. The current normalized contract is intentionally simple:
-
-```text
-ModelResponse = tool calls OR final answer
+```python
+except Exception as exc:
+    observation = str(exc)
 ```
 
-If a provider turn contains function calls, `OpenAIResponsesModel` prioritizes those function calls and does not preserve incidental/intermediate text from the same provider response.
+It makes recovery easy to demonstrate, but raw exceptions may contain file paths, internal database names, service URLs, SQL details, or sensitive values.
 
-That is acceptable for this educational runtime, but a richer production transcript may need to preserve multiple output-item types explicitly.
-
-### 6. Only a step budget exists
-
-`max_steps` protects the simple loop, but production execution normally also needs some combination of:
-
-- wall-clock timeout;
-- maximum tool calls;
-- retry budgets;
-- token/cost budgets;
-- per-tool quotas;
-- loop/repetition detection;
-- cancellation.
-
-### 7. There is no permission or approval layer
-
-Every registered tool is currently executable once the model proposes it.
-
-Real applications often distinguish:
+Production systems need two different views:
 
 ```text
-read-only tool              -> automatic
-low-risk write              -> policy dependent
-high-impact side effect     -> human approval
-forbidden capability        -> blocked
+safe model-facing observation
+        !=
+detailed developer diagnostic
 ```
 
-This becomes important when tools can send messages, modify files, update databases, spend money, or execute code.
+The evolving `src/tiny_agent/runtime.py` has already been hardened by later reliability work so unexpected exceptions become redacted Tool-failure observations. Stage 01 teaches that recoverable failures can participate in the loop; Stage 07 teaches classification and policy.
 
-### 8. There is no tracing or evaluation yet
+---
 
-The message transcript is useful for teaching, but it is not a full observability system. Later stages will add concepts such as:
+## 4. Failure: the model proposes a capability it should not be allowed to execute
 
-- spans/traces;
-- latency and token usage;
-- tool success/failure metrics;
-- trajectory evaluation;
-- task-success evaluation;
-- regression datasets.
-
-## Why we do not fix everything immediately
-
-A tutorial can become misleading in two opposite ways:
-
-1. **too little engineering** — a ten-line demo is presented as if it were production-ready;
-2. **too much engineering too early** — beginners cannot see the core mechanism because retries, async state, persistence, security, and observability are mixed into the first loop.
-
-Tiny-Agent chooses progressive disclosure:
+Imagine a Registry containing:
 
 ```text
-Stage 00  tool use
+read_weather
+send_email
+refund_payment
+delete_database
+```
+
+The minimal Stage 01 Runtime executes any registered Tool the model proposes.
+
+Real systems must separate:
+
+```text
+visible to the model
+!=
+authorized for this caller
+!=
+permitted under current policy
+!=
+approved for this exact action
+```
+
+A read-only weather Tool may be automatic. Sending email may be policy-dependent. Deleting a database should normally be denied.
+
+The key Stage 01 principle is already correct: **Tool execution belongs to the Runtime, not the model.** That ownership is what makes later authorization and HITL possible.
+
+---
+
+## 5. Failure: a Tool hangs
+
+Suppose:
+
+```python
+def get_weather(city):
+    return remote_api(city)
+```
+
+and the remote service never returns.
+
+`max_steps=5` does nothing because the first step has not completed.
+
+This requires different controls:
+
+```text
+per-Tool timeout
+request timeout
+cancellation
+async execution
+```
+
+A step budget and a time budget are different dimensions.
+
+---
+
+## 6. Failure: one model turn contains many ToolCalls
+
+A model may return:
+
+```text
+get_weather(Tokyo)
+get_weather(Paris)
+get_weather(New York)
+```
+
+Stage 01 can represent them together, but executes handlers sequentially:
+
+```python
+for call in response.tool_calls:
+    execute(call)
+```
+
+Concurrent execution raises new questions:
+
+```text
+What is the concurrency limit?
+What if one call fails?
+Should the others be cancelled?
+How are results correlated and ordered?
+```
+
+So multiple ToolCalls are a decision-representation capability; concurrent execution is separate Runtime semantics.
+
+---
+
+## 7. Failure: provider state and Runtime state become confused
+
+Responses API can continue provider-managed context using mechanisms such as `previous_response_id`.
+
+Stage 01 mostly replays a Tiny-Agent transcript instead.
+
+That separation is deliberate. Once provider state is added, you must answer:
+
+```text
+Who persists the response ID?
+What happens after process restart?
+Can one thread have concurrent runs?
+Which store is the source of truth?
+How do checkpoints interact with provider state?
+```
+
+Conversation history, provider conversation state, Runtime state, checkpoints, and long-term memory are different concepts. Later state and persistence stages compare them explicitly.
+
+---
+
+## 8. Failure: the message transcript is no longer enough for debugging
+
+`AgentResult.messages` is useful because it exposes:
+
+```text
+User -> Action -> Observation -> ... -> Final
+```
+
+Production systems also need to know model latency, Tool latency, token usage, step duration, request identity, failure rates, and task success.
+
+Those require real logging, tracing, metrics, and evaluation. A transcript is not an observability system.
+
+---
+
+## 9. Failure: the final answer is correct but the trajectory is wrong
+
+Suppose the task explicitly requires the weather Tool.
+
+Two Agents both answer `18°C`.
+
+Agent A:
+
+```text
+ToolCall -> observation 18 -> final
+```
+
+Agent B:
+
+```text
+guess 18 -> final
+```
+
+A final-answer-only test marks both correct, even though B violated the task contract.
+
+Agent evaluation therefore needs at least two lenses:
+
+```text
+answer quality
+trajectory quality
+```
+
+Stage 01 makes trajectory visible; Stage 08 turns that into a systematic evaluation discipline.
+
+---
+
+## 10. Why not solve everything in Stage 01?
+
+Two teaching styles both fail.
+
+### Too little engineering
+
+```text
+10-line Tool demo
    ↓
-Stage 01  explicit Agent runtime
-   ↓
-Stage 02  workflow / routing / planning
-   ↓
-Stage 03+ state, persistence, reliability, evaluation, production
+“production Agent complete”
 ```
 
-The goal is not for early code to be feature-complete. The goal is for every early simplification to be **visible, named, and corrected in a later stage**.
+### Too much engineering too early
 
-## Review checkpoint
+```text
+async + retry + RBAC + checkpoint + tracing + Redis + queue + sandbox
+```
 
-Before leaving Stage 01, you should be able to answer:
+all mixed into the first Runtime.
 
-1. Which parts of Tiny-Agent Stage 01 are architectural principles and which are teaching simplifications?
-2. Why is returning raw exception text to a model risky?
-3. Why is provider-side strict schema enforcement not a replacement for runtime validation?
-4. Why do multiple tool calls in one turn not imply concurrent execution?
-5. Why does a production Agent need more stopping controls than `max_steps`?
+High-quality instruction uses progressive disclosure:
+
+> **Teach one mechanism deeply, name its limitations, and show where later stages strengthen it.**
+
+Tiny-Agent therefore grows the same boundaries over time rather than hiding everything behind a framework on day one.
+
+---
+
+## 11. Durable principles vs Stage 01 simplifications
+
+### Architecture principles that should survive later stages
+
+```text
+model proposes; Runtime executes
+Provider Adapter does not own the Agent loop
+provider output is normalized before entering core Runtime logic
+ToolCall and Observation stay correlated
+Runtime owns explicit stopping control
+capabilities enter execution through a governed Tool boundary
+deterministic control logic should support deterministic tests
+```
+
+### Deliberate Stage 01 simplifications
+
+```text
+max_steps is the only major budget
+no complete local JSON-Schema validation
+mostly synchronous Tool execution
+no permission / approval policy
+no retry / timeout policy
+no checkpoint / resume
+no full tracing / metrics / evaluation
+conservative provider-state handling
+```
+
+A learner should know not only how the current code works, but also **what it does not yet claim to solve**.
+
+---
+
+## 12. What Stage 01 has really built
+
+We now have:
+
+```text
+Model boundary
+Provider Adapter
+normalized ToolCall / ModelResponse
+ToolRegistry
+AgentRuntime
+Observation loop
+call_id correlation
+step bound
+deterministic Runtime tests
+```
+
+And we know that none of those words mean “production complete.”
+
+That is the standard a serious tutorial should aim for: explain how a mechanism works, why the boundaries exist, what problem each boundary solves, and where the current design still fails.
+
+Stage 02 starts from the next question:
+
+> **Now that the Runtime can let a model choose the next action, should every task become an Agent loop?**
+
+No — and understanding why is the next step.

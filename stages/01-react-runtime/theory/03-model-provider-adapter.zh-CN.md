@@ -1,44 +1,8 @@
-# 03 — Model Provider Adapter：把 Runtime 接到真实 LLM
+# 03 — Provider Adapter：让 Agent Runtime 不绑定某一家模型
 
-Stage 01 已经有 Agent loop，但到目前为止一直由 scripted fake model 做 decision。
+> Language: [English](03-model-provider-adapter.md) | 简体中文
 
-这一章要做的是：把**同一个 runtime** 接到真实 provider，同时不把 provider-specific logic 搬进 runtime。
-
-核心工程思想：
-
-> **Agent orchestration 与 model-provider protocol 是两种不同责任。**
-
-一个干净的 Agent runtime 应该理解：
-
-```text
-ToolCall
-Observation
-stopping condition
-execution state
-```
-
-它不应该需要理解每个 vendor 的 request object、response object、authentication rule 或 function-call wire format。
-
----
-
-## 1. Adapter 位于哪里
-
-Tiny-Agent 的依赖方向：
-
-```text
-                         provider-neutral boundary
-                                  |
-                                  v
-User -> AgentRuntime -> Model protocol -> OpenAIResponsesModel -> OpenAI API
-          |                            |
-          |                            +-- request translation
-          |                            +-- response parsing
-          |                            +-- provider errors
-          |
-          +-> ToolRegistry -> Python handlers
-```
-
-`AgentRuntime` 只知道：
+上一章我们已经得到一个很小的 Runtime contract：
 
 ```python
 class Model(Protocol):
@@ -50,47 +14,113 @@ class Model(Protocol):
         ...
 ```
 
-它不 import OpenAI Python package。
+这句话看起来普通，但它其实规定了一个非常重要的 architecture boundary：
 
-所以未来可以是：
+> **Agent Runtime 只认识 Tiny-Agent 自己的语义，不认识 OpenAI、Qwen 或其它 provider 的原生 Response object。**
 
-```text
-AgentRuntime
-    |
-    +--> OpenAIResponsesModel
-    +--> FutureAnthropicModel
-    +--> FutureQwenModel
-    +--> FakeModel
-```
+Stage 00 已经解释过“为什么 provider-specific client 和 Runtime 应该分开”。
 
-换 provider 不应该重写 Agent loop。
+这一章不再停留在概念上，而是把 OpenAI Responses API 真正接进来，逐步看清 Adapter 到底翻译了什么。
 
 ---
 
-## 2. Adapter 不只是“包一下 API Call”
-
-provider adapter 要做的是**双向 protocol translation**。
-
-### Tiny-Agent -> Provider
-
-把：
+## 1. 先看最终依赖方向
 
 ```text
-Tiny-Agent message history
-Tiny-Agent Tool schema
+User
+  ↓
+AgentRuntime
+  ↓
+Model Protocol
+  ↓
+OpenAIResponsesModel
+  ↓
+OpenAI Responses API
 ```
 
-翻译成：
+另一边：
 
 ```text
-provider input items
-provider function definitions
+AgentRuntime
+  ↓
+ToolRegistry
+  ↓
+Python Tool
+```
+
+所以 `OpenAIResponsesModel` 的位置非常明确：
+
+```text
+provider-specific 世界
+        │
+        ▼
+      Adapter
+        │
+        ▼
+Tiny-Agent internal protocol
+```
+
+它不应该：
+
+```text
+执行 Tool
+控制 Agent loop
+决定 max_steps
+做权限审批
+偷偷再调用模型第二次
+```
+
+它只负责：
+
+```text
+把 Tiny-Agent request 翻译给 provider
+把 provider response 翻译回 Tiny-Agent
+```
+
+---
+
+## 2. 为什么 Adapter 不只是“包一层 API 调用”？
+
+如果 Adapter 只是：
+
+```python
+def generate(prompt):
+    return client.responses.create(...)
+```
+
+那 Runtime 最后还是要解析 provider Response。
+
+真正的 Adapter 需要完成双向协议转换。
+
+### Tiny-Agent -> OpenAI
+
+Runtime 传入：
+
+```text
+messages
+Tool schemas
+```
+
+Adapter 需要转换成：
+
+```text
+Responses input items
+function tool definitions
 provider configuration
 ```
 
-### Provider -> Tiny-Agent
+### OpenAI -> Tiny-Agent
 
-把 provider response item 翻译成：
+OpenAI 返回：
+
+```text
+message
+function_call
+reasoning item
+...
+```
+
+Adapter 只把 Runtime 需要的语义归一化成：
 
 ```python
 ModelResponse(
@@ -106,31 +136,84 @@ ModelResponse(
 )
 ```
 
-完成 normalization 后，其余 component 都不需要理解 provider-specific type。
+所以 Adapter 本质上是：
+
+> **协议翻译器 + normalization boundary。**
 
 ---
 
-## 3. Responses API 的 Tool-Calling Lifecycle
+## 3. `generate()` 为什么只能做“一轮模型决策”？
 
-本章编写时，OpenAI Responses API 的 current function-calling flow 概念上是：
+先看错误设计：
 
 ```text
-1. Send input + available Tool definitions
-                 |
-                 v
-2. Model emits function_call item(s)
-                 |
-                 v
-3. Application executes functions
-                 |
-                 v
-4. Application sends function_call_output item(s)
-                 |
-                 v
-5. Model decides again
+AgentRuntime.run()
+      ↓
+OpenAIAdapter.generate()
+      ↓
+模型
+      ↓
+执行 Tool
+      ↓
+模型
+      ↓
+再执行 Tool
+      ↓
+最终回答
 ```
 
-provider function call 中对 runtime 最关键的是：
+如果 Adapter 把整个循环都做完，`AgentRuntime` 其实已经被架空了。
+
+更严重的是，后面想加：
+
+```text
+permission
+approval
+retry
+tracing
+budget
+checkpoint
+```
+
+时，你会发现真正的 loop 藏在 provider adapter 内部，所有治理逻辑都很难插进去。
+
+所以 Tiny-Agent 的规则是：
+
+```python
+response = self.model.generate(...)
+```
+
+代表：
+
+> **只执行一次 model turn。**
+
+然后控制权必须回到 Runtime。
+
+完整循环是：
+
+```text
+Runtime
+  ↓
+model.generate()      # 只一轮
+  ↓
+ModelResponse
+  ↓
+Runtime 执行 Tool
+  ↓
+Observation
+  ↓
+Runtime
+  ↓
+model.generate()      # 下一轮
+```
+
+这个边界非常重要。
+
+---
+
+## 4. OpenAI Tool Calling 的一轮到底返回什么？
+
+当前 Responses API 中，一个 function call item 的关键字段是：
 
 ```text
 call_id
@@ -138,269 +221,200 @@ name
 arguments
 ```
 
-例如：
+概念上类似：
 
 ```json
 {
   "type": "function_call",
-  "call_id": "call_123",
-  "name": "multiply",
-  "arguments": "{\"a\":23,\"b\":17}"
+  "call_id": "call_weather",
+  "name": "get_mock_weather",
+  "arguments": "{\"city\": \"Tokyo\"}"
 }
 ```
 
-注意：`arguments` 是 **JSON-encoded string**，不是 Python dict。
+注意一个细节：
 
-adapter 需要：
+```text
+arguments
+```
+
+通常是 JSON 字符串，而 Tiny-Agent Runtime 希望得到 Python `dict`。
+
+所以 Adapter 做：
 
 ```python
 arguments = json.loads(item.arguments)
 ```
 
-再 normalize 成：
+然后归一化成：
 
 ```python
 ToolCall(
-    id="call_123",
-    name="multiply",
-    arguments={"a": 23, "b": 17},
+    id=item.call_id,
+    name=item.name,
+    arguments=arguments,
 )
 ```
 
+从这一刻开始，Runtime 不再需要知道：
+
+```text
+item.type
+item.arguments 是 string
+OpenAI Response.output
+```
+
+provider detail 到这里应该结束。
+
 ---
 
-## 4. 为什么 `call_id` 很重要
+## 5. 为什么 `call_id` 必须穿过整个 Tool execution？
 
-假设 model 同一 turn 请求两个 Tool：
+这是 Provider Adapter 最容易被初学者忽略、但非常关键的一点。
 
-```text
-call_A -> get_weather(Tokyo)
-call_B -> get_weather(Paris)
-```
-
-runtime 得到：
+假设模型同一轮提出：
 
 ```text
-Tokyo -> 31 C
-Paris -> 24 C
+call_A -> get_mock_weather(Tokyo)
+call_B -> get_mock_weather(Paris)
 ```
 
-provider 必须知道每个 result 对应哪个 model request。
+Runtime 执行后得到：
 
-这就是 `call_id` 的作用。
+```text
+Tokyo -> 18°C
+Paris -> 22°C
+```
 
-Tool result 返回时概念上：
+下一轮模型必须知道：
+
+```text
+18°C 属于 call_A
+22°C 属于 call_B
+```
+
+所以 observation 不能只写：
+
+```text
+18°C
+22°C
+```
+
+而要带 correlation ID：
 
 ```json
 {
   "type": "function_call_output",
   "call_id": "call_A",
-  "output": "31 C"
+  "output": "18"
 }
 ```
 
-所以 `call_id` 不是装饰性 metadata，而是跨越：
-
-```text
-request
--> execution
--> observation
-```
-
-的 **correlation identifier**。
-
-Tiny-Agent 把它保存为：
+Tiny-Agent 内部用：
 
 ```python
 ToolCall.id
 ```
 
-随后写入 transcript：
+保存它。
 
-```python
-{
-    "role": "tool",
-    "tool_call_id": call.id,
-    ...
-}
+完整路径是：
+
+```text
+provider function_call
+      │ call_id = X
+      ▼
+Tiny-Agent ToolCall.id
+      │
+      ▼
+Runtime executes Tool
+      │
+      ▼
+Tool observation
+      │ tool_call_id = X
+      ▼
+Adapter
+      │
+      ▼
+provider function_call_output(call_id=X)
 ```
 
-adapter 再把它转换为 provider 需要的 `function_call_output`。
+如果中间把 ID 丢掉，多 ToolCall 场景很快就会错乱。
 
 ---
 
-## 5. Tool Schema 是 Model Interface 的一部分
+## 6. Tool schema 怎样从 Tiny-Agent 变成 provider function definition？
 
-Python function：
-
-```python
-def multiply(a: float, b: float) -> float:
-    return a * b
-```
-
-LLM 不会直接 inspect / invoke 这个 callable。
-
-它看到的是 schema：
+Tiny-Agent 内部 Tool schema：
 
 ```python
 {
-    "name": "multiply",
-    "description": "Multiply two numbers.",
+    "name": "get_mock_weather",
+    "description": "Return course mock weather for a city.",
     "parameters": {
         "type": "object",
         "properties": {
-            "a": {"type": "number"},
-            "b": {"type": "number"},
+            "city": {"type": "string"},
         },
-        "required": ["a", "b"],
+        "required": ["city"],
         "additionalProperties": False,
     },
 }
 ```
 
-OpenAI adapter 再转成 provider format：
+OpenAI Responses API 需要 function Tool definition：
 
 ```python
 {
     "type": "function",
-    "name": "multiply",
-    "description": "Multiply two numbers.",
+    "name": "get_mock_weather",
+    "description": "Return course mock weather for a city.",
     "parameters": {...},
     "strict": True,
 }
 ```
 
-所以 Tool design 不只是 Python programming。
-
-model 会依据：
-
-- Tool name；
-- description；
-- parameter name / description；
-- schema constraint；
-- surrounding instruction；
-
-来决定选什么。
-
-handler 完全正确但 schema 糟糕，Agent 仍然会糟糕。
-
----
-
-## 6. Strict Function Schema
-
-OpenAI 推荐 strict schema adherence。
-
-对 strict object schema，尤其重要：
-
-```text
-additionalProperties = false
-```
-
-以及所有 property 都出现在：
-
-```text
-required
-```
-
-需要 optional 时可以使用 nullable type：
+所以 Adapter 里会有：
 
 ```python
-{
-    "type": "object",
-    "properties": {
-        "location": {"type": "string"},
-        "units": {
-            "type": ["string", "null"],
-            "enum": [
-                "celsius",
-                "fahrenheit",
-                None,
-            ],
-        },
-    },
-    "required": ["location", "units"],
-    "additionalProperties": False,
-}
+def _to_openai_tool(tool: dict) -> dict:
+    return {
+        "type": "function",
+        "name": tool["name"],
+        "description": tool["description"],
+        "parameters": tool["parameters"],
+        "strict": True,
+    }
 ```
 
-Stage 01 的 `OpenAIResponsesModel` 默认启用 strict Tools。
+这说明 Tool schema 有两层意义：
 
-后续还会把 schema validation 放到 Tiny-Agent 本地，使错误 schema 在 API request 发出前就 fail。
+```text
+Tiny-Agent 内部 capability contract
+            ↓
+Provider-specific wire format
+```
+
+不要把 provider 格式直接当成 Runtime 的永久内部数据结构。
 
 ---
 
-## 7. Adapter 只执行一个 Model Turn，不拥有 Agent Run
+## 7. messages 怎样翻译成 Responses input items？
 
-这是最重要的边界之一。
+Tiny-Agent 当前用一个简单 transcript：
 
-错误设计：
-
-```text
-AgentRuntime.run()
-    |
-    v
-OpenAI adapter
-    |
-    +-> model
-    +-> execute Tools
-    +-> model again
-    +-> execute Tools
-    +-> final answer
-```
-
-如果 adapter 自己拥有整个 loop，`AgentRuntime` 就几乎失去意义。
-
-Tiny-Agent 采用：
-
-```text
-AgentRuntime.run()
-    |
-    +-> model.generate()       # exactly one model decision
-    |
-    +-> execute Tool(s)
-    |
-    +-> append observation(s)
-    |
-    +-> model.generate()       # next decision
-    |
-    ...
-```
-
-因此：
-
-```python
-OpenAIResponsesModel.generate()
-```
-
-只执行一次 provider request。
-
-后续的 retries、permission、tracing、HITL、budget、checkpoint、evaluation，都应该围绕 Agent loop，而不是藏进 provider wrapper。
-
----
-
-## 8. Tiny-Agent Message 到 Responses Input Item 的映射
-
-### User Message
-
-Tiny-Agent：
+### 用户消息
 
 ```python
 {
     "role": "user",
-    "content": "Calculate 23 * 17",
+    "content": "查询东京课程模拟天气"
 }
 ```
 
-Responses input：
+OpenAI 可以直接接收类似结构。
 
-```python
-{
-    "role": "user",
-    "content": "Calculate 23 * 17",
-}
-```
-
-### Assistant Function Call
+### Assistant ToolCall
 
 Tiny-Agent：
 
@@ -409,291 +423,333 @@ Tiny-Agent：
     "role": "assistant",
     "tool_calls": [
         {
-            "id": "call_123",
-            "name": "multiply",
-            "arguments": {"a": 23, "b": 17},
+            "id": "call_weather",
+            "name": "get_mock_weather",
+            "arguments": {"city": "Tokyo"},
         }
     ],
 }
 ```
 
-Responses：
+Adapter 转成：
 
 ```python
 {
     "type": "function_call",
-    "call_id": "call_123",
-    "name": "multiply",
-    "arguments": '{"a": 23, "b": 17}',
+    "call_id": "call_weather",
+    "name": "get_mock_weather",
+    "arguments": '{"city": "Tokyo"}',
 }
 ```
 
-### Tool Observation
+### Tool observation
 
 Tiny-Agent：
 
 ```python
 {
     "role": "tool",
-    "tool_call_id": "call_123",
-    "name": "multiply",
-    "content": "391",
+    "tool_call_id": "call_weather",
+    "name": "get_mock_weather",
+    "content": "18.0",
 }
 ```
 
-Responses：
+Adapter 转成：
 
 ```python
 {
     "type": "function_call_output",
-    "call_id": "call_123",
-    "output": "391",
+    "call_id": "call_weather",
+    "output": "18.0",
 }
 ```
 
-translation 位于：
+这就是为什么前一章反复强调：
 
-```text
-src/tiny_agent/models/openai.py
-```
+> **Action 和 Observation 的结构信息必须保留下来。**
 
----
-
-## 9. Tool 之间的 Serial Dependency
-
-考虑：
-
-```text
-(23 * 17) + 41
-```
-
-dependency：
-
-```text
-multiply(23, 17)
-       |
-       v
-      391
-       |
-       v
-add(391, 41)
-       |
-       v
-      432
-```
-
-第二个 ToolCall 必须等第一个 observation 出现后才能正确构造。
-
-自然 trajectory：
-
-```text
-Model turn 1
-  -> multiply(23, 17)
-
-Runtime
-  -> 391
-
-Model turn 2
-  -> add(391, 41)
-
-Runtime
-  -> 432
-
-Model turn 3
-  -> final answer
-```
-
-这是典型 iterative Agent pattern：environment 每次 action 后都贡献新信息。
+否则 Adapter 下一轮无法正确重建 provider protocol。
 
 ---
 
-## 10. Multiple ToolCall 与 Physical Parallel Execution 不同
+## 8. 真正的 `OpenAIResponsesModel.generate()` 在做什么？
 
-另一个问题：
-
-```text
-What is the weather in Tokyo and Paris?
-```
-
-两条 operation 相互独立：
-
-```text
-              +-> weather(Tokyo)
-User question |
-              +-> weather(Paris)
-```
-
-model 可能同一 turn 返回：
+把 `src/tiny_agent/models/openai.py` 简化后，核心大致是：
 
 ```python
-ModelResponse(
-    tool_calls=[call_a, call_b]
+response = self.client.responses.create(
+    model=self.model,
+    input=self._to_openai_input(messages),
+    tools=[self._to_openai_tool(tool) for tool in tools],
+    reasoning={"effort": self.reasoning_effort},
+    parallel_tool_calls=self.parallel_tool_calls,
+)
+
+tool_calls = self._extract_tool_calls(response)
+
+if tool_calls:
+    return ModelResponse(tool_calls=tool_calls)
+
+if response.output_text:
+    return ModelResponse(
+        final_answer=response.output_text
+    )
+
+raise RuntimeError(
+    "provider returned neither ToolCall nor final text"
 )
 ```
 
-Stage 01 runtime 能表示它们，但目前用普通 Python loop 顺序执行 handler。
-
-所以必须区分：
+你可以把它拆成三步：
 
 ```text
-multiple ToolCalls in one model decision
+1. Tiny-Agent -> provider request
+2. provider inference
+3. provider response -> Tiny-Agent ModelResponse
 ```
 
-与：
+注意，它没有任何：
 
 ```text
-concurrent physical execution of Python handlers
+while True
+Tool execution
+max_steps
+permission
 ```
 
-前者是 model response shape；后者需要 async execution、cancellation、error aggregation 与 concurrency limit。
+这正说明职责分离成功了。
 
 ---
 
-## 11. 为什么 Stage 01 默认 Reasoning Effort = `none`
+## 9. 为什么 Provider Adapter 也要做 protocol validation？
 
-现代 Responses workflow 可以跨 turn 保存 provider-native reasoning state。
-
-对 GPT-5.6，OpenAI 推荐在手动维护 history 时保留 model output items，或者适当使用 response chaining 等 provider mechanism。
-
-但这会一次引入很多新概念：
-
-- provider-native response ID；
-- persisted reasoning item；
-- manual history replay；
-- conversation state；
-- concurrency / session ownership。
-
-Stage 01 的目标更窄：
-
-> **先把 Agent runtime / provider boundary 学清楚。**
-
-所以 initial adapter 默认：
-
-```python
-reasoning_effort="none"
-```
-
-每轮重建 visible transcript，使 adapter 保持 stateless。
-
-这样可以验证：
+假设 provider 返回：
 
 ```text
-adding a real provider
-!= modifying AgentRuntime
+arguments = "{city: Tokyo}"
 ```
 
-provider-native state 放到后面的 Stateful Orchestration stage 再系统比较。
+这不是合法 JSON。
+
+Adapter 应该在构造 `ToolCall` 之前失败：
+
+```python
+try:
+    arguments = json.loads(raw_arguments)
+except json.JSONDecodeError as exc:
+    raise RuntimeError("invalid provider tool arguments") from exc
+```
+
+再假设 JSON 是合法的：
+
+```json
+["Tokyo"]
+```
+
+但 function arguments 应该是 object。
+
+所以还要检查：
+
+```python
+if not isinstance(arguments, dict):
+    raise RuntimeError(
+        "Function-call arguments must decode to an object"
+    )
+```
+
+这里有一条很好的责任判断规则：
+
+```text
+provider wire format 错了
+    -> Adapter boundary
+
+Tool 参数语义不合法
+    -> Runtime / Tool validation boundary
+
+Tool handler 自己执行失败
+    -> Tool execution boundary
+```
+
+错误发生在哪一层，就尽量在哪一层被识别。
 
 ---
 
-## 12. 为什么 Example 默认 GPT-5.6 Luna
+## 10. 同一轮多个 ToolCall 和串行依赖有什么区别？
 
-model 是可配置的：
+### 串行依赖
+
+旅行助手：
+
+```text
+get_mock_weather(Tokyo)
+        ↓
+      18°C
+        ↓
+celsius_to_fahrenheit(18)
+```
+
+第二个 call 的参数必须等第一个 observation。
+
+因此至少需要两个 model turns。
+
+### 独立调用
+
+如果用户问：
+
+```text
+查询东京和巴黎的天气
+```
+
+模型可能一次返回：
+
+```text
+call_A -> get_weather(Tokyo)
+call_B -> get_weather(Paris)
+```
+
+这是：
+
+```text
+multiple ToolCalls in one model turn
+```
+
+当前 Runtime 仍会：
 
 ```python
-OpenAIResponsesModel(
-    model="gpt-5.6-luna"
+for call in response.tool_calls:
+    execute(call)
+```
+
+顺序执行。
+
+所以 `parallel_tool_calls=True` 只影响模型是否可以在一个决策里提出多个 call，**不等于 Python handler 已经并发运行**。
+
+这是后面 async / production 部分必须继续处理的边界。
+
+---
+
+## 11. 接入真实 OpenAI 后，旅行助手代码应该有多简单？
+
+Stage 01 的真实 example 会做到：
+
+```python
+model = OpenAIResponsesModel(
+    model="gpt-5.6-luna",
+    reasoning_effort="none",
+)
+
+runtime = AgentRuntime(
+    model=model,
+    tools=travel_tools,
+    max_steps=6,
+)
+
+result = runtime.run(
+    "查询东京课程模拟天气，换算成华氏度并解释体感。"
 )
 ```
 
-学习仓库没必要让每次简单 arithmetic example 都跑最昂贵 model。
+核心 Runtime 代码不需要出现：
 
-GPT-5.6 family 提供不同 cost/capability trade-off：Luna 偏成本敏感，Terra 是中间层，Sol 是旗舰层。
+```text
+OpenAI()
+response.output
+function_call
+json.loads(item.arguments)
+```
 
-真正要学习的是：换 model 不应该要求修改：
+因为这些都应该留在 Adapter。
+
+### 一个合理的运行轨迹
+
+由于真实模型有随机性，具体 wording 和 Tool trajectory 不保证逐字一致，但一个符合预期的结果应该类似：
+
+```text
+ACTION      get_mock_weather({'city': 'Tokyo'})
+OBSERVATION {"temperature_c":18.0,"condition":"cloudy"}
+ACTION      celsius_to_fahrenheit({'temperature_c':18.0})
+OBSERVATION 64.4
+FINAL       东京课程模拟天气为 18°C，约 64.4°F……
+```
+
+如果模型没有按完全相同顺序调用 Tool，不要第一反应就认为 Runtime 错了。
+
+先区分：
+
+```text
+Runtime deterministic policy
+vs
+Model stochastic decision
+```
+
+---
+
+## 12. 那 Qwen 呢？为什么 Stage 01 不需要改 Runtime？
+
+Stage 00 已经用真实代码演示过 Qwen 可以通过 Model Studio 的 OpenAI-compatible API 使用 OpenAI SDK。
+
+Stage 01 现在有了更强的边界：
+
+```python
+class Model(Protocol):
+    def generate(...) -> ModelResponse:
+        ...
+```
+
+所以无论你选择：
+
+```text
+OpenAIResponsesModel
+QwenResponsesModel
+OpenAICompatibleResponsesModel(base_url=...)
+LocalModelAdapter
+```
+
+只要最终返回 Tiny-Agent 的：
+
+```python
+ModelResponse
+```
+
+下面这些都不应该改变：
 
 ```text
 AgentRuntime
-Tool
 ToolRegistry
+Tool handlers
+max_steps logic
+trajectory semantics
 ```
+
+如果某个 provider 提供特殊能力，可以在 Adapter/configuration 层扩展；不要为了一个 provider 特性，把核心 Runtime 改成到处 `if provider == ...`。
 
 ---
 
-## 13. Error Boundary
+## 13. 为什么要给 Adapter 注入 Fake Client？
 
-### A. Provider Request Failure
-
-例如：
+真实 OpenAI client 会带来：
 
 ```text
-invalid API key
-rate limit
-network failure
-model unavailable
+网络
+API Key
+费用
+模型随机性
+provider outage
 ```
 
-provider SDK 抛 exception。
-
-Stage 01 故意不隐藏，Stage 07 再讨论 retry policy。
-
-### B. Model 返回 Malformed JSON Arguments
-
-例如：
+但很多 Adapter 行为其实完全可以确定性测试：
 
 ```text
-"arguments": "not valid json"
+Tool schema 是否翻译正确？
+JSON arguments 是否 decode？
+call_id 是否保留？
+多个 function_call 是否全部提取？
+空 response 是否报错？
+不支持的 role 是否拒绝？
 ```
 
-adapter 无法构造合法 `ToolCall`，因此这是 protocol / adapter error。
-
-### C. JSON 能解析，但 Shape 错误
-
-Function argument 应是 object：
-
-```json
-{"a": 1, "b": 2}
-```
-
-而不是：
-
-```json
-[1, 2]
-```
-
-adapter 也必须检查。
-
-### D. Tool Handler Failure
-
-这不属于 provider adapter：
-
-```text
-AgentRuntime -> ToolRegistry -> Tool handler
-```
-
-当前 runtime 可以把这类 failure 转成 observation，让 model 尝试 recover。
-
-所以：
-
-```text
-provider / protocol error
-    -> adapter layer
-
-execution error
-    -> Tool / runtime layer
-```
-
----
-
-## 14. 为什么 Test 要注入 Fake Client
-
-`OpenAIResponsesModel` 接受：
-
-```python
-client=...
-```
-
-这是 dependency injection。
-
-production：
-
-```python
-OpenAIResponsesModel()
-```
-
-使用真实 SDK client。
-
-unit test：
+所以 `OpenAIResponsesModel` 支持：
 
 ```python
 OpenAIResponsesModel(
@@ -701,150 +757,103 @@ OpenAIResponsesModel(
 )
 ```
 
-可以 deterministic 验证：
+然后运行：
 
-- request translation；
-- strict Tool configuration；
-- JSON decoding；
-- `call_id` preservation；
-- multiple function calls；
-- final answer normalization；
+```bash
+pytest -q \
+  tests/test_openai_adapter.py \
+  tests/test_openai_adapter_edges.py
+```
 
-而不依赖 internet、API key、token cost 和 sampling randomness。
+这类 test 不在评估“GPT-5.6 会不会正确规划”。
+
+它只在验证：
+
+> **我们写的协议翻译器是不是确定地遵守契约。**
 
 ---
 
-## 15. End-to-End Example
+## 14. 为什么 Stage 01 暂时不用 provider-native conversation state？
 
-`code/openai_multi_tool_agent.py`
+OpenAI Responses API 可以使用 `previous_response_id` 等机制保持 provider-managed continuity。
 
-用户：
+Stage 00 已经介绍过这个概念。
 
-```text
-Calculate (23 * 17) + 41 and explain the result.
-```
-
-可能 trajectory：
+但 Stage 01 的目标是让你看清：
 
 ```text
-USER
-  Calculate (23 * 17) + 41
-
-MODEL ACTION
-  multiply(a=23, b=17)
-
-OBSERVATION
-  391
-
-MODEL ACTION
-  add(a=391, b=41)
-
-OBSERVATION
-  432
-
-FINAL
-  23 * 17 = 391, and 391 + 41 = 432.
+Runtime state
+Adapter translation
+ToolCall correlation
 ```
 
-exact wording 与 trajectory 是 model decision；runtime 不应该硬编码。
+如果现在同时加入：
+
+```text
+previous_response_id
+provider-managed sessions
+persisted reasoning items
+checkpoint/resume
+```
+
+你会很难判断“这次模型为什么还记得前面”到底是谁的责任。
+
+所以当前 Adapter 故意保持简单、stateless transcript translation，并默认使用低复杂度 reasoning 配置。
+
+这不是说 provider-native state 不重要。
+
+而是：
+
+> **一个知识点应该在它能被清楚比较的时候再引入。**
+
+Stage 03 / 06 会专门比较 transcript、checkpoint、thread state、provider conversation state 和 long-term memory。
 
 ---
 
-## 16. 哪些是 Deterministic，哪些是 Agentic？
+## 15. 本章最后，请把 Adapter 理解成“边缘翻译器”
 
-### Deterministic Application Logic
+完整依赖图：
 
 ```text
-ToolRegistry lookup
-JSON decoding
-Python multiplication / addition
-max_steps stopping
-message bookkeeping
+                 AgentRuntime
+                      │
+                Model Protocol
+                      │
+          ┌───────────┴───────────┐
+          ▼                       ▼
+ OpenAIResponsesModel       Other Adapter
+          │                       │
+          ▼                       ▼
+ OpenAI Responses API       Qwen / local / ...
 ```
 
-### Model-Driven Decision
+Runtime 世界里说：
 
 ```text
-是否需要 Tool
-选择哪个 Tool
-arguments 是什么
-是否还需要下一个 Tool
-什么时候 final
+ToolCall
+ModelResponse
+Observation
 ```
 
-整个 Tiny-Agent 都会反复使用这条原则：
-
-> **正确行为已经知道时用 ordinary software control flow；真正需要 semantic judgment 时才使用 model。**
-
----
-
-## 17. 面试级问题
-
-1. 为什么 `AgentRuntime` 不应该直接 import OpenAI SDK？
-2. provider adapter 到底 normalize 什么？
-3. 为什么 function-call arguments 通常在 adapter 中 JSON decode？
-4. `call_id` 解决什么问题？为什么必须穿过 Tool execution？
-5. Tool schema 与 Python handler 有什么区别？
-6. 为什么 `generate()` 只表示一个 model turn，而不是整个 Agent run？
-7. serially dependent ToolCall 与 multiple independent ToolCall 有什么区别？
-8. multiple function calling 是否自动意味着 Python handler 并发执行？
-9. fake provider client 为什么适合 unit test？
-10. 哪些 error 属于 adapter，哪些属于 Tool/runtime？
-11. 为什么 introductory adapter 刻意避免复杂 persisted reasoning state？
-12. 如何增加另一个 provider 而不重写 `AgentRuntime`？
-
----
-
-## 18. 下一步阅读
-
-依次读：
+Provider 世界里说：
 
 ```text
-src/tiny_agent/models/openai.py
-```
-
-然后：
-
-```text
-tests/test_openai_adapter.py
-```
-
-最后运行：
-
-```text
-stages/01-react-runtime/code/openai_multi_tool_agent.py
-```
-
-你应该能完整解释：
-
-```text
-Tiny-Agent Tool schema
-       |
-       v
-OpenAI function definition
-       |
-       v
 function_call
-       |
-       v
-Tiny-Agent ToolCall
-       |
-       v
-ToolRegistry execution
-       |
-       v
-Tiny-Agent Tool observation
-       |
-       v
 function_call_output
-       |
-       v
-next model decision
+response.output
+call_id
 ```
 
-## References
+Adapter 的工作就是让这两个世界彼此理解，而不让任何一边吞掉另一边的职责。
 
-- OpenAI Function Calling guide: https://developers.openai.com/api/docs/guides/function-calling
-- OpenAI model guidance: https://developers.openai.com/api/docs/guides/latest-model
-- OpenAI model catalog: https://developers.openai.com/api/docs/models
-- OpenAI Python SDK: https://github.com/openai/openai-python
+如果你已经能看着 `src/tiny_agent/models/openai.py` 解释每一次 translation，下一章我们就可以反过来问：
+
+> **这套 Runtime 虽然已经“架构正确”，为什么仍然远远不能叫 production-ready？**
+
+---
+
+## 官方参考
+
+- OpenAI Function Calling：<https://developers.openai.com/api/docs/guides/function-calling>
+- OpenAI Responses API：<https://developers.openai.com/api/reference/resources/responses>
+- OpenAI Python SDK：<https://github.com/openai/openai-python>

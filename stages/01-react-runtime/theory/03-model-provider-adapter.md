@@ -1,33 +1,8 @@
-# Model Provider Adapters: Connecting a Runtime to a Real LLM
+# 03 — Provider Adapters: Keep the Agent Runtime Independent of the Model Vendor
 
-Stage 01 already has an Agent loop. Until now, however, a scripted fake model has been making the decisions. This chapter connects the same runtime to a real model provider without moving provider-specific logic into the runtime.
+> Language: English | [简体中文](03-model-provider-adapter.zh-CN.md)
 
-The central engineering idea is simple:
-
-> **Agent orchestration and model-provider protocol are different responsibilities.**
-
-A clean Agent runtime should understand concepts such as `ToolCall`, `Observation`, stopping conditions, and execution state. It should not need to understand every vendor's request objects, response objects, authentication rules, or function-call wire format.
-
----
-
-## 1. Where the adapter sits
-
-Tiny-Agent uses the following dependency direction:
-
-```text
-                         provider-neutral boundary
-                                  |
-                                  v
-User -> AgentRuntime -> Model protocol -> OpenAIResponsesModel -> OpenAI API
-          |                            |
-          |                            +-- request translation
-          |                            +-- response parsing
-          |                            +-- provider errors
-          |
-          +-> ToolRegistry -> Python handlers
-```
-
-`AgentRuntime` only knows this contract:
+The previous chapter gave us a deliberately small Runtime contract:
 
 ```python
 class Model(Protocol):
@@ -39,93 +14,118 @@ class Model(Protocol):
         ...
 ```
 
-It does not import the OpenAI Python package.
+That ordinary-looking interface encodes an important architecture rule:
 
-This gives us an important architectural property:
+> **The Agent Runtime understands Tiny-Agent semantics, not OpenAI-, Qwen-, or provider-specific Response objects.**
 
-```text
-AgentRuntime
-    |
-    +--> OpenAIResponsesModel
-    +--> FutureAnthropicModel
-    +--> FutureQwenModel
-    +--> FakeModel
-```
-
-Changing the provider should not require rewriting the loop.
+Stage 00 introduced the reason for separating provider clients from the Runtime. This chapter makes that separation concrete by connecting OpenAI Responses API to the Runtime and following the translation in both directions.
 
 ---
 
-## 2. Why this is more than wrapping an API call
+## 1. The dependency direction
 
-A provider adapter performs **protocol translation** in both directions.
+```text
+User
+  ↓
+AgentRuntime
+  ↓
+Model Protocol
+  ↓
+OpenAIResponsesModel
+  ↓
+OpenAI Responses API
+```
 
-### Tiny-Agent to provider
+Meanwhile:
+
+```text
+AgentRuntime
+  ↓
+ToolRegistry
+  ↓
+Python Tool
+```
+
+The Adapter sits exactly at the provider boundary.
+
+It should translate requests and responses. It should not execute Tools, own `max_steps`, perform approval, or secretly run multiple model turns.
+
+---
+
+## 2. An Adapter is more than a thin API wrapper
+
+A wrapper that merely returns the provider Response still forces the Runtime to understand provider types.
+
+A real Adapter performs bidirectional protocol translation.
+
+### Tiny-Agent -> provider
 
 It translates:
 
 ```text
-Tiny-Agent message history
-Tiny-Agent tool schema
+messages
+Tool schemas
 ```
 
-into:
+into provider input items, function definitions, and provider configuration.
 
-```text
-provider input items
-provider function definitions
-provider configuration
-```
+### Provider -> Tiny-Agent
 
-### Provider to Tiny-Agent
+It translates provider output items into either:
 
-It translates:
-
-```text
-provider response items
-```
-
-into:
-
-```text
-ModelResponse(
-    tool_calls=[...]
-)
+```python
+ModelResponse(tool_calls=[...])
 ```
 
 or:
 
-```text
-ModelResponse(
-    final_answer="..."
-)
+```python
+ModelResponse(final_answer="...")
 ```
 
-The normalized result means every other component can ignore provider-specific types.
+The Adapter is therefore both a protocol translator and a normalization boundary.
 
 ---
 
-## 3. The Responses API tool-calling lifecycle
+## 3. `generate()` must represent one model turn
 
-At the time this chapter was written, OpenAI's current function-calling flow with the Responses API is conceptually:
+A bad design hides the whole Agent loop inside the Adapter:
 
 ```text
-1. Send input + available tool definitions
-                 |
-                 v
-2. Model emits function_call item(s)
-                 |
-                 v
-3. Application executes functions
-                 |
-                 v
-4. Application sends function_call_output item(s)
-                 |
-                 v
-5. Model decides again
+AgentRuntime.run()
+      ↓
+Adapter.generate()
+      ↓
+model -> Tool -> model -> Tool -> final answer
 ```
 
-The model's function call contains three fields that matter to our runtime:
+Then permissions, approval, retries, tracing, budgets, and checkpoints have nowhere clean to wrap the loop.
+
+Tiny-Agent instead defines:
+
+```text
+Runtime
+  ↓
+model.generate()      # one model decision
+  ↓
+ModelResponse
+  ↓
+Runtime executes Tool(s)
+  ↓
+Observation
+  ↓
+Runtime
+  ↓
+model.generate()      # next decision
+```
+
+`OpenAIResponsesModel.generate()` performs exactly one provider request.
+
+---
+
+## 4. Normalizing an OpenAI `function_call`
+
+A function-call output item contains fields such as:
 
 ```text
 call_id
@@ -133,754 +133,418 @@ name
 arguments
 ```
 
-Example provider output:
+Conceptually:
 
 ```json
 {
   "type": "function_call",
-  "call_id": "call_123",
-  "name": "multiply",
-  "arguments": "{\"a\":23,\"b\":17}"
+  "call_id": "call_weather",
+  "name": "get_mock_weather",
+  "arguments": "{\"city\": \"Tokyo\"}"
 }
 ```
 
-Notice that `arguments` is a **JSON-encoded string**, not already a Python dictionary.
-
-Our adapter therefore performs:
+The provider `arguments` value is JSON text. Tiny-Agent wants a Python dictionary:
 
 ```python
 arguments = json.loads(item.arguments)
-```
 
-and normalizes it to:
-
-```python
-ToolCall(
-    id="call_123",
-    name="multiply",
-    arguments={"a": 23, "b": 17},
+call = ToolCall(
+    id=item.call_id,
+    name=item.name,
+    arguments=arguments,
 )
 ```
 
+Once normalization is complete, the Runtime no longer needs to know about `response.output`, `item.type`, or provider JSON-string details.
+
 ---
 
-## 4. Why `call_id` matters
+## 5. Why `call_id` must survive execution
 
-Suppose the model asks for two tools in one turn:
-
-```text
-call_A -> get_weather(Tokyo)
-call_B -> get_weather(Paris)
-```
-
-Later, the runtime may have two results:
+Suppose one model turn requests:
 
 ```text
-Tokyo -> 31 C
-Paris -> 24 C
+call_A -> get_mock_weather(Tokyo)
+call_B -> get_mock_weather(Paris)
 ```
 
-The provider must know which result belongs to which model request.
+The returned observations must remain correlated with the original requests.
 
-That is the purpose of `call_id`.
-
-The tool result is sent back as something conceptually equivalent to:
+Provider output therefore comes back using the same correlation identifier:
 
 ```json
 {
   "type": "function_call_output",
   "call_id": "call_A",
-  "output": "31 C"
+  "output": "18"
 }
 ```
 
-The ID is therefore not decorative metadata. It is a **correlation identifier** across the request/execute/observation boundary.
+Tiny-Agent preserves this identifier in `ToolCall.id` and later in `tool_call_id` on the observation transcript item.
 
-Tiny-Agent stores it in:
-
-```python
-ToolCall.id
-```
-
-and later copies it into:
-
-```python
-{
-    "role": "tool",
-    "tool_call_id": call.id,
-    ...
-}
-```
-
-The provider adapter finally converts that transcript item back into the provider's expected `function_call_output` representation.
-
-A useful mental model is:
+The full path is:
 
 ```text
-Model request
-   |
-   | call_id = X
-   v
-Runtime execution
-   |
-   | call_id = X
-   v
-Observation returned to model
+provider function_call(call_id=X)
+        ↓
+Tiny-Agent ToolCall.id=X
+        ↓
+Runtime Tool execution
+        ↓
+Tiny-Agent observation(tool_call_id=X)
+        ↓
+Adapter
+        ↓
+provider function_call_output(call_id=X)
 ```
+
+Without the identifier, multiple calls become ambiguous.
 
 ---
 
-## 5. Tool schemas are part of the model interface
+## 6. Translating Tool schemas
 
-Consider this Python function:
-
-```python
-def multiply(a: float, b: float) -> float:
-    return a * b
-```
-
-The LLM cannot inspect or invoke that callable directly.
-
-It receives a schema such as:
+Tiny-Agent keeps a provider-neutral schema:
 
 ```python
 {
-    "name": "multiply",
-    "description": "Multiply two numbers.",
+    "name": "get_mock_weather",
+    "description": "Return course mock weather for a city.",
     "parameters": {
         "type": "object",
         "properties": {
-            "a": {"type": "number"},
-            "b": {"type": "number"},
+            "city": {"type": "string"},
         },
-        "required": ["a", "b"],
+        "required": ["city"],
         "additionalProperties": False,
     },
 }
 ```
 
-The OpenAI adapter converts that provider-neutral representation into:
+The OpenAI Adapter turns it into a function Tool definition:
 
 ```python
 {
     "type": "function",
-    "name": "multiply",
-    "description": "Multiply two numbers.",
+    "name": "get_mock_weather",
+    "description": "Return course mock weather for a city.",
     "parameters": {...},
     "strict": True,
 }
 ```
 
-This is one reason Tool design is an Agent engineering problem rather than only a Python programming problem.
-
-The model chooses tools based partly on:
-
-- tool name;
-- description;
-- parameter names;
-- parameter descriptions;
-- schema constraints;
-- surrounding instructions.
-
-A technically correct handler with a poor schema can still produce a poor Agent.
+The Runtime should not permanently adopt one provider's wire representation as its internal type system.
 
 ---
 
-## 6. Strict function schemas
+## 7. Translating the transcript
 
-OpenAI recommends strict schema adherence for function calls.
-
-For strict object schemas, two especially important constraints are:
-
-```text
-additionalProperties = false
-```
-
-and every property must appear in:
-
-```text
-required
-```
-
-Optional values can be represented using nullable types when necessary.
-
-Example:
-
-```python
-{
-    "type": "object",
-    "properties": {
-        "location": {"type": "string"},
-        "units": {
-            "type": ["string", "null"],
-            "enum": ["celsius", "fahrenheit", None],
-        },
-    },
-    "required": ["location", "units"],
-    "additionalProperties": False,
-}
-```
-
-Tiny-Agent Stage 01 enables strict tools by default in `OpenAIResponsesModel`.
-
-Later we can move schema validation into Tiny-Agent itself so bad schemas fail locally before an API request is sent.
-
----
-
-## 7. The adapter performs one model turn, not an Agent run
-
-This distinction is fundamental.
-
-Wrong design:
-
-```text
-AgentRuntime.run()
-    |
-    v
-OpenAI adapter
-    |
-    +-> model
-    +-> execute tools
-    +-> model again
-    +-> execute tools
-    +-> final answer
-```
-
-If the adapter owns that entire loop, then `AgentRuntime` has almost no purpose.
-
-Tiny-Agent instead uses:
-
-```text
-AgentRuntime.run()
-    |
-    +-> model.generate()       # exactly one model decision
-    |
-    +-> execute tool(s)
-    |
-    +-> append observation(s)
-    |
-    +-> model.generate()       # next decision
-    |
-    ...
-```
-
-Therefore `OpenAIResponsesModel.generate()` performs exactly one provider request.
-
-This separation becomes very important later when we add:
-
-- retries;
-- permissions;
-- tracing;
-- human approval;
-- budgets;
-- checkpointing;
-- evaluation.
-
-Those concerns belong around the Agent loop, not hidden inside a provider SDK wrapper.
-
----
-
-## 8. Mapping Tiny-Agent messages to Responses input items
-
-Our runtime currently stores a simple provider-neutral transcript.
-
-### User message
-
-Tiny-Agent:
-
-```python
-{
-    "role": "user",
-    "content": "Calculate 23 * 17"
-}
-```
-
-Responses input:
-
-```python
-{
-    "role": "user",
-    "content": "Calculate 23 * 17"
-}
-```
-
-This case maps directly.
-
-### Assistant function call
-
-Tiny-Agent:
+A Tiny-Agent assistant ToolCall:
 
 ```python
 {
     "role": "assistant",
     "tool_calls": [
         {
-            "id": "call_123",
-            "name": "multiply",
-            "arguments": {"a": 23, "b": 17},
+            "id": "call_weather",
+            "name": "get_mock_weather",
+            "arguments": {"city": "Tokyo"},
         }
     ],
 }
 ```
 
-Responses input representation:
+becomes a Responses input item:
 
 ```python
 {
     "type": "function_call",
-    "call_id": "call_123",
-    "name": "multiply",
-    "arguments": '{"a": 23, "b": 17}',
+    "call_id": "call_weather",
+    "name": "get_mock_weather",
+    "arguments": '{"city": "Tokyo"}',
 }
 ```
 
-### Tool observation
-
-Tiny-Agent:
+The Tool observation:
 
 ```python
 {
     "role": "tool",
-    "tool_call_id": "call_123",
-    "name": "multiply",
-    "content": "391",
+    "tool_call_id": "call_weather",
+    "content": "18.0",
 }
 ```
 
-Responses input representation:
+becomes:
 
 ```python
 {
     "type": "function_call_output",
-    "call_id": "call_123",
-    "output": "391",
+    "call_id": "call_weather",
+    "output": "18.0",
 }
 ```
 
-This translation is implemented in:
-
-```text
-src/tiny_agent/models/openai.py
-```
+This is why the Runtime must preserve Action and Observation structure rather than flattening everything into anonymous text.
 
 ---
 
-## 9. Serial dependencies between tools
+## 8. What `OpenAIResponsesModel.generate()` actually does
 
-Consider:
-
-```text
-(23 * 17) + 41
-```
-
-The correct execution dependency is:
-
-```text
-multiply(23, 17)
-       |
-       v
-      391
-       |
-       v
-add(391, 41)
-       |
-       v
-      432
-```
-
-The second call cannot be constructed correctly until the first observation exists.
-
-So the natural trajectory is:
-
-```text
-Model turn 1
-  -> multiply(23, 17)
-
-Runtime
-  -> 391
-
-Model turn 2
-  -> add(391, 41)
-
-Runtime
-  -> 432
-
-Model turn 3
-  -> final answer
-```
-
-This is a genuine iterative Agent pattern.
-
-The environment has contributed new information after each action.
-
----
-
-## 10. Parallel tool calls are different
-
-Now consider:
-
-```text
-What is the weather in Tokyo and Paris?
-```
-
-These two operations are independent:
-
-```text
-              +-> weather(Tokyo)
-User question |
-              +-> weather(Paris)
-```
-
-A capable model may emit both tool calls in the same turn.
-
-Tiny-Agent already supports this response shape:
+The core of `src/tiny_agent/models/openai.py` is conceptually:
 
 ```python
-ModelResponse(
-    tool_calls=[call_a, call_b]
+response = self.client.responses.create(
+    model=self.model,
+    input=self._to_openai_input(messages),
+    tools=[self._to_openai_tool(tool) for tool in tools],
+    reasoning={"effort": self.reasoning_effort},
+    parallel_tool_calls=self.parallel_tool_calls,
+)
+
+tool_calls = self._extract_tool_calls(response)
+
+if tool_calls:
+    return ModelResponse(tool_calls=tool_calls)
+
+if response.output_text:
+    return ModelResponse(final_answer=response.output_text)
+
+raise RuntimeError("invalid provider response")
+```
+
+Three steps:
+
+```text
+Tiny-Agent -> provider request
+provider inference
+provider response -> Tiny-Agent ModelResponse
+```
+
+No Tool execution. No Agent loop. No `max_steps`.
+
+That absence is evidence that the responsibility boundary is working.
+
+---
+
+## 9. Protocol errors belong at the Adapter boundary
+
+Invalid JSON arguments:
+
+```text
+{city: Tokyo}
+```
+
+should fail before a Tool handler is invoked.
+
+Valid JSON with the wrong shape:
+
+```json
+["Tokyo"]
+```
+
+should also be rejected because function-call arguments must be an object.
+
+A useful responsibility rule is:
+
+```text
+provider wire-format problem -> Adapter
+Tool-argument policy/schema problem -> Runtime/Tool validation
+handler execution failure -> Tool execution layer
+```
+
+Recognize failures as close as possible to the layer that understands them.
+
+---
+
+## 10. Serial dependencies vs multiple ToolCalls in one turn
+
+Travel conversion is serial:
+
+```text
+get_mock_weather(Tokyo)
+        ↓
+      18°C
+        ↓
+celsius_to_fahrenheit(18)
+```
+
+The second call cannot be formed until the first observation exists.
+
+By contrast, Tokyo and Paris weather can be independent:
+
+```text
+call_A -> get_weather(Tokyo)
+call_B -> get_weather(Paris)
+```
+
+A model may propose both in one turn.
+
+But Tiny-Agent Stage 01 still executes handlers sequentially:
+
+```python
+for call in response.tool_calls:
+    execute(call)
+```
+
+So:
+
+```text
+multiple ToolCalls in one model decision
+!=
+concurrent Python execution
+```
+
+Physical concurrency is a separate Runtime concern.
+
+---
+
+## 11. Running the real travel assistant
+
+The live Stage 01 example becomes intentionally small:
+
+```python
+model = OpenAIResponsesModel(
+    model="gpt-5.6-luna",
+    reasoning_effort="none",
+)
+
+runtime = AgentRuntime(
+    model=model,
+    tools=travel_tools,
+    max_steps=6,
+)
+
+result = runtime.run(
+    "Use the course mock Tokyo weather, convert it to Fahrenheit, "
+    "and explain the temperature."
 )
 ```
 
-The current runtime executes them sequentially in Python, but they belong to the **same model turn**.
-
-Later, production execution can run independent calls concurrently with async I/O.
-
-Do not confuse these two concepts:
+A reasonable trajectory is:
 
 ```text
-multiple tool calls in one model decision
+ACTION      get_mock_weather({'city': 'Tokyo'})
+OBSERVATION {"temperature_c":18.0,"condition":"cloudy"}
+ACTION      celsius_to_fahrenheit({'temperature_c':18.0})
+OBSERVATION 64.4
+FINAL       The course's mock Tokyo weather is 18°C, about 64.4°F ...
 ```
 
-versus:
-
-```text
-parallel physical execution of the Python handlers
-```
-
-They are related but not identical.
+Exact wording and trajectory are model decisions. Separate stochastic model behavior from deterministic Runtime policy when debugging.
 
 ---
 
-## 11. Why Stage 01 uses reasoning effort `none`
+## 12. What about Qwen?
 
-Modern Responses workflows can preserve provider-native reasoning state across turns.
+Stage 00 already demonstrated Qwen through Alibaba Cloud Model Studio's OpenAI-compatible API.
 
-For GPT-5.6, OpenAI recommends preserving model output items when manually maintaining history, or using provider mechanisms such as response chaining where appropriate.
-
-That is an important topic, but it introduces several new concepts at once:
-
-- provider-native response IDs;
-- persisted reasoning items;
-- manual history replay;
-- conversation state;
-- concurrency and session ownership.
-
-Stage 01 has a narrower goal:
-
-> Learn the Agent runtime/provider boundary.
-
-Therefore the initial OpenAI adapter defaults to:
+Stage 01 now has the stronger boundary:
 
 ```python
-reasoning_effort="none"
+class Model(Protocol):
+    def generate(...) -> ModelResponse:
+        ...
 ```
 
-and reconstructs the visible transcript each turn.
-
-This keeps the adapter stateless and lets us verify an important property:
+Whether you implement `OpenAIResponsesModel`, `QwenResponsesModel`, a configurable OpenAI-compatible Adapter, or a local-model Adapter, the following should not change:
 
 ```text
-adding a real provider does not require changing AgentRuntime
-```
-
-Provider-native state management belongs to the later Stateful Orchestration stage, where we can compare transcript replay, `previous_response_id`, sessions, and persistence deliberately.
-
----
-
-## 12. Why the example defaults to GPT-5.6 Luna
-
-The model is deliberately configurable:
-
-```python
-OpenAIResponsesModel(model="gpt-5.6-luna")
-```
-
-A learning repository should not force every simple arithmetic experiment through the most expensive available model.
-
-The current GPT-5.6 family provides different cost/capability trade-offs. Luna is intended for cost-sensitive workloads, Terra provides a middle ground, and Sol is the flagship tier.
-
-The important architectural lesson is that changing this:
-
-```python
-model="gpt-5.6-luna"
-```
-
-to another supported model should not change:
-
-```python
 AgentRuntime
-Tool
 ToolRegistry
+Tool handlers
+max_steps semantics
+trajectory semantics
 ```
+
+Provider-specific capabilities belong in Adapter/configuration layers, not scattered `if provider == ...` branches inside the core loop.
 
 ---
 
-## 13. Error boundaries
+## 13. Unit-test the Adapter with a fake client
 
-There are several different failure classes in this small adapter already.
-
-### A. Provider request fails
-
-Examples:
+Many Adapter behaviors are deterministic:
 
 ```text
-invalid API key
-rate limit
-network failure
-model unavailable
+Tool-schema translation
+JSON argument decoding
+call_id preservation
+multiple function-call extraction
+unsupported-role rejection
+empty-response failure
 ```
 
-The provider SDK raises an exception.
+So `OpenAIResponsesModel` accepts an injected client for tests.
 
-Stage 01 intentionally does not hide those errors.
+Run:
 
-Later the reliability stage will decide which errors should be retried and with what policy.
-
-### B. Model emits malformed JSON arguments
-
-The provider returns:
-
-```text
-"arguments": "not valid json"
+```bash
+pytest -q \
+  tests/test_openai_adapter.py \
+  tests/test_openai_adapter_edges.py
 ```
 
-The adapter cannot construct a valid `ToolCall`, so it raises a protocol error.
-
-### C. JSON decodes to the wrong shape
-
-Function arguments should be an object:
-
-```json
-{"a": 1, "b": 2}
-```
-
-not:
-
-```json
-[1, 2]
-```
-
-The adapter checks this boundary as well.
-
-### D. Tool handler fails
-
-This is not a provider-adapter problem.
-
-The exception happens later:
-
-```text
-AgentRuntime -> ToolRegistry -> Tool handler
-```
-
-Our runtime currently converts that failure into a tool observation so the model may recover.
-
-This distinction is useful:
-
-```text
-provider/protocol error   -> model adapter
-execution error           -> tool/runtime layer
-```
+These tests do not ask whether GPT-5.6 plans correctly. They verify that our protocol translator obeys its contract.
 
 ---
 
-## 14. Why we inject a fake client in tests
+## 14. Why Stage 01 stays mostly stateless at the provider layer
 
-`OpenAIResponsesModel` accepts:
+Responses API supports provider-managed continuation mechanisms such as `previous_response_id`.
 
-```python
-client=...
-```
+Stage 00 introduced that idea. Stage 01 intentionally focuses on Runtime state, transcript translation, and Tool-call correlation.
 
-This is dependency injection.
+Mixing provider sessions, persisted reasoning items, checkpoint/resume, and Runtime state here would make ownership harder to see.
 
-Production:
+A useful teaching principle is:
 
-```python
-OpenAIResponsesModel()
-```
+> **Introduce an abstraction when it can be compared cleanly, not merely because the API offers it.**
 
-creates the real SDK client.
-
-Unit test:
-
-```python
-OpenAIResponsesModel(client=FakeOpenAIClient(...))
-```
-
-uses a deterministic fake.
-
-This lets us test:
-
-- request translation;
-- strict tool configuration;
-- JSON argument decoding;
-- `call_id` preservation;
-- multiple function calls;
-- final answer normalization;
-
-without:
-
-- internet access;
-- an API key;
-- token cost;
-- nondeterministic model behavior.
-
-This separation between unit tests and live integration tests is essential in production Agent systems.
+Later stages compare transcript history, provider conversation state, checkpoints, thread state, and long-term memory explicitly.
 
 ---
 
-## 15. End-to-end example
-
-The repository contains:
+## 15. Think of the Adapter as an edge translator
 
 ```text
-code/openai_multi_tool_agent.py
+                 AgentRuntime
+                      │
+                Model Protocol
+                      │
+          ┌───────────┴───────────┐
+          ▼                       ▼
+ OpenAIResponsesModel       Other Adapter
+          │                       │
+          ▼                       ▼
+ OpenAI Responses API       Qwen / local / ...
 ```
 
-The user asks:
+Runtime vocabulary:
 
 ```text
-Calculate (23 * 17) + 41 and explain the result.
+ToolCall
+ModelResponse
+Observation
 ```
 
-A possible trajectory is:
+Provider vocabulary:
 
 ```text
-USER
-  Calculate (23 * 17) + 41
-
-MODEL ACTION
-  multiply(a=23, b=17)
-
-OBSERVATION
-  391
-
-MODEL ACTION
-  add(a=391, b=41)
-
-OBSERVATION
-  432
-
-FINAL
-  23 * 17 = 391, and 391 + 41 = 432.
-```
-
-The exact wording and tool trajectory are model decisions; the runtime should not hard-code that sequence.
-
----
-
-## 16. What is deterministic and what is agentic?
-
-This example contains both.
-
-### Deterministic application logic
-
-```text
-ToolRegistry lookup
-JSON decoding
-Python multiplication
-Python addition
-stopping at max_steps
-message bookkeeping
-```
-
-### Model-driven decisions
-
-```text
-whether a tool is needed
-which tool to choose
-what arguments to generate
-whether another tool is needed
-when to produce the final response
-```
-
-This distinction becomes increasingly important throughout Tiny-Agent:
-
-> **Use ordinary software control flow where the correct behavior is known. Use the model where semantic judgment is genuinely useful.**
-
----
-
-## 17. Interview-level questions
-
-After this chapter, you should be able to answer all of the following.
-
-1. Why should `AgentRuntime` not import the OpenAI SDK directly?
-2. What exactly does a provider adapter normalize?
-3. Why are function-call arguments usually JSON decoded in the adapter?
-4. What is `call_id`, and why must it survive tool execution?
-5. What is the difference between a tool schema and a Python handler?
-6. Why does `generate()` perform one model turn instead of owning the Agent loop?
-7. What is the difference between serially dependent tool calls and multiple independent tool calls?
-8. Does multiple function calling automatically mean Python functions execute concurrently?
-9. Why are fake provider clients useful in unit tests?
-10. Which errors belong to the adapter layer and which belong to the runtime/tool layer?
-11. Why does this introductory adapter deliberately avoid complex persisted reasoning state?
-12. How would you add another provider without rewriting `AgentRuntime`?
-
----
-
-## 18. Files to read next
-
-Read these in order:
-
-```text
-src/tiny_agent/models/openai.py
-```
-
-then:
-
-```text
-tests/test_openai_adapter.py
-```
-
-then run:
-
-```text
-stages/01-react-runtime/code/openai_multi_tool_agent.py
-```
-
-When you can explain the full transformation below, you have understood this lesson:
-
-```text
-Tiny-Agent Tool schema
-       |
-       v
-OpenAI function definition
-       |
-       v
 function_call
-       |
-       v
-Tiny-Agent ToolCall
-       |
-       v
-ToolRegistry execution
-       |
-       v
-Tiny-Agent tool observation
-       |
-       v
 function_call_output
-       |
-       v
-next model decision
+response.output
+call_id
 ```
+
+The Adapter lets the two worlds communicate without letting either side take over the other's responsibilities.
+
+Next we ask the uncomfortable but necessary question: **if this architecture is conceptually sound, why is it still far from production-ready?**
 
 ---
 
 ## References
 
-- OpenAI Function Calling guide: https://developers.openai.com/api/docs/guides/function-calling
-- OpenAI model guidance: https://developers.openai.com/api/docs/guides/latest-model
-- OpenAI model catalog: https://developers.openai.com/api/docs/models
-- OpenAI Python SDK: https://github.com/openai/openai-python
+- OpenAI Function Calling: <https://developers.openai.com/api/docs/guides/function-calling>
+- OpenAI Responses API: <https://developers.openai.com/api/reference/resources/responses>
+- OpenAI Python SDK: <https://github.com/openai/openai-python>

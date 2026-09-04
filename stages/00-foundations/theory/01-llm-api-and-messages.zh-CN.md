@@ -318,7 +318,7 @@ python stages/00-foundations/code/provider_adapter_demo.py --provider qwen
 
 两种运行方式进入的是**同一个** `run_teacher_example()`。变化发生在 Adapter 和配置层，而不是 Runtime 核心逻辑里。
 
-Stage 01 会继续把这个思路扩展到真正的 Agent 模型适配器：把 provider 原生的文本、Function Call、usage 和异常，归一化成 Runtime 自己的内部类型。
+Stage 01 会把这个思路扩展成真正的 Agent 模型适配器：provider 原生文本和 Function Call 会被归一化为 Runtime 自己的 `ModelResponse` / `ToolCall`；provider 请求错误仍在 Adapter 边界显式失败，usage 等更丰富的元数据也不会为了“统一”而硬塞进当前最小协议。
 
 ---
 

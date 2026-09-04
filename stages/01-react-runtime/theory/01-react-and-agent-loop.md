@@ -1,82 +1,110 @@
-# ReAct and the Agent Loop
+# 01 — From a Tool Loop to a ReAct Runtime: When Does Tool Calling Become an Agent?
 
-## 1. From tool calling to Agent behavior
+> Language: English | [简体中文](01-react-and-agent-loop.zh-CN.md)
 
-A single tool call is straightforward:
+Stage 00 ended with a loop like this:
 
-```text
-User -> Model -> Tool Call -> Runtime -> Tool Result -> Model -> Answer
+```python
+while True:
+    response = call_model(...)
+
+    if response_has_tool_call(response):
+        result = execute_tool(...)
+        append_tool_result(result)
+        continue
+
+    return final_text(response)
 ```
 
-But many real tasks require multiple rounds of acting and observing:
+That already looks Agent-like.
+
+But the useful question is not:
+
+> “Does this count as ReAct?”
+
+The useful question is:
+
+> **Once the model stops answering once and starts choosing the next step from real environment feedback, what new responsibilities must the application own?**
+
+That is where Stage 01 begins.
+
+---
+
+## 1. One Tool call is not the same as an Agent loop
+
+A one-shot Tool interaction may look like:
 
 ```text
-Question
-  |
-  v
-Model decision
-  |
-  +-- use tool --> observation --+
-  |                               |
-  +-------------------------------+
-  |
-  +-- final answer --> END
+User -> Model -> ToolCall -> Python -> Tool result -> Model -> Answer
 ```
 
-The important change is not a new model architecture. It is the introduction of a controlled execution loop.
-
-## 2. ReAct in one sentence
-
-ReAct combines **reasoning about what to do next** with **actions that interact with an external environment**, then uses returned observations to continue the task.
-
-A simplified pattern is:
+But the travel assistant may receive:
 
 ```text
-Reason -> Act -> Observe -> Reason -> Act -> Observe -> ...
+Use the course's mock Tokyo weather, convert it to Fahrenheit,
+and explain the temperature to a traveler.
 ```
 
-For implementation purposes, the critical loop is:
+The model cannot construct the second action correctly until the first observation exists.
+
+First:
+
+```text
+get_mock_weather(city="Tokyo")
+```
+
+Then the environment returns:
+
+```json
+{
+  "temperature_c": 18.0,
+  "condition": "cloudy"
+}
+```
+
+Only now can the next action be grounded in a real value:
+
+```text
+celsius_to_fahrenheit(temperature_c=18.0)
+```
+
+So the control structure becomes:
+
+```text
+current state
+   ↓
+model chooses a next action
+   ↓
+Runtime executes
+   ↓
+Observation changes state
+   ↓
+model chooses again
+```
+
+That repeated dependence on new observations is where an explicit Agent Runtime starts to matter.
+
+---
+
+## 2. A practical interpretation of ReAct
+
+ReAct is often presented historically as:
+
+```text
+Thought -> Action -> Observation -> Thought -> ...
+```
+
+Do not turn that notation into a Runtime requirement.
+
+A production-oriented implementation does not need to expose hidden chain-of-thought in order to use the valuable control pattern.
+
+For Runtime engineering, the durable abstraction is:
 
 ```text
 Decide -> Act -> Observe -> Decide again
 ```
 
-## 3. Why environment feedback matters
-
-Consider a research task:
-
-```text
-Find the latest paper about X and summarize its method.
-```
-
-The model may initially decide to search. Search results may reveal:
-
-- ambiguous titles;
-- stale results;
-- multiple papers with similar names;
-- missing metadata.
-
-The next action should depend on the actual search result, not only the original user question.
-
-This is what makes environment interaction qualitatively different from one-shot generation.
-
-## 4. ReAct does not require exposing full chain-of-thought
-
-The historical ReAct presentation is often written as:
-
-```text
-Thought
-Action
-Observation
-Thought
-Action
-Observation
-...
-```
-
-A production runtime does not need to expose a model's hidden reasoning verbatim in order to implement the useful control pattern.
-
-Tiny-Agent focuses on the auditable parts:
+The auditable facts are:
 
 ```text
 Action
@@ -85,165 +113,319 @@ Observation
 Final Answer
 ```
 
-This gives the runtime information it actually needs while keeping internal reasoning separate from externally logged execution state.
+Those are the facts needed to answer debugging questions such as:
 
-## 5. Action vs observation
+```text
+Which Tool did the model request?
+With what arguments?
+Did the Runtime really execute it?
+What did the environment return?
+What happened on the next turn?
+Why did the run stop?
+```
+
+Hidden reasoning is not the Runtime contract.
+
+---
+
+## 3. Keep Action and Observation separate
 
 ### Action
 
-A model-proposed external operation.
-
-Examples:
+A model proposal:
 
 ```text
-search_web(query="ReAct paper")
-query_database(sql="...")
-calculator(a=12, b=7)
+get_mock_weather(city="Tokyo")
 ```
+
+Nothing has happened in the real world yet.
 
 ### Observation
 
-The result returned by the environment after the runtime executes the action.
+What the Runtime obtains after actual execution:
 
-Examples:
-
-```text
-Search results: ...
-Database returned 12 rows
-19
-ToolError: request timed out
+```json
+{
+  "city": "Tokyo",
+  "temperature_c": 18.0,
+  "condition": "cloudy",
+  "source": "course_mock"
+}
 ```
 
-The observation should affect the next model decision.
-
-## 6. Why the runtime owns the loop
-
-The model should not be trusted to control execution without limits.
-
-The runtime is responsible for:
-
-- deciding whether the proposed tool exists;
-- validating arguments;
-- executing or refusing the action;
-- recording observations;
-- counting steps;
-- enforcing budgets;
-- deciding when the process must stop;
-- applying permissions and approval rules later.
-
-This is the foundation of safe Agent engineering.
-
-## 7. Valid high-level outcomes per step
-
-In the first Tiny-Agent runtime, a model step has two meaningful outcomes:
-
-### A. Propose one or more tool calls
+The relationship is:
 
 ```text
-ModelResponse(tool_calls=[...])
+Model proposal
+     ↓
+   Action
+     ↓
+Runtime executes
+     ↓
+Observation
 ```
 
-The runtime executes them, appends observations, and starts another model turn.
+If a ToolCall is treated as though it has already executed, permissions, approval, sandboxing, and side-effect safety become impossible to reason about cleanly.
 
-### B. Produce a final answer
+Tiny-Agent therefore keeps one rule from the start:
+
+> **The model may propose an action; only the Runtime can turn that proposal into a real side effect.**
+
+---
+
+## 4. Why observations matter
+
+Consider a research task:
 
 ```text
-ModelResponse(final_answer="...")
+Find a recent Agent Memory paper and summarize the method.
 ```
 
-The runtime returns and terminates the task.
+The first model decision might be:
 
-If the model returns neither, the model/runtime contract has been violated.
+```text
+search_papers(query="agent memory")
+```
 
-## 8. Stopping conditions are mandatory
+But real results may contain an old survey, a similarly named blog post, or a promising 2026 paper with incomplete metadata.
 
-Any autonomous loop can fail to terminate.
+The next action should depend on what was actually returned.
 
-Example:
+That is a major difference between an Agent loop and a predetermined pipeline:
+
+> **Environment feedback can change the control path.**
+
+If every next step is known before execution starts, a deterministic Workflow is often the better abstraction. Stage 02 will examine that boundary directly.
+
+---
+
+## 5. Why the Runtime must own the loop
+
+A dangerous minimal implementation is:
+
+```python
+while True:
+    response = model.generate(...)
+    for call in response.tool_calls:
+        execute(call.name, call.arguments)
+```
+
+It silently assumes:
+
+```text
+model wants to execute
+=
+application allows execution
+```
+
+A real Runtime must own questions such as:
+
+```text
+Is the Tool registered?
+Are the arguments acceptable?
+Is the caller authorized?
+Is approval required?
+Has a step/cost/time budget been exceeded?
+Should a failure become an observation, a retry, or a fatal error?
+Did the model violate the response contract?
+```
+
+Stage 01 implements only the smallest subset, but ownership must be correct from the beginning.
+
+---
+
+## 6. What can one model turn return?
+
+Tiny-Agent normalizes one model decision into:
+
+```python
+@dataclass(slots=True)
+class ModelResponse:
+    final_answer: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+```
+
+The Runtime therefore understands two primary outcomes.
+
+### Outcome A — ToolCall(s)
+
+```python
+ModelResponse(
+    tool_calls=[
+        ToolCall(
+            id="call_weather",
+            name="get_mock_weather",
+            arguments={"city": "Tokyo"},
+        )
+    ]
+)
+```
+
+The Runtime records the action, executes the Tool, records the Observation, and starts another model turn.
+
+### Outcome B — Final answer
+
+```python
+ModelResponse(
+    final_answer="The course's mock Tokyo weather is 18°C, about 64.4°F."
+)
+```
+
+The run terminates.
+
+### What if neither exists?
+
+```python
+ModelResponse()
+```
+
+That is not a vague “maybe the model needs more time.” It is a model/Runtime contract violation and should fail explicitly.
+
+---
+
+## 7. `max_steps` is a control boundary
+
+A model-driven loop can produce:
 
 ```text
 search -> search -> search -> search -> ...
 ```
 
-Therefore a runtime needs explicit stopping rules.
+So even a teaching Runtime needs a hard bound:
 
-The first rule Tiny-Agent implements is:
+```python
+for step in range(1, self.max_steps + 1):
+    ...
 
-```text
-max_steps
+raise RuntimeError(
+    f"Agent exceeded max_steps={self.max_steps}"
+)
 ```
 
-Later stages will add richer controls:
+`max_steps` is not just a tuning parameter. It prevents the default policy from becoming “let a probabilistic model continue forever.”
 
-- maximum tool calls;
-- retry limits;
-- timeout budgets;
-- token budgets;
-- cost budgets;
-- cancellation;
-- loop detection.
+It does not solve everything: a single Tool can still hang, spend money, perform a dangerous side effect, or emit many calls in one step. Later stages add timeouts, permissions, approvals, cost budgets, and other controls.
 
-## 9. Tool failures are part of the environment
+---
 
-Suppose the model proposes invalid arguments:
+## 8. Tool failures can become observations — carefully
+
+A recoverable failure can sometimes help the model repair its next action.
+
+For example, a bad argument could become a safe observation such as:
 
 ```text
-calculator(a="hello", b=7)
+ToolFailure[invalid_arguments]
 ```
 
-A recoverable tool failure can be represented as:
+The next model turn may correct the call.
+
+The useful principle is:
+
+> **Some failures are environment feedback that can support recovery.**
+
+Do not misread that as “copy every exception string into model context.” Exceptions can contain sensitive internals. The evolving `src/tiny_agent/runtime.py` has already been hardened by later reliability work to redact unexpected failures. Stage 01 teaches the loop semantics; Stage 07 teaches error classification and policy.
+
+---
+
+## 9. Use a fake model to see the real Runtime
+
+`minimal_react_runtime.py` intentionally uses:
+
+```python
+class ScriptedTravelModel:
+    ...
+```
+
+Its trajectory is deterministic:
 
 ```text
-ToolError[TypeError]: ...
+turn 1 -> get_mock_weather("Tokyo")
+turn 2 -> celsius_to_fahrenheit(18.0)
+turn 3 -> final answer
 ```
 
-and returned as the next observation.
+We remove model uncertainty so we can inspect the control layer itself.
 
-The model can then decide to:
+Run:
 
-- repair the arguments;
-- choose another tool;
-- ask the user for clarification;
-- stop and explain the failure.
+```bash
+python stages/01-react-runtime/code/minimal_react_runtime.py
+```
 
-This does not mean all errors should be swallowed. Later stages will distinguish recoverable errors from permission failures, system failures, and fatal runtime errors.
-
-## 10. Agent loop vs workflow
-
-An important distinction:
-
-### Deterministic workflow
-
-The developer defines the path:
+Expected shape:
 
 ```text
-parse -> retrieve -> rerank -> answer
+01. USER        ...
+02. ACTION      get_mock_weather({'city': 'Tokyo'}) [id=call_weather]
+03. OBSERVATION get_mock_weather -> {...}
+04. ACTION      celsius_to_fahrenheit({'temperature_c': 18.0}) [id=call_convert]
+05. OBSERVATION celsius_to_fahrenheit -> 64.4
+06. ASSISTANT   The course's mock Tokyo weather is 18°C, about 64.4°F.
 ```
 
-### Agent loop
+Read that as an **execution trajectory**, not merely as a chat transcript.
 
-The model dynamically chooses the next action based on current state and observations.
+---
+
+## 10. ReAct and Workflow are not a status hierarchy
+
+Do not assume:
 
 ```text
-state -> model decision -> action -> new state -> model decision
+Agent > Workflow
 ```
 
-Production systems often combine both. Tiny-Agent will later use deterministic control flow whenever possible and reserve model decisions for genuinely uncertain steps.
+If the path is known:
 
-## 11. Key takeaways
+```text
+parse -> validate -> retrieve -> rerank -> answer
+```
 
-- ReAct is fundamentally about interleaving decisions, actions, and observations.
-- Environment feedback changes future model decisions.
-- The runtime, not the model, owns execution and stopping.
-- Visible chain-of-thought is not required to implement a ReAct-style system.
-- Explicit stopping conditions are mandatory.
-- Tool errors can become useful observations when recovery is possible.
-- Agentic control should be used only where dynamic decisions are useful.
+write deterministic control flow.
 
-## Review questions
+Use model-directed control when the next step genuinely depends on semantic judgment and environment feedback.
 
-1. What is the difference between one-shot function calling and an Agent loop?
-2. What exactly is an observation?
-3. Why should the runtime own stopping conditions?
-4. Why does a ReAct-style system not require printing hidden reasoning?
-5. When would a deterministic workflow be preferable to an Agent loop?
+A useful question is:
+
+> **Is there real semantic uncertainty here, or are we just avoiding ordinary software design?**
+
+Stage 02 continues from that question.
+
+---
+
+## 11. What to carry into the next chapter
+
+Do not leave this chapter with only “Reason-Act-Observe.” Keep the engineering chain:
+
+```text
+Model
+  proposes the next decision
+        ↓
+Runtime
+  owns loop / execution / stopping
+        ↓
+Tool
+  interacts with the environment
+        ↓
+Observation
+  becomes new information
+        ↓
+Model
+  decides again from updated context
+```
+
+Next we will take the Stage 00 hand-written loop and extract each of those responsibilities into a minimal Runtime architecture.
+
+---
+
+## Check yourself
+
+1. Why does the Tokyo example need another model turn after `get_mock_weather`?
+2. Why are ToolCall and Tool execution different events?
+3. Why should an Observation enter the next model turn instead of only being logged?
+4. Why must the Runtime own stopping conditions?
+5. Why is `ModelResponse()` a contract violation?
+6. Why is FakeModel useful rather than “fake Agent teaching”?
+7. Why does ReAct not require exposing hidden chain-of-thought?
+8. When is a deterministic Workflow preferable to an Agent loop?

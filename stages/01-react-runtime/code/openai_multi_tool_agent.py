@@ -1,103 +1,179 @@
-"""Real Stage 01 example: Tiny-Agent + OpenAI Responses API.
+"""Stage 01 live example: the same Runtime with a real OpenAI model.
 
-Run from the repository root after installing the optional provider dependency:
+The application owns AgentRuntime, ToolRegistry, and Tool execution. Only
+OpenAIResponsesModel knows the provider-specific Responses API protocol.
 
-    pip install -e ".[openai]"
+Run from the repository root:
+
+    python -m pip install -e ".[openai]"
     export OPENAI_API_KEY="..."
     python stages/01-react-runtime/code/openai_multi_tool_agent.py
 
-The runtime is provider-neutral. Only ``OpenAIResponsesModel`` knows OpenAI's
-request/response protocol.
+The weather returned here is deterministic course data, not live weather.
 """
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
 
 from tiny_agent import AgentRuntime, Tool, ToolRegistry
 from tiny_agent.models import OpenAIResponsesModel
 
 
-def multiply(a: float, b: float) -> float:
-    return a * b
+# ---------------------------------------------------------------------------
+# Real Python Tools. The model never executes these functions directly.
+# ---------------------------------------------------------------------------
 
 
-def add(a: float, b: float) -> float:
-    return a + b
+def get_mock_weather(city: str) -> str:
+    """Return deterministic JSON course data, not live weather."""
+    if city.lower() != "tokyo":
+        raise ValueError("This course demo only defines Tokyo mock weather.")
+
+    return json.dumps(
+        {
+            "city": "Tokyo",
+            "temperature_c": 18.0,
+            "condition": "cloudy",
+            "source": "course_mock",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
-NUMBER_PAIR_SCHEMA = {
+def celsius_to_fahrenheit(temperature_c: float) -> float:
+    return round(temperature_c * 9 / 5 + 32, 1)
+
+
+CITY_SCHEMA = {
     "type": "object",
     "properties": {
-        "a": {"type": "number", "description": "The first number."},
-        "b": {"type": "number", "description": "The second number."},
+        "city": {
+            "type": "string",
+            "description": "City name in English. The course demo supports Tokyo.",
+        }
     },
-    "required": ["a", "b"],
+    "required": ["city"],
+    "additionalProperties": False,
+}
+
+TEMPERATURE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "temperature_c": {
+            "type": "number",
+            "description": "Temperature in degrees Celsius to convert.",
+        }
+    },
+    "required": ["temperature_c"],
     "additionalProperties": False,
 }
 
 
-tools = ToolRegistry(
+travel_tools = ToolRegistry(
     [
         Tool(
-            name="multiply",
+            name="get_mock_weather",
             description=(
-                "Multiply two numbers. Use this tool instead of doing the "
-                "multiplication mentally when an exact arithmetic result is needed."
+                "Return the course's deterministic mock weather for one city. "
+                "Use this Tool when the user explicitly asks about course/mock "
+                "weather. It does not provide live weather."
             ),
-            parameters=NUMBER_PAIR_SCHEMA,
-            handler=multiply,
+            parameters=CITY_SCHEMA,
+            handler=get_mock_weather,
         ),
         Tool(
-            name="add",
+            name="celsius_to_fahrenheit",
             description=(
-                "Add two numbers. Use this tool when an exact arithmetic sum is needed."
+                "Convert one Celsius temperature to Fahrenheit. Use this Tool "
+                "when an exact conversion is requested."
             ),
-            parameters=NUMBER_PAIR_SCHEMA,
-            handler=add,
+            parameters=TEMPERATURE_SCHEMA,
+            handler=celsius_to_fahrenheit,
         ),
     ]
 )
 
 
+# Swapping the model/provider should not require changing AgentRuntime or Tools.
 model = OpenAIResponsesModel(
-    # Luna keeps this learning example relatively inexpensive. Swap models without
-    # changing AgentRuntime.
-    model="gpt-5.6-luna",
+    model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
     reasoning_effort="none",
     strict_tools=True,
+    parallel_tool_calls=True,
 )
 
 runtime = AgentRuntime(
     model=model,
-    tools=tools,
+    tools=travel_tools,
     system_prompt=(
-        "You are a precise arithmetic assistant. Use the provided tools for exact "
-        "calculations. If a result from one tool is needed by another tool, use the "
-        "observation from the first call as the next argument. Explain the final "
-        "result concisely."
+        "You are a precise travel assistant for an Agent-engineering course. "
+        "For this exercise, use get_mock_weather to retrieve the course mock "
+        "Tokyo temperature and use celsius_to_fahrenheit for the exact conversion. "
+        "Never describe the mock Tool as live weather. After the required Tool "
+        "calls, explain the result concisely."
     ),
     max_steps=6,
 )
 
 
+def pretty_observation(raw: str) -> str:
+    """Pretty-print JSON observations when possible."""
+    try:
+        value = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return raw
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def print_trajectory(messages: list[dict[str, Any]]) -> None:
+    visible_index = 0
+
+    for message in messages:
+        if message["role"] == "system":
+            continue
+
+        visible_index += 1
+        role = message["role"]
+
+        if role == "assistant" and "tool_calls" in message:
+            for call in message["tool_calls"]:
+                print(
+                    f"{visible_index:02d}. ACTION      "
+                    f"{call['name']}({call['arguments']}) "
+                    f"[id={call['id']}]"
+                )
+            continue
+
+        if role == "tool":
+            print(
+                f"{visible_index:02d}. OBSERVATION "
+                f"{message['name']} -> "
+                f"{pretty_observation(message['content'])}"
+            )
+            continue
+
+        label = "USER" if role == "user" else "ASSISTANT"
+        print(
+            f"{visible_index:02d}. {label:11s} "
+            f"{message.get('content', '')}"
+        )
+
+
 if __name__ == "__main__":
-    result = runtime.run("Calculate (23 * 17) + 41 and explain the result.")
+    result = runtime.run(
+        "Use the course's mock Tokyo weather. Tell me the temperature in "
+        "Celsius and Fahrenheit, then briefly explain what it feels like."
+    )
+
+    print("\nAuditable trajectory")
+    print("--------------------")
+    print_trajectory(result.messages)
 
     print("\nFinal answer")
     print("------------")
     print(result.output)
-
-    print("\nAuditable trajectory")
-    print("--------------------")
-    for index, message in enumerate(result.messages, start=1):
-        role = message["role"]
-        if role == "assistant" and "tool_calls" in message:
-            for call in message["tool_calls"]:
-                print(
-                    f"{index:02d}. ACTION      "
-                    f"{call['name']}({call['arguments']}) [id={call['id']}]"
-                )
-        elif role == "tool":
-            print(
-                f"{index:02d}. OBSERVATION "
-                f"{message['name']} -> {message['content']}"
-            )
-        else:
-            print(f"{index:02d}. {role.upper():11s} {message.get('content', '')}")
+    print(f"\nsteps={result.steps}")

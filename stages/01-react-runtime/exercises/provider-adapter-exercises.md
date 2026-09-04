@@ -1,29 +1,37 @@
-# Provider Adapter Exercises
+# Provider Adapter Exercises: Prove That Switching Models Does Not Rewrite the Runtime
 
-These exercises are designed to make the provider/runtime boundary concrete. Do not solve them by moving provider-specific logic into `AgentRuntime`.
+> Language: English | [简体中文](provider-adapter-exercises.zh-CN.md)
 
-## Exercise 1 — Trace the protocol by hand
+These exercises focus on one invariant:
 
-Given this Tiny-Agent message history:
+> **Provider-specific protocol details should stop at the Adapter boundary instead of leaking into `AgentRuntime`.**
+
+If an exercise seems to require editing `AgentRuntime.run()`, first ask whether you are adding a truly provider-neutral Runtime capability or merely teaching the Runtime one vendor's wire format.
+
+---
+
+## Exercise 1 — Translate one protocol turn by hand
+
+Given the Tiny-Agent transcript:
 
 ```python
 [
-    {"role": "user", "content": "What is 9 * 8?"},
+    {"role": "user", "content": "Get the course mock Tokyo weather"},
     {
         "role": "assistant",
         "tool_calls": [
             {
-                "id": "call_9x8",
-                "name": "multiply",
-                "arguments": {"a": 9, "b": 8},
+                "id": "call_weather",
+                "name": "get_mock_weather",
+                "arguments": {"city": "Tokyo"},
             }
         ],
     },
     {
         "role": "tool",
-        "tool_call_id": "call_9x8",
-        "name": "multiply",
-        "content": "72",
+        "tool_call_id": "call_weather",
+        "name": "get_mock_weather",
+        "content": "18.0",
     },
 ]
 ```
@@ -32,170 +40,139 @@ Write the equivalent Responses API input items by hand.
 
 Then answer:
 
-1. Which field correlates the result with the model request?
-2. Why is the tool name not enough for correlation?
-3. Why are the arguments encoded as JSON for the provider but stored as a Python dictionary inside Tiny-Agent?
+1. Which field correlates the Tool result with the original function call?
+2. Why is Tool name not sufficient correlation?
+3. Why does Tiny-Agent store arguments as a `dict` while the provider wire format may use JSON text?
+4. If a future provider exposes a completely different ToolCall shape, which layer should change?
 
 ---
 
-## Exercise 2 — Add a `subtract` tool
+## Exercise 2 — Implement `_extract_tool_calls` yourself
 
-Extend `code/openai_multi_tool_agent.py` with:
+Without reading `src/tiny_agent/models/openai.py`, implement:
 
 ```python
-def subtract(a: float, b: float) -> float:
+def extract_tool_calls(response) -> list[ToolCall]:
     ...
 ```
 
-Test a task such as:
+Assume `response.output` may contain messages, reasoning items, and multiple function calls.
 
-```text
-Calculate (80 - 17) * 3 + 5.
-```
+Requirements:
 
-Before running the program, predict a valid tool trajectory.
+- extract only `function_call` items;
+- decode `arguments` with `json.loads`;
+- reject malformed JSON explicitly;
+- reject decoded values that are not dictionaries;
+- preserve `call_id`;
+- extract every function call in the turn.
 
-Then compare your predicted trajectory with the actual one.
-
-Questions:
-
-- Did the model choose the same grouping you expected?
-- Did the final answer remain correct even if the trajectory differed?
-- Which aspects are deterministic and which are model decisions?
+Write at least four deterministic tests.
 
 ---
 
-## Exercise 3 — Break strict schema intentionally
+## Exercise 3 — Malformed JSON must fail before Tool execution
 
-Remove:
-
-```python
-"additionalProperties": False
-```
-
-from one tool schema while keeping:
-
-```python
-strict_tools=True
-```
-
-Observe the provider behavior.
-
-Then restore the strict-compatible schema.
-
-Explain why schema correctness is part of Agent reliability.
-
----
-
-## Exercise 4 — Invalid JSON from a fake provider
-
-Extend `tests/test_openai_adapter.py` with a provider response whose arguments are:
+Return provider arguments:
 
 ```text
-{a: 1, b: 2}
+{city: Tokyo}
 ```
 
-instead of valid JSON:
+instead of:
 
 ```json
-{"a": 1, "b": 2}
+{"city": "Tokyo"}
 ```
 
-Assert that the adapter raises an error before the runtime attempts tool execution.
+Verify:
 
-Explain why this error belongs to the adapter/protocol boundary rather than the tool handler.
+```text
+Adapter fails
+Runtime does not execute the Tool
+handler is never called
+```
+
+Explain why this is an Adapter/protocol error rather than a Tool-handler failure.
 
 ---
 
-## Exercise 5 — JSON with the wrong shape
+## Exercise 4 — Valid JSON, wrong shape
 
-Create a fake provider call with:
+Use:
 
 ```json
-[1, 2]
+["Tokyo"]
 ```
 
-as the decoded arguments.
+`json.loads` succeeds, but function arguments should be an object.
 
-The JSON is syntactically valid, but it is not an object.
+Verify the Adapter still rejects the response.
 
-Verify that Tiny-Agent rejects it.
-
-This exercise demonstrates the difference between:
+This exercise separates:
 
 ```text
-valid JSON
-```
-
-and:
-
-```text
-valid function-call arguments
+syntactically valid JSON
+!=
+valid normalized ToolCall arguments
 ```
 
 ---
 
-## Exercise 6 — Multiple independent tool calls
+## Exercise 5 — Prove `generate()` performs one model turn
 
-Create two read-only tools:
+Build a FakeClient and count calls to:
 
 ```text
-get_city_temperature(city)
-get_city_population(city)
+client.responses.create
 ```
 
-Ask a question that can require both independently.
-
-Inspect whether the model emits multiple calls in one turn.
-
-Then set:
+Call:
 
 ```python
-parallel_tool_calls=False
+model.generate(messages, tools)
 ```
 
-on `OpenAIResponsesModel` and compare the trajectory.
+exactly once and assert that exactly one provider request occurs.
 
-Important question:
+Then make the fake provider return a ToolCall and verify that the Adapter does not execute the Tool or call the provider again. It only returns `ModelResponse(tool_calls=[...])`.
 
-> Does `parallel_tool_calls=True` mean Tiny-Agent currently executes the Python handlers concurrently?
-
-Answer: no. It allows the model to request multiple tool calls in one turn. The current runtime still loops over those handlers synchronously. Physical parallel execution is a separate runtime concern.
+Explain why hiding the full loop in the Adapter makes permissions, tracing, and checkpointing harder.
 
 ---
 
-## Exercise 7 — Serial dependency
+## Exercise 6 — Tool-schema translation
 
-Use the arithmetic tools for:
-
-```text
-Calculate (23 * 17) + 41.
-```
-
-Explain why the `add` call depends on the observation of `multiply`.
-
-Then contrast it with:
-
-```text
-Find the temperatures of Tokyo and Paris.
-```
-
-Draw both dependency graphs.
-
----
-
-## Exercise 8 — Provider substitution thought experiment
-
-Imagine adding:
+Translate this Tiny-Agent Tool schema into an OpenAI function Tool definition:
 
 ```python
-class QwenModel:
-    ...
+{
+    "name": "get_mock_weather",
+    "description": "Return course mock weather for one city.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "city": {"type": "string"},
+        },
+        "required": ["city"],
+        "additionalProperties": False,
+    },
+}
 ```
 
-List the files that should need modification.
+Then remove `additionalProperties=False` and discuss:
 
-A good architecture should let you add a provider adapter and tests without modifying the core semantics of:
+1. What value does provider-side strict schema support provide?
+2. Why should the Runtime eventually validate locally as well?
+3. How are Tool design, Adapter translation, and Runtime validation different concerns?
+
+---
+
+## Exercise 7 — Replace OpenAI with Qwen without touching the Runtime
+
+Stage 00 demonstrated Qwen through an OpenAI-compatible API.
+
+Repeat the integration under a stricter rule: do not modify:
 
 ```text
 AgentRuntime
@@ -203,52 +180,135 @@ ToolRegistry
 Tool handlers
 ```
 
-If you believe the runtime must change, explain exactly which provider-independent capability is missing.
+You may add or configure only:
+
+```text
+Qwen Adapter
+provider configuration
+provider-specific tests
+```
+
+The contract remains:
+
+```python
+class Model(Protocol):
+    def generate(self, messages, tools) -> ModelResponse:
+        ...
+```
+
+Document which provider differences the Adapter absorbs and which differences, if any, represent a real provider-neutral Runtime capability.
+
+If you put `if provider == "qwen"` inside `AgentRuntime.run()`, justify it.
 
 ---
 
-# Interview Questions
+## Exercise 8 — Compatibility is not provider identity
 
-You should be able to answer these without reading the source code.
-
-1. What is the difference between an Agent runtime and a model provider adapter?
-2. Why does Tiny-Agent normalize provider output into `ModelResponse`?
-3. What does `call_id` solve?
-4. Why should `generate()` represent one model turn instead of the whole Agent run?
-5. What does strict function calling validate?
-6. What is the difference between malformed JSON and semantically invalid tool arguments?
-7. Why can an Agent have multiple tool calls in a single model turn?
-8. Why is multiple tool calling different from concurrent tool execution?
-9. Why use a fake OpenAI client in unit tests?
-10. What would you test in a live integration test that you would not test in a unit test?
-11. Why is a provider-neutral transcript useful?
-12. What limitations appear when provider-native reasoning/session state becomes important?
-
-# Completion Challenge
-
-Build a three-tool calculator with:
+Even if OpenAI and Qwen can both be called with a similar `client.responses.create(...)` shape, list at least eight ways they can still differ:
 
 ```text
-add
-multiply
-subtract
+credentials
+base_url
+model IDs
+supported parameters
+Tool Calling details
+Structured Output behavior
+errors
+rate limits
+usage metadata
+provider extensions
 ```
 
-and demonstrate at least three trajectories:
+Explain why OpenAI-compatible APIs reduce Adapter implementation cost without making the Adapter architecture layer unnecessary.
 
-1. direct one-tool task;
-2. serial two-or-more-tool task;
-3. a task where the model correctly decides no tool is necessary.
+---
 
-For each run, record:
+## Exercise 9 — Serial dependency vs same-turn multiple calls
+
+Scenario A:
 
 ```text
-user input
-model action(s)
-tool arguments
-observation(s)
-final answer
-step count
+get_mock_weather(Tokyo)
+        ↓
+      18°C
+        ↓
+celsius_to_fahrenheit(18)
 ```
 
-Do not judge the Agent only by the final answer. Inspect the trajectory as well.
+Scenario B:
+
+```text
+get_mock_weather(Tokyo)
+get_mock_weather(Paris)
+```
+
+Draw the dependency graphs and explain:
+
+1. why A normally needs multiple model turns;
+2. why B may be proposed as multiple ToolCalls in one turn;
+3. what `parallel_tool_calls=True` actually permits;
+4. why it does not automatically make Python handlers concurrent.
+
+---
+
+## Exercise 10 — FakeClient unit tests vs live integration tests
+
+Design two suites.
+
+### Unit tests with FakeClient
+
+Cover:
+
+```text
+request translation
+Tool-schema translation
+JSON decoding
+call_id preservation
+multiple calls
+unsupported roles
+empty provider response
+```
+
+### Live integration tests
+
+Cover:
+
+```text
+real provider compatibility
+reasonable Tool selection
+end-to-end task completion
+latency / usage sanity
+```
+
+Explain why neither suite replaces the other.
+
+---
+
+## Completion Challenge — One Runtime, two providers
+
+Use the same:
+
+```text
+AgentRuntime
+ToolRegistry
+travel Tools
+```
+
+and switch only provider configuration between OpenAI and Qwen.
+
+Both runs should handle:
+
+```text
+get course mock Tokyo weather
+-> obtain Celsius
+-> convert to Fahrenheit with a Tool
+-> explain final result
+```
+
+Record both trajectories and compare Tool selection, arguments, step count, final answer, and provider latency.
+
+Finish with one architecture question:
+
+> **Which differences are ordinary provider substitution, and which differences are significant enough to justify evolving the core Runtime contract?**
+
+If you can answer that clearly, you understand the Adapter boundary rather than merely knowing how to write a wrapper class.
