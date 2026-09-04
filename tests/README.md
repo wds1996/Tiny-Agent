@@ -119,7 +119,7 @@ Do not put real production credentials in commands, fixtures, test output, or co
 
 ## Stage 01 — ReAct Runtime and provider boundary
 
-Read with [Stage 01](../stages/01-react-runtime/README.md), especially [ReAct and the Agent loop](../stages/01-react-runtime/theory/01-react-and-agent-loop.md), [runtime architecture](../stages/01-react-runtime/theory/02-runtime-architecture.md), and the [provider adapter](../stages/01-react-runtime/theory/03-model-provider-adapter.md).
+Read with the consolidated [Stage 01 chapter](../stages/01-react-runtime/README.md), which teaches the ReAct loop, Runtime architecture, Tool boundaries, deterministic testing, and the provider Adapter as one continuous lesson.
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|

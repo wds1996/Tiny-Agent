@@ -119,7 +119,7 @@ pytest -q tests/test_stage10_integrations.py
 
 ## Stage 01 — ReAct Runtime 与 Provider Boundary
 
-对应课程：[Stage 01 中文教程](../stages/01-react-runtime/README.zh-CN.md)，重点配合 [ReAct 与 Agent Loop](../stages/01-react-runtime/theory/01-react-and-agent-loop.zh-CN.md)、[Runtime Architecture](../stages/01-react-runtime/theory/02-runtime-architecture.zh-CN.md) 和 [Model Provider Adapter](../stages/01-react-runtime/theory/03-model-provider-adapter.zh-CN.md) 阅读。
+对应课程为整合后的 [Stage 01 中文教程](../stages/01-react-runtime/README.zh-CN.md)。ReAct 循环、Runtime 架构、工具边界、确定性测试和模型服务适配器均已在该主章节中连续讲解。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|

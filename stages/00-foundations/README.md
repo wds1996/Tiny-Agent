@@ -1,73 +1,87 @@
-# Stage 00: Do Not Build an Agent Yet—Understand One Model Call First
+# Stage 00: Start with One Model Call and Draw the Boundaries
 
 > Language: **English** | [简体中文](README.zh-CN.md)
 
-Many Agent tutorials begin with a framework, several decorators, and enough vocabulary to make a beginner feel late to a meeting they were never invited to. This chapter starts with the smallest useful unit instead: one model request made by one Python program.
+Many Agent tutorials begin with frameworks, plugins, memory, workflows, and multi-Agent diagrams. That is a little like handing someone a banquet menu when they have only just learned where the kitchen is. This chapter starts with the smaller and more useful question: **what actually happens when a Python program calls a language model?**
 
-We will answer three questions in order:
+We will follow one continuous chain of necessity:
 
-1. How does Python send a request to a language model and inspect the response?
-2. How can a program receive a stable data structure instead of prose?
-3. When a task needs data or a function, what belongs to the model and what belongs to the application?
+```text
+generate text
+    ↓
+make the result reliably readable by software
+    ↓
+let the model request an external Tool
+    ↓
+have the application execute it and return the result
+```
 
-By the end, you will have implemented one complete **model → tool → model** round trip and, more importantly, you will understand the boundary behind it:
+You will not finish this chapter with an all-powerful Agent. You will finish with something more valuable: a clear set of boundaries.
 
-> **The model proposes; the application decides and executes.**
+> **The model proposes. The application validates, executes, and owns the consequences.**
 
-All complete examples live in [`code/`](code/). Each file is reproduced in full where its idea is taught, so this chapter reads straight through rather than sending you on a documentation scavenger hunt.
+A model saying “the email was sent” does not send an email. Valid JSON does not make a claim true. A Tool Call can request an action, but confidence of tone is not a permission system.
+
+Complete runnable programs live only in [`code/`](code/). The chapter uses focused excerpts where each mechanism is introduced; it does not paste every source file into the prose. Open the corresponding file when you want the complete implementation.
 
 ---
 
-## 1. What a language model is to a Python program
+## 1. Learning goals
 
-Set aside the word “Agent” for a moment. To your program, a language model is first a remote computation service: the program submits input, and the service returns a response.
+After completing this chapter, you should be able to:
 
-```text
-user request
-    ↓
-Python builds an API request
-    ↓
-the model service generates a response
-    ↓
-Python inspects that response
-```
+- explain the responsibilities of the Python application, the model service, and the Response object;
+- distinguish `instructions`, `input`, and the context visible to one model call;
+- explain why natural language is useful for people but fragile as a software interface;
+- define Structured Output with Pydantic;
+- separate syntactic validity, structural validity, and factual correctness;
+- explain the relationship among a Tool schema, a Tool Call, a Python handler, and a Tool Output;
+- distinguish what `call_id` and `previous_response_id` correlate;
+- validate a model-proposed Tool request before execution.
 
-Two actors appear in this diagram. The model service **generates content**. Your application **makes requests, calls functions, reads databases, and changes state**. Confusing them leads to a classic bug: the model says “the email has been sent,” while the outbox remains admirably empty.
+Basic Python functions, dictionaries, exceptions, and command-line use are enough to begin.
 
-A model response is therefore a proposal produced inside an API protocol. It is not proof that an external action occurred.
+---
 
-### 1.1 Set up the chapter
+## 2. Prepare the environment
 
-Use Python 3.10 or newer and install the chapter dependencies from the repository root:
+The examples require Python 3.10 or later, the OpenAI Python SDK, and Pydantic. From the repository root, run:
 
 ```bash
 python -m pip install -r stages/00-foundations/code/requirements.txt
 ```
 
-The dependency file is intentionally small:
-
-```text
-openai>=2,<3
-pydantic>=2.11,<3
-```
-
-Set the API key and choose a model available to your project that supports the Responses API, Structured Outputs, and Function Calling:
+Then configure an API key and a model available to your project:
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
 export OPENAI_MODEL="your-model-id"
 ```
 
-Do not put an API key in source code or commit it to Git. In Windows PowerShell:
+PowerShell:
 
 ```powershell
 $env:OPENAI_API_KEY="your-api-key"
 $env:OPENAI_MODEL="your-model-id"
 ```
 
-The examples deliberately do not hard-code a “latest” model. Model catalogs and project access change. Requiring `OPENAI_MODEL` makes that dependency explicit and produces an immediate, useful error when it is missing.
+Do not place API keys in source code or commit them to Git. The examples also avoid hard-coding a model ID because model catalogs and project permissions change. Requiring `OPENAI_MODEL` makes configuration explicit instead of hiding it behind a mysterious default.
 
-### 1.2 Make the first call
+Each example uses the same helper:
+
+```python
+def required_env(name: str) -> str:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        raise RuntimeError(f"Set {name} before running this example.")
+    return value.strip()
+```
+
+This is ordinary but important software engineering: **reject invalid input near the boundary.**
+
+---
+
+## 3. The first model call: treat the model as a remote computation service
 
 Run:
 
@@ -75,136 +89,159 @@ Run:
 python stages/00-foundations/code/first_llm_call.py
 ```
 
-Complete source:
+The complete program is [`code/first_llm_call.py`](code/first_llm_call.py). Its central request is:
 
 ```python
-from __future__ import annotations
-
-import os
-from typing import Any
-
-
-def required_env(name: str) -> str:
-    value = os.getenv(name)
-    if value is None or not value.strip():
-        raise RuntimeError(f"Set {name} before running this example.")
-    return value.strip()
-
-
-def create_client() -> Any:
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise RuntimeError(
-            "OpenAI SDK is not installed. Run:\n"
-            "python -m pip install -r "
-            "stages/00-foundations/code/requirements.txt"
-        ) from exc
-
-    required_env("OPENAI_API_KEY")
-    return OpenAI()
-
-
-def main() -> None:
-    client = create_client()
-    model = required_env("OPENAI_MODEL")
-
-    response = client.responses.create(
-        model=model,
-        instructions=(
-            "You are a patient programming teacher. Explain the idea accurately, "
-            "use one concrete analogy, and avoid unexplained jargon."
-        ),
-        input=(
-            "In no more than 120 words, explain why a language model response is "
-            "a proposal produced by a model rather than an action performed by my "
-            "Python program."
-        ),
-    )
-
-    if response.status != "completed":
-        raise RuntimeError(f"The response did not complete: {response.status}")
-    if not response.output_text.strip():
-        raise RuntimeError("The response completed without text output.")
-
-    print("=== response metadata ===")
-    print("response_id:", response.id)
-    print("model:", response.model)
-
-    print("\n=== model output ===")
-    print(response.output_text)
-
-    usage = response.usage
-    if usage is not None:
-        print("\n=== token usage ===")
-        print("input_tokens:", usage.input_tokens)
-        print("output_tokens:", usage.output_tokens)
-        print("total_tokens:", usage.total_tokens)
-
-
-if __name__ == "__main__":
-    main()
+response = client.responses.create(
+    model=model,
+    instructions=(
+        "You are a patient programming teacher. Explain the idea accurately, "
+        "use one concrete analogy, and avoid unexplained jargon."
+    ),
+    input=(
+        "In no more than 120 words, explain why a language model response is "
+        "a proposal produced by a model rather than an action performed by my "
+        "Python program."
+    ),
+)
 ```
 
-The program has one path: create a client, submit a request, verify completion, and read the result.
+From the application’s point of view, this is a request-response boundary:
+
+```text
+Python builds a request
+        ↓
+the model service generates output
+        ↓
+the SDK returns a Response object
+        ↓
+Python validates and consumes it
+```
+
+Two actors are involved:
+
+- the **model service** generates output from visible context;
+- the **application** sends requests, reads results, executes functions, and changes external systems.
+
+Do not merge those roles mentally. A model is like a capable colleague working behind glass: it can read what you pass through the slot and return a recommendation, but it does not receive the building keys because the recommendation sounds confident.
+
+### 3.1 Generation is not an external action
+
+A plain text-generation call does not automatically:
+
+- read a local file that was never supplied;
+- query a private database;
+- retrieve live weather;
+- send an email;
+- update an order;
+- prove that a generated fact is correct.
+
+If the response says, “The order was cancelled,” the only established event is that those words were generated. Whether an order system changed depends on application execution.
+
+### 3.2 Probabilistic generation changes where contracts belong
+
+Repeated calls with the same input may differ in wording or detail. A language model is not a pure function promising one byte-for-byte result for every input.
+
+That produces two direct engineering rules:
+
+1. do not make critical application logic depend on one exact sentence;
+2. when software must consume a result, express and validate the machine-readable part as a contract.
+
+Agent engineering does not remove uncertainty. It gives uncertainty a bounded place to live.
+
+### 3.3 `instructions` and `input` have different sources
+
+A practical distinction is:
+
+```text
+instructions
+    application-level behavior and answer constraints
+
+input
+    the task or data being processed in this call
+```
+
+Avoid combining every source into one undifferentiated string:
 
 ```python
-response = client.responses.create(...)
+prompt = policy + user_question + documents + tool_result
 ```
 
-`response` is not a bare string. Text is one convenient view of a larger protocol object that also carries an ID, status, model metadata, usage, and potentially other output items. `response.output_text` is useful shorthand; it is not the whole response format.
+That shortcut erases provenance. Later, the application cannot easily tell which text is a rule, which is user data, and which came from an external document.
 
-The example also checks both status and text:
+For this chapter, one definition is enough:
+
+> **Context is everything the model can actually see for one call.**
+
+`instructions` and `input` both contribute to context. Context is not long-term storage, and it is not necessarily one giant string called “the prompt.”
+
+### 3.4 A Response is not a bare string
+
+The example checks the status and text before using them:
 
 ```python
 if response.status != "completed":
-    ...
+    raise RuntimeError(f"The response did not complete: {response.status}")
 if not response.output_text.strip():
-    ...
+    raise RuntimeError("The response completed without text output.")
 ```
 
-“No exception was raised” does not necessarily mean “the application received a usable answer.” Explicit checks keep failures close to their cause.
-
-### 1.3 Keep behavior instructions separate from the task
-
-The request contains two fields:
+Only then does it read:
 
 ```python
-instructions="You are a patient programming teacher..."
-input="In no more than 120 words..."
+print(response.output_text)
 ```
 
-They come from different concerns:
+`output_text` is an SDK convenience view. The complete Response can include:
 
 ```text
-instructions  behavior the application wants the model to follow
-input         the task to perform on this request
+Response
+├── id
+├── status
+├── model
+├── output items
+├── output_text
+└── usage
 ```
 
-Keeping those sources separate is easier to maintain than gluing policy, task, and data into one giant prompt. You can change the task without rewriting the behavior contract, and vice versa.
+“No exception was raised” and “the application received usable output” are different conditions. Explicit checks prevent an empty result from travelling deeper into the program and falling over somewhere much less helpful.
 
-A person can now read the answer. A program, however, soon asks a less forgiving question: **how can I consume the result reliably?**
+### 3.5 Token usage is accounting, not a quality score
+
+The example prints usage when available:
+
+```python
+usage = response.usage
+if usage is not None:
+    print("input_tokens:", usage.input_tokens)
+    print("output_tokens:", usage.output_tokens)
+    print("total_tokens:", usage.total_tokens)
+```
+
+Token counts help reason about context size, latency, and cost. They do not certify correctness. A longer response can simply explain the same mistake with admirable persistence.
+
+We can now generate text. The next problem is ordinary application design: **how can software consume the result without guessing what a sentence means?**
 
 ---
 
-## 2. Natural language is an excellent conversation format and a fragile API
+## 4. Structured Output: make the machine-readable part a contract
 
-Suppose the application must turn a request into a task card. A model might write:
+Suppose the application needs a task card. A person can understand:
 
 ```text
-This looks fairly important. We probably need current weather data first.
+This seems important. We probably need current weather data first.
 ```
 
-That is clear to a person. A program may be tempted to do this:
+A program cannot safely depend on it. This is brittle:
 
 ```python
 if "important" in answer.lower():
     priority = "high"
 ```
 
-Now the interface breaks when the model says “urgent” instead. Keyword guessing is not a contract.
+Replace `important` with `urgent` and the interface silently changes.
 
-The application would rather receive:
+The application would rather receive a defined object:
 
 ```json
 {
@@ -215,9 +252,7 @@ The application would rather receive:
 }
 ```
 
-**Structured Output** constrains model output to a machine-checkable shape.
-
-### 2.1 Define the contract with Pydantic
+Structured Output is not merely JSON-looking text. It is model output constrained to a machine-verifiable structure.
 
 Run:
 
@@ -225,18 +260,13 @@ Run:
 python stages/00-foundations/code/structured_output.py
 ```
 
-Complete source:
+The complete program is [`code/structured_output.py`](code/structured_output.py).
+
+### 4.1 Define application data before asking the model to fill it
+
+The chapter uses Pydantic:
 
 ```python
-from __future__ import annotations
-
-import os
-from enum import Enum
-from typing import Any
-
-from pydantic import BaseModel, ConfigDict, Field
-
-
 class Priority(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -250,144 +280,120 @@ class TaskCard(BaseModel):
     priority: Priority
     needs_external_data: bool
     reason: str = Field(min_length=1)
-
-
-def required_env(name: str) -> str:
-    value = os.getenv(name)
-    if value is None or not value.strip():
-        raise RuntimeError(f"Set {name} before running this example.")
-    return value.strip()
-
-
-def create_client() -> Any:
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise RuntimeError(
-            "OpenAI SDK is not installed. Run:\n"
-            "python -m pip install -r "
-            "stages/00-foundations/code/requirements.txt"
-        ) from exc
-
-    required_env("OPENAI_API_KEY")
-    return OpenAI()
-
-
-def main() -> None:
-    client = create_client()
-    model = required_env("OPENAI_MODEL")
-
-    response = client.responses.parse(
-        model=model,
-        instructions=(
-            "Turn the request into a task card. Describe only the request itself; "
-            "do not guess the weather or pretend that external data was retrieved."
-        ),
-        input=(
-            "Compare the current weather in Tokyo and Paris and tell me which city "
-            "is warmer."
-        ),
-        text_format=TaskCard,
-    )
-
-    if response.status != "completed":
-        raise RuntimeError(f"The response did not complete: {response.status}")
-
-    task = response.output_parsed
-    if task is None:
-        raise RuntimeError("The response contained no parsed TaskCard.")
-
-    print(task.model_dump_json(indent=2))
-    print(
-        "\nThe shape is validated. The claims still need to be checked against "
-        "real data."
-    )
-
-
-if __name__ == "__main__":
-    main()
 ```
 
-The Pydantic model states what the application accepts:
+This contract expresses field names, types, required values, enum choices, and whether undeclared fields are allowed.
 
-```python
-class TaskCard(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+The design order matters:
 
-    goal: str = Field(min_length=1)
-    priority: Priority
-    needs_external_data: bool
-    reason: str = Field(min_length=1)
+```text
+decide what the application needs
+        ↓
+express it as a schema
+        ↓
+ask the model to produce that shape
 ```
 
-This is more precise than “please return JSON.” It requires the fields, restricts `priority` to an enum, rejects blank strings, and forbids undeclared properties.
+Letting the model improvise first and mining fields afterward creates a moving interface.
 
-The SDK then parses the response into that contract:
+### 4.2 Parse into the application type
+
+The central call supplies the Pydantic model:
 
 ```python
 response = client.responses.parse(
-    ...,
+    model=model,
+    instructions=(
+        "Turn the request into a task card. Describe only the request itself; "
+        "do not guess the weather or pretend that external data was retrieved."
+    ),
+    input=(
+        "Compare the current weather in Tokyo and Paris and tell me which city "
+        "is warmer."
+    ),
     text_format=TaskCard,
 )
+```
+
+The parsed value is checked explicitly:
+
+```python
 task = response.output_parsed
+if task is None:
+    raise RuntimeError("The response contained no parsed TaskCard.")
 ```
 
-`task` is a `TaskCard`, so the rest of the program can use `task.priority` instead of mining prose with regular expressions.
+Downstream code can use `task.priority` and `task.needs_external_data` instead of performing archaeology on a paragraph.
 
-### 2.2 Valid shape does not imply a true claim
+### 4.3 Syntax, structure, and truth are different tests
 
-This boundary matters:
+Structured Output is often mistaken for a correctness guarantee. Separate three layers:
 
-```text
-valid fields and types
-        ≠
-correct judgment and true facts
+| Layer | Question | Can the schema enforce it? |
+|---|---|---|
+| Syntax | Can the JSON be parsed? | Yes |
+| Structure | Are fields, types, and allowed values valid? | Yes |
+| Semantics and facts | Is the judgment sensible and the claim true? | Not by itself |
+
+This object may satisfy the schema and still be wrong:
+
+```json
+{
+  "goal": "compare current weather",
+  "priority": "high",
+  "needs_external_data": false,
+  "reason": "the model already knows it"
+}
 ```
 
-Structured Output can ensure that `needs_external_data` is a Boolean. It cannot ensure that the model chose the correct Boolean. A response can wear a perfectly tailored JSON suit and still be wrong underneath.
+The fields are valid, but `needs_external_data=false` is a poor conclusion for a live-weather request.
 
-Structured Output answers:
+The key rule is:
 
-> **How can software read this model output reliably?**
+> **Structured Output solves “how can the program read this?” It does not, by itself, solve “why should the program believe this?”**
 
-It does not answer:
+A schema is a diligent receptionist: it checks the form and required fields. It is not also an investigative journalist.
 
-> **How can the model obtain facts that are outside the request?**
+### 4.4 Appropriate uses and non-uses
 
-Comparing current weather requires data. The next step is to let the model request a capability implemented by Python.
+Structured Output is useful for:
+
+- classifications;
+- argument extraction;
+- routing decisions;
+- form-shaped data;
+- plans or judgments that ordinary code must inspect.
+
+It is not, by itself:
+
+- an external fact source;
+- execution permission;
+- a database transaction;
+- proof that the conclusion is true.
+
+The weather request exposes the remaining gap: the application needs data the model should not invent. That is where Tool Calling enters.
 
 ---
 
-## 3. Tool Calling: the model requests; the application executes
+## 5. Tool Calling: the model requests, the application executes
 
-A model does not automatically run your Python function. A function tool has two sides:
+When a task requires a database lookup, calculation, API call, or file operation, text generation alone is insufficient. The application can describe capabilities that the model may request.
+
+A Tool has two faces:
 
 ```text
-interface shown to the model
+model-facing interface
 ├── name
 ├── description
 └── parameters (JSON Schema)
 
-implementation kept by the application
+application-side implementation
 └── Python handler
 ```
 
-The interface helps the model decide what to request. The handler performs the actual work.
+The model normally sees the interface, not direct control of the handler.
 
-Think of the model as a capable colleague behind a service window. It can pass out a request slip:
-
-```json
-{
-  "name": "get_teaching_weather",
-  "arguments": {"city": "Tokyo"}
-}
-```
-
-The application still holds the keys. It validates the name, parses the arguments, runs the function, and returns the result.
-
-### 3.1 Use deterministic teaching data
-
-This chapter uses a fixed table:
+This chapter uses deterministic teaching data:
 
 ```python
 TEACHING_WEATHER = {
@@ -396,9 +402,7 @@ TEACHING_WEATHER = {
 }
 ```
 
-It is not live weather. Deterministic data gives every learner the same trace and keeps network credentials and third-party failures out of a lesson about tool control flow.
-
-### 3.2 Complete one model → tool → model round trip
+It is not live weather. Fixed data keeps the result reproducible and lets us study the control boundary without debugging networking, third-party authentication, rate limits, and meteorology at the same time.
 
 Run:
 
@@ -406,21 +410,13 @@ Run:
 python stages/00-foundations/code/tool_calling.py
 ```
 
-Complete source:
+The complete program is [`code/tool_calling.py`](code/tool_calling.py).
+
+### 5.1 The Tool schema is an operating manual for the model
+
+The central definition is:
 
 ```python
-from __future__ import annotations
-
-import json
-import os
-from typing import Any
-
-
-TEACHING_WEATHER = {
-    "Tokyo": {"temperature_c": 18.0, "condition": "cloudy"},
-    "Paris": {"temperature_c": 12.0, "condition": "light rain"},
-}
-
 WEATHER_TOOL = {
     "type": "function",
     "name": "get_teaching_weather",
@@ -434,7 +430,6 @@ WEATHER_TOOL = {
             "city": {
                 "type": "string",
                 "enum": sorted(TEACHING_WEATHER),
-                "description": "The city whose teaching record should be read.",
             }
         },
         "required": ["city"],
@@ -442,165 +437,116 @@ WEATHER_TOOL = {
     },
     "strict": True,
 }
+```
 
+A Tool description is part of the control surface, not decorative documentation. The model uses the name, description, and parameter structure to decide when the capability applies and how to populate arguments.
 
-def required_env(name: str) -> str:
-    value = os.getenv(name)
-    if value is None or not value.strip():
-        raise RuntimeError(f"Set {name} before running this example.")
-    return value.strip()
+A useful description states what the Tool returns, when it should be used, what important parameters mean, and any material limitation. A description such as `query things` does not create flexibility; it creates guessing.
 
+### 5.2 The handler is the code that actually acts
 
-def create_client() -> Any:
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise RuntimeError(
-            "OpenAI SDK is not installed. Run:\n"
-            "python -m pip install -r "
-            "stages/00-foundations/code/requirements.txt"
-        ) from exc
+The Python function performs the lookup:
 
-    required_env("OPENAI_API_KEY")
-    return OpenAI()
-
-
+```python
 def get_teaching_weather(city: str) -> dict[str, Any]:
     try:
         record = TEACHING_WEATHER[city]
     except KeyError as exc:
         raise ValueError(f"Unsupported city: {city}") from exc
     return {"city": city, **record}
-
-
-def parse_arguments(raw_arguments: str) -> dict[str, Any]:
-    try:
-        arguments = json.loads(raw_arguments)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Tool arguments are not valid JSON: {raw_arguments!r}") from exc
-    if not isinstance(arguments, dict):
-        raise RuntimeError("Tool arguments must decode to a JSON object.")
-    return arguments
-
-
-def validate_weather_arguments(arguments: dict[str, Any]) -> str:
-    if set(arguments) != {"city"}:
-        raise RuntimeError("get_teaching_weather expects exactly one field: city")
-    city = arguments["city"]
-    if not isinstance(city, str):
-        raise RuntimeError("The city argument must be a string.")
-    if city not in TEACHING_WEATHER:
-        raise RuntimeError(f"Unsupported city: {city}")
-    return city
-
-
-def main() -> None:
-    client = create_client()
-    model = required_env("OPENAI_MODEL")
-
-    first = client.responses.create(
-        model=model,
-        instructions=(
-            "Use the supplied function to read teaching weather records. A function "
-            "call only requests an action; never claim a result before the function "
-            "output is returned."
-        ),
-        input=(
-            "Read Tokyo's deterministic teaching weather record and report the "
-            "temperature and condition."
-        ),
-        tools=[WEATHER_TOOL],
-        tool_choice={"type": "function", "name": "get_teaching_weather"},
-        parallel_tool_calls=False,
-    )
-
-    if first.status != "completed":
-        raise RuntimeError(f"The first response did not complete: {first.status}")
-
-    calls = [item for item in first.output if item.type == "function_call"]
-    if len(calls) != 1:
-        raise RuntimeError(f"Expected exactly one function call, received {len(calls)}.")
-
-    call = calls[0]
-    if call.name != "get_teaching_weather":
-        raise RuntimeError(f"The model requested an unknown function: {call.name}")
-
-    arguments = parse_arguments(call.arguments)
-    city = validate_weather_arguments(arguments)
-    result = get_teaching_weather(city)
-
-    print("=== model proposed ===")
-    print(call.name, arguments)
-    print("\n=== application executed ===")
-    print(result)
-
-    final = client.responses.create(
-        model=model,
-        instructions=(
-            "Answer only from the returned function output. Make clear that this is "
-            "a deterministic teaching record, not live weather."
-        ),
-        previous_response_id=first.id,
-        input=[
-            {
-                "type": "function_call_output",
-                "call_id": call.call_id,
-                "output": json.dumps(result, ensure_ascii=False),
-            }
-        ],
-        tools=[WEATHER_TOOL],
-        tool_choice="none",
-    )
-
-    if final.status != "completed":
-        raise RuntimeError(f"The final response did not complete: {final.status}")
-    if not final.output_text.strip():
-        raise RuntimeError("The final response completed without text output.")
-
-    print("\n=== final answer ===")
-    print(final.output_text)
-
-
-if __name__ == "__main__":
-    main()
 ```
 
-Read the program in time order. It performs five steps.
+Three events must remain distinct:
 
-#### Step 1: expose the tool interface
+```text
+a Tool is described to the model
+        ≠
+the model requests the Tool
+        ≠
+the application executes the handler
+```
+
+The first two do not automatically cause the third.
+
+### 5.3 First model turn: produce an action proposal
+
+The example deliberately forces one function request so the mechanism remains deterministic:
 
 ```python
 first = client.responses.create(
-    ...,
+    model=model,
+    instructions=(
+        "Use the supplied function to read teaching weather records. A function "
+        "call only requests an action; never claim a result before the function "
+        "output is returned."
+    ),
+    input=(
+        "Read Tokyo's deterministic teaching weather record and report the "
+        "temperature and condition."
+    ),
     tools=[WEATHER_TOOL],
     tool_choice={"type": "function", "name": "get_teaching_weather"},
     parallel_tool_calls=False,
 )
 ```
 
-For this controlled lesson, `tool_choice` forces the named function and `parallel_tool_calls=False` limits the turn to one call. That removes model-choice variability while we inspect the protocol.
+- `tools` describes available capabilities;
+- `tool_choice` forces the named function for this teaching path;
+- `parallel_tool_calls=False` keeps the turn to one call.
 
-At this point, the model has produced a Function Call. **The function has not run.**
+At this point, the model has emitted a Function Call. The Python function has not run. The output is an action request, not an execution record.
 
-#### Step 2: check the requested capability
+### 5.4 Provider output is still external input
+
+The application extracts and checks the request:
 
 ```python
+calls = [item for item in first.output if item.type == "function_call"]
+if len(calls) != 1:
+    raise RuntimeError(...)
+
+call = calls[0]
 if call.name != "get_teaching_weather":
     raise RuntimeError(...)
 ```
 
-Do not feed a model-produced name directly into dynamic execution. The model may propose a name; the application decides which names map to real handlers.
-
-#### Step 3: parse arguments and execute in Python
+Then it parses, validates, and executes:
 
 ```python
 arguments = parse_arguments(call.arguments)
-result = get_teaching_weather(**arguments)
+city = validate_weather_arguments(arguments)
+result = get_teaching_weather(city)
 ```
 
-Python reads the table. The model neither enters the interpreter nor acquires hidden execution privileges.
+The order matters:
 
-#### Step 4: correlate the result with the request
+```text
+read the proposal
+    ↓
+parse JSON
+    ↓
+validate fields, types, and allowed values
+    ↓
+call an explicitly allowed Python function
+```
+
+Do not feed a generated name into `eval()`, `exec()`, `globals()`, or arbitrary imports. Model output is data, not executable authority.
+
+The example keeps two layers of constraint:
+
+```text
+provider-side strict schema
+    helps constrain generated argument shape
+
+application-side validation
+    checks the concrete data about to reach the handler
+```
+
+The application owns execution, so it owns the final check on accepted arguments.
+
+### 5.5 `call_id` preserves cause and effect
+
+After execution, the application sends a Tool Output:
 
 ```python
 {
@@ -610,144 +556,246 @@ Python reads the table. The model neither enters the interpreter nor acquires hi
 }
 ```
 
-`call_id` says which request produced this result. Two calls can use the same tool name and still be different actions:
+`call_id` identifies which request produced the result. Two calls can share a Tool name and still be different actions:
 
 ```text
-call_A -> get_teaching_weather(Tokyo)
-call_B -> get_teaching_weather(Paris)
+call_A → get_teaching_weather(Tokyo)
+call_B → get_teaching_weather(Paris)
 ```
 
-The name alone cannot preserve that relationship.
+The name answers “which capability?” The call ID answers “which invocation?” Without it, the application has two bowls labelled “noodles” and no idea which table ordered which one.
 
-#### Step 5: ask the model to answer from the result
+### 5.6 Second model turn: continue from the real Tool Output
+
+The second request chains from the first Response:
 
 ```python
 final = client.responses.create(
+    model=model,
+    instructions=(
+        "Answer only from the returned function output. Make clear that this is "
+        "a deterministic teaching record, not live weather."
+    ),
     previous_response_id=first.id,
-    input=[function_call_output],
+    input=[
+        {
+            "type": "function_call_output",
+            "call_id": call.call_id,
+            "output": json.dumps(result, ensure_ascii=False),
+        }
+    ],
     tools=[WEATHER_TOOL],
     tool_choice="none",
 )
 ```
 
-`previous_response_id` continues from the first response. The new input is the function output produced by the application. `tool_choice="none"` makes this second turn produce text rather than another tool request.
+The identifiers correlate different relationships:
+
+```text
+previous_response_id
+    which provider Response this new Response continues
+
+call_id
+    which Tool request this Tool Output answers
+```
+
+`tool_choice="none"` asks the model to stop requesting Tools for this example and produce text from the returned result.
 
 The full timeline is:
 
 ```text
-user task
+user supplies a task
     ↓
-model generates a Function Call (proposal)
+model emits a Function Call proposal
     ↓
-Python checks the name and arguments
+application validates name and arguments
     ↓
-Python executes the function (action)
+application executes Python
     ↓
-application returns Function Call Output (observation)
+application returns a Function Call Output
     ↓
-model writes an answer from that observation
+model generates final text from the observation
 ```
 
-That sequence is the central result of this chapter.
+That is the first complete `model → tool → model` round trip.
 
 ---
 
-## 4. Three distinctions worth keeping
+## 6. Four similar-looking objects with different responsibilities
 
-### 4.1 Structured Output is not Tool Calling
+| Concept | What it is | What it is not |
+|---|---|---|
+| Text output | Generated language | A real-world action |
+| Structured Output | Generated data satisfying a contract | Proof of factual truth |
+| Tool Call | A structured action request | Evidence that Python already ran |
+| Tool Output | An observation after application execution | The model’s unsupported guess |
 
-Both use structured data, but for different jobs:
+An administrative analogy helps:
 
 ```text
-Structured Output
-    return a data object for the application to read
-
-Tool Calling
-    return an action request for the application to consider
+Structured Output  a correctly completed form
+Tool Call           a submitted action request
+Tool Execution      staff actually performing the action
+Tool Output         the returned receipt
 ```
 
-A neatly completed order form does not walk to the warehouse by itself.
+A beautifully completed form still does not stamp itself.
 
-### 4.2 Tool Calling is not Tool Execution
+---
+
+## 7. Where the Runtime-shaped problem begins
+
+The final example is still a fixed script:
 
 ```text
-the model returned a Tool Call
-        ≠
-the Python function ran
+first model call
+→ execute one Tool
+→ second model call
+→ stop
 ```
 
-Execution begins only after the application validates the request and explicitly invokes a handler.
-
-### 4.3 Model output is not automatically system truth
-
-Prose, structured objects, and tool calls are all model-generated content first. The application must interpret each according to its role. A string that looks like a command does not grant itself authority.
-
----
-
-## 5. What we have actually built
-
-We have not built an indefinitely autonomous Agent, and there is no reason to pretend otherwise. We built a small, explicit chain:
+Now consider:
 
 ```text
-one model call
-    ↓
-machine-readable structured output
-    ↓
-a model-proposed function call
-    ↓
-application execution and result
-    ↓
-a final answer grounded in that result
+read Tokyo's teaching weather
+→ convert Celsius to Fahrenheit
+→ answer from both results
 ```
 
-`tool_calling.py` still hard-codes one tool turn followed by one text turn. A task that needs zero, two, or five tool calls would force us to repeat the same control code. The next chapter starts from that concrete pressure and turns the repetition into a small runtime.
+That path may require two Tool Calls. Naming variables `first`, `second`, and `third` works until the route changes again and the control flow starts maintaining a family tree.
 
-➡️ [Stage 01: Make the Model Work in a Loop—Build a Minimal Agent Runtime](../01-react-runtime/README.md)
+The repeated shape needs abstraction:
 
----
+```python
+while the run has not finished:
+    ask the model for the next decision
+    if it requested a Tool:
+        execute and record the observation
+    else:
+        return the final answer
+```
 
-## 6. Exercises
-
-These exercises are experiments, not vocabulary quizzes.
-
-### Exercise 1: separate shape from truth
-
-Add a `confidence: float` field to `TaskCard` and constrain it to the range 0–1. Observe what validation guarantees, then ask whether `confidence=0.99` proves the judgment is correct.
-
-### Exercise 2: request Paris
-
-Change the user input in `tool_calling.py` to request Paris. Leave the handler untouched and trace the argument through the Function Call, Python execution, and Function Call Output.
-
-### Exercise 3: manufacture an unknown tool
-
-Temporarily alter the allowed-name check and observe where the program stops. Explain why knowing a name does not create a capability.
-
-### Exercise 4: remove `call_id` on paper
-
-Draw two calls to the same tool and try to match two returned values without IDs. Thirty seconds with that diagram usually cures the urge to discard correlation fields.
+The next chapter builds that Runtime. Stage 00 stops here deliberately. At this point, keep four boundaries clear: model call, Tool request, Tool execution, and Tool Output.
 
 ---
 
-## 7. Chapter checklist
+## 8. Common mistakes worth naming early
 
-You should now be able to explain, from the code rather than from memorized definitions:
+### “The model knows the function name, so it can run the function.”
 
-- how `response.output_text` differs from the complete response object;
-- what Structured Output guarantees and what it cannot guarantee;
-- why a tool has both a schema and a Python handler;
-- why a Function Call is a proposal rather than an executed action;
-- what `call_id` and `previous_response_id` correlate;
-- why deterministic teaching data is useful here.
+It can generate the name. The application must possess the implementation, allow it, validate the arguments, and invoke it.
 
-Chapter layout:
+### “Strict schema generation means local validation is unnecessary.”
+
+Provider constraints help produce valid data. The execution boundary still checks the concrete input it will use.
+
+### “Valid JSON means trustworthy content.”
+
+JSON establishes syntax and structure. Trust requires evidence, source quality, or application rules.
+
+### “A Tool Call tells me whether execution succeeded.”
+
+A Tool Call only requests execution. Success or failure exists after the handler runs.
+
+### “A confident sentence is evidence.”
+
+Tone is a generation style, not a provenance record. Inspect the data flow and execution trace, not the firmness of the punctuation.
+
+### “More context always makes the model smarter.”
+
+The model acts on context visible to the current call. More text is not automatically more relevant or authoritative. This chapter establishes the boundary without yet designing a context-selection system.
+
+---
+
+## 9. A small failure map
+
+| Failure | First owner of the check |
+|---|---|
+| Missing environment variable | Application startup boundary |
+| Incomplete provider response | API calling code |
+| Empty final text | Output validation boundary |
+| Unparseable Structured Output | Structured Output boundary |
+| Tool arguments are invalid JSON | Argument parsing boundary |
+| Tool name is unknown | Tool routing boundary |
+| Fields, types, or values are invalid | Application validation boundary |
+| Python handler raises | Tool execution boundary |
+
+Keeping errors attached to their layer is much more useful than the universal diagnosis, “the Agent seems confused.”
+
+---
+
+## 10. Exercises
+
+### Exercise 1: prove prose parsing is brittle
+
+Ask the model to express priority with `important`, `urgent`, and `high priority`. Try to parse all three with string rules and record how quickly the patch list grows.
+
+### Exercise 2: add a confidence field
+
+Add `confidence: float` constrained to 0–1 to `TaskCard`. Then explain why `0.99` still does not prove the judgment is correct.
+
+### Exercise 3: create a structurally valid semantic error
+
+Use a request that clearly needs live data, but steer the model toward `needs_external_data=false`. Observe why the schema may still accept it.
+
+### Exercise 4: request the Paris teaching record
+
+Change only the user input. Trace `Paris` through generated arguments, local validation, the handler, and the Tool Output.
+
+### Exercise 5: remove the call ID on paper
+
+Draw two calls to the same Tool and remove their IDs. Try to associate each result with its request.
+
+### Exercise 6: make argument validation fail
+
+Test these shapes conceptually or in a copy:
+
+```json
+{}
+{"city": 42}
+{"city": "Atlantis"}
+{"city": "Tokyo", "debug": true}
+```
+
+Identify the correct rejection layer for each one.
+
+### Exercise 7: separate wording from execution
+
+Have the model generate “the Tool completed successfully” without running the handler. Inspect application state and explain why the sentence is not execution evidence.
+
+---
+
+## 11. Check your understanding
+
+Explain these from the data flow rather than from memorized definitions:
+
+1. Why is `response.output_text` not the entire Response?
+2. What different roles do `instructions` and `input` play?
+3. Which layers of correctness can Structured Output enforce, and which can it not?
+4. Who consumes the Tool schema, and who owns the handler?
+5. At what exact point does a Tool Call become Python execution?
+6. Why should the application validate Tool arguments again?
+7. What does `call_id` correlate, and what does `previous_response_id` correlate?
+8. Why is deterministic teaching data better than live weather for this chapter?
+9. Why is the fixed two-call example not yet a general Agent Runtime?
+
+If you can answer those questions by tracing the program, the foundation is ready.
+
+---
+
+## 12. Chapter files
 
 ```text
 stages/00-foundations/
 ├── README.md
 ├── README.zh-CN.md
 └── code/
-    ├── first_llm_call.py
-    ├── structured_output.py
-    ├── tool_calling.py
+    ├── first_llm_call.py      # first Responses API call
+    ├── structured_output.py   # Pydantic Structured Output
+    ├── tool_calling.py        # complete model → tool → model round trip
     └── requirements.txt
 ```
+
+Complete implementations are maintained only under `code/`; snippets in the chapter explain individual mechanisms.
+
+➡️ [Stage 01: Turn the Tool Loop into an Agent Runtime](../01-react-runtime/README.md)
