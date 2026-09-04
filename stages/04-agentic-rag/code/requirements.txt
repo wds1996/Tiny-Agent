@@ -1,0 +1,4 @@
+openai>=2,<3
+numpy>=1.26
+faiss-cpu>=1.9,<2
+qdrant-client>=1.14,<2

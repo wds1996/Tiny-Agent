@@ -153,18 +153,18 @@ Read with the integrated [Stage 03 chapter](../stages/03-stateful-orchestration/
 
 Install with `.[dev,stage03]` for the framework tests. Checkpoint, interrupt, and resume tests belong to Stage 06.
 
-## Stage 04 — Retrieval, RAG, vector backends, and embeddings
+## Stage 04 — Retrieval, RAG, and Agentic RAG
 
-Read with [Stage 04](../stages/04-agentic-rag/README.md), [vector search](../stages/04-agentic-rag/theory/03-vector-search-and-similarity.md), [FAISS vs vector database](../stages/04-agentic-rag/theory/04-faiss-vs-vector-database.md), and [Agentic RAG](../stages/04-agentic-rag/theory/07-agentic-rag.md).
+Read with the integrated [Stage 04 chapter](../stages/04-agentic-rag/README.md). It develops chunking, metadata, vector representations, cosine ranking, Top-K selection, reranking, Basic RAG, evidence sufficiency, bounded query rewriting, FAISS/Qdrant backend mapping, and retrieval metrics as one continuous evidence-acquisition lesson.
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
-| [`test_retrieval.py`](test_retrieval.py) | Core | Chunk overlap/metadata, invalid chunk settings, cosine behavior, deterministic normalized teaching embeddings, top-k ranking, and metadata filtering before ranking. | Protects the first-principles retrieval semantics underneath every later vector backend. |
-| [`test_rag.py`](test_rag.py) | Core | Basic RAG always retrieves; Agentic RAG may skip retrieval, rewrite once, answer from sufficient evidence, abstain when evidence stays weak, and reject malformed control decisions. | Makes "Agentic RAG" a bounded workflow instead of "keep searching until the model feels confident." |
-| [`test_stage04_vector_backends.py`](test_stage04_vector_backends.py) | Framework | FAISS nearest-neighbor behavior, the deliberate lack of fake native metadata filtering in the teaching adapter, Qdrant local search + payload filter, and LangChain retriever adaptation. | Shows what each backend actually owns instead of flattening all vector systems into one abstraction. |
-| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Framework, offline/shared | The OpenAI embedding adapter follows the provider-neutral embedding contract and validates dimensions using a fake client. Stage 15 reuses this adapter in its production-oriented retrieval path. | Protects the interface boundary between Stage 04 retrieval and later real embedding providers. |
+| [`test_retrieval.py`](test_retrieval.py) | Core | Chunk overlap/metadata, invalid chunk settings, cosine behavior, deterministic normalized teaching embeddings, Top-K ranking, and metadata filtering before ranking. | Protects the first-principles retrieval semantics underneath every backend. |
+| [`test_rag.py`](test_rag.py) | Core | Basic RAG retrieves before answering; Agentic RAG may skip retrieval, rewrite once, answer only from sufficient evidence, abstain when evidence stays weak, and reject malformed control decisions. | Keeps Agentic RAG a bounded evidence workflow rather than an unlimited "search until confident" loop. |
+| [`test_stage04_vector_backends.py`](test_stage04_vector_backends.py) | Framework | FAISS nearest-neighbor behavior, the teaching adapter's explicit metadata-filter limitation, Qdrant local search with payload filtering, and the repository's LangChain Retriever compatibility adapter. | Separates application retrieval semantics from the different responsibilities of concrete backend integrations. |
+| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Framework, offline/shared | The OpenAI embedding adapter follows the provider-neutral embedding contract and validates returned vector dimensions with a fake client. | Protects the boundary between retrieval policy and whichever real embedding provider supplies vectors. |
 
-Install `.[dev,stage04]` for FAISS/Qdrant/LangChain backend tests.
+Install `.[dev,stage04]` for the framework tests. The chapter's own `checks.py` additionally exercises reranking, evidence-bound generation, query-rewrite budgets, and Recall@K / Reciprocal Rank without network access.
 
 ## Stage 05 — MCP and asynchronous Tool execution
 

@@ -37,10 +37,12 @@
 
 | 能力 | Stage |
 |---|---|
-| chunking / embeddings / similarity | 04 |
+| chunking / metadata / embeddings / similarity | 04 |
+| Top-K / metadata filtering / reranking | 04 |
+| Basic RAG / evidence grounding | 04 |
+| bounded Agentic RAG / query rewrite / abstention | 04 |
 | FAISS / Qdrant | 04 |
-| reranking / Agentic RAG | 04 |
-| retrieval evaluation | 04, 10 |
+| retrieval evaluation（Recall@K / MRR） | 04, 10 |
 | MCP Tools / Resources / Prompts | 05 |
 | MCP 2026 stateless core | 05 |
 | MCP extensions / Tasks / MRTR / Apps | 05 advanced |

@@ -153,18 +153,18 @@ pytest -q tests/test_stage13_integrations.py
 
 Framework tests 使用 `.[dev,stage03]`。Checkpoint、Interrupt 与 Resume 的测试集中在 Stage 06。
 
-## Stage 04 — Retrieval、RAG、Vector Backend 与 Embedding
+## Stage 04 — Retrieval、RAG 与 Agentic RAG
 
-对应课程：[Stage 04 中文教程](../stages/04-agentic-rag/README.zh-CN.md)，重点配合 [Vector Search 与 Similarity](../stages/04-agentic-rag/theory/03-vector-search-and-similarity.zh-CN.md)、[FAISS vs Vector Database](../stages/04-agentic-rag/theory/04-faiss-vs-vector-database.zh-CN.md)、[Agentic RAG](../stages/04-agentic-rag/theory/07-agentic-rag.zh-CN.md)。
+对应课程为整合后的 [Stage 04 中文教程](../stages/04-agentic-rag/README.zh-CN.md)。Chunking、metadata、向量表示、cosine ranking、Top-K、reranking、Basic RAG、证据充分性、有界 query rewrite、FAISS/Qdrant 后端映射以及 retrieval metrics 都在主章节中连续讲解。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
-| [`test_retrieval.py`](test_retrieval.py) | Core | Chunk overlap/metadata、非法 chunk 参数、cosine 边界、确定且归一化的教学 embedding、top-k ranking、metadata filter 在 ranking 前生效。 | 保护所有后续向量后端下面的第一性原理 retrieval semantics。 |
-| [`test_rag.py`](test_rag.py) | Core | Basic RAG 必须先 retrieve；Agentic RAG 可以跳过检索、最多进行 bounded query rewrite、证据足够后回答、证据持续不足时 abstain，并拒绝 malformed control decision。 | 让 Agentic RAG 成为 bounded workflow，而不是“模型觉得不够就无限搜”。 |
-| [`test_stage04_vector_backends.py`](test_stage04_vector_backends.py) | Framework | FAISS 最近邻；教学 FAISS adapter 不伪装原生 metadata filtering；Qdrant local mode + payload filter；LangChain Retriever adapter。 | 帮助学习者看到不同 backend 真正负责什么，而不是把所有 vector system 当成同一种东西。 |
-| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Framework，离线/复用 | 用 fake client 验证 OpenAI embedding adapter 遵守 provider-neutral embedding contract 与 dimension 约束。Stage 15 的生产型 retrieval path 也复用它。 | 保护 Stage 04 定义的 embedding interface，使后面替换真实 provider 时不改 retrieval 核心语义。 |
+| [`test_retrieval.py`](test_retrieval.py) | Core | Chunk overlap/metadata、非法 chunk 参数、cosine 边界、确定且归一化的教学 embedding、Top-K ranking，以及 metadata filter 在 ranking 前生效。 | 保护所有具体检索后端下面的第一性原理 retrieval semantics。 |
+| [`test_rag.py`](test_rag.py) | Core | Basic RAG 先检索再回答；Agentic RAG 可以跳过检索、进行一次 query rewrite、只在证据充分时回答、证据持续不足时拒答，并拒绝 malformed control decision。 | 保证 Agentic RAG 是有边界的证据获取流程，而不是“搜到模型觉得有信心为止”。 |
+| [`test_stage04_vector_backends.py`](test_stage04_vector_backends.py) | Framework | FAISS 最近邻行为、教学 adapter 明确不伪装 metadata filtering、Qdrant local mode + payload filter，以及仓库中的 LangChain Retriever 兼容 adapter。 | 帮助区分应用层 retrieval contract 与不同后端真正负责的能力。 |
+| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Framework，离线/复用 | OpenAI embedding adapter 遵守 provider-neutral embedding contract，并通过 fake client 验证返回向量维度。 | 保护 retrieval policy 与真实 embedding provider 之间的接口边界。 |
 
-FAISS/Qdrant/LangChain tests 使用 `.[dev,stage04]`。
+Framework tests 使用 `.[dev,stage04]`。本章自己的 `checks.py` 还会离线验证 reranking、证据约束生成、query rewrite budget、Recall@K 与 Reciprocal Rank。
 
 ## Stage 05 — MCP 与 Async Tool Execution
 
