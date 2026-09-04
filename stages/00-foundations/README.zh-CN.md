@@ -1,313 +1,763 @@
-# Stage 00 — 从一次 LLM 调用开始理解 Agent
+# Stage 00：先别急着造 Agent——把一次模型调用讲明白
 
-> Language: [English](README.md) | 简体中文
+> Language: [English](README.md) | **简体中文**
 
-Stage 00 不急着教你“怎么创建一个 Agent”。
+很多 Agent 教程一上来就摆出框架、装饰器和一长串名词，像是刚学会拧螺丝，就有人递来一架波音飞机的维修手册。本章换一种顺序：先把最基本的零件看清楚。
 
-我们先回答一个更基础、也更容易被教程跳过的问题：
+我们从一次普通的大模型调用出发，依次解决三个问题：
 
-> **当你写下 `client.responses.create(...)` 时，程序、模型和外部世界之间究竟发生了什么？**
+1. Python 程序怎样向模型发出请求并读取响应？
+2. 当结果要交给程序而不是人阅读时，怎样得到稳定的数据结构？
+3. 当任务需要查询数据或执行函数时，模型和应用程序分别负责什么？
 
-如果这个边界没有弄清楚，后面学 Tool Calling、Memory、RAG、LangGraph、MCP 时，很容易把框架 API 背得很熟，却始终不知道哪一部分是模型在做，哪一部分其实是你的程序在做。
+读完本章，你会亲手完成一次完整的 **model → tool → model** 往返，并能准确解释本章最重要的边界：
 
-所以这一阶段只有一个目标：把 Agent 最底层的几块积木真正看懂。
+> **模型负责生成提案，应用程序负责决定是否执行。**
 
----
-
-## 这一阶段会一直用同一个例子
-
-为了避免每一章换一个场景、知识点彼此断开，Stage 00 会围绕一个不断升级的“小型旅行助手”展开。
-
-最开始，它只是一个普通 LLM：
-
-```text
-用户：我要去东京旅行，18°C 大概是什么体感？
-模型：给出自然语言回答
-```
-
-接着，我们会发现自然语言不方便程序继续处理，于是引入 Structured Output：
-
-```text
-用户请求
-   ↓
-模型输出结构化旅行信息
-{city, date, budget, needs_weather}
-```
-
-然后我们会发现模型并不知道真实天气，于是引入 Tool Calling：
-
-```text
-模型提出：get_weather(city="东京")
-          ↓
-Python Runtime 真正执行 Tool
-          ↓
-把 Tool 结果交回模型
-          ↓
-模型继续回答
-```
-
-到这里，你已经能看到一个 Agent loop 的雏形了。
-
-后面三章再继续追问：
-
-- 应该选哪个模型完成不同任务？
-- 每轮调用的 Context、Token、成本和延迟怎么累积？
-- 当信息越来越多时，究竟应该把什么放进下一次模型请求？
-
-这样 Stage 01 的 ReAct Runtime 就不会凭空出现，而是从 Stage 00 的问题自然长出来。
+本章所有完整代码都在 [`code/`](code/) 中，正文在概念第一次出现的位置给出与文件一致的完整代码。阅读时不需要在多个文档之间来回跳转。
 
 ---
 
-## Stage 00 的知识主线
+## 1. 大模型在程序里到底是什么
 
-我建议不要把下面六章理解成六个独立知识点，而是理解成六个连续出现的问题。
-
-```text
-01  我怎样真正调用一次 LLM？
-        ↓
-02  如果程序要读取模型结果，怎样避免解析自然语言？
-        ↓
-03  如果模型需要外部能力，Tool 到底是谁执行的？
-        ↓
-04  不同模型和推理配置应该怎样选择？
-        ↓
-05  多轮调用后，Token / Context / 成本 / 延迟为什么会成为架构问题？
-        ↓
-06  信息越来越多，下一轮模型究竟应该看到什么？
-        ↓
-Stage 01：把这些步骤正式抽象成 Agent Runtime
-```
-
-前 3 章解决的是：
-
-> **模型如何与程序交互？**
-
-后 3 章解决的是：
-
-> **程序应该怎样管理模型调用？**
-
-这是 Stage 00 最重要的两条线。
-
----
-
-## 推荐学习顺序
-
-### 第一步：先让模型真正回答你
-
-阅读：
-
-1. [`theory/01-llm-api-and-messages.zh-CN.md`](theory/01-llm-api-and-messages.zh-CN.md)
-
-然后运行：
-
-```bash
-python stages/00-foundations/code/first_openai_call.py
-```
-
-这一章不要背 API。你只需要真正理解：
+先暂时忘掉“Agent”这个词。对 Python 程序来说，大模型首先是一个远程计算服务：程序提交输入，服务返回响应。
 
 ```text
-你的 Python 程序
-    ↓ 构造请求
-OpenAI Responses API
+用户的问题
     ↓
-模型推理
-    ↓ 返回 Response
-你的 Python 程序继续处理
+Python 程序构造请求
+    ↓
+模型服务生成响应
+    ↓
+Python 程序读取响应
 ```
 
-### 第二步：让模型输出程序能稳定处理的数据
+这条链里有两个行为主体：
 
-阅读：
+- 模型服务会**生成内容**；
+- 你的 Python 程序会**发请求、读结果、调用函数、修改数据**。
 
-2. [`theory/02-structured-output.zh-CN.md`](theory/02-structured-output.zh-CN.md)
+两者不能混为一谈。模型说“邮件已经发送”不代表邮件真的发出去了，正如导航软件说“前方左转”并不会替你转方向盘。它给出了下一步建议，真正的动作仍由外部系统完成。
 
-运行：
+### 1.1 准备运行环境
+
+本章示例使用 Python 3.10 或更高版本，以及 OpenAI Python SDK。先在仓库根目录安装依赖：
 
 ```bash
-python stages/00-foundations/code/structured_output_demo.py
+python -m pip install -r stages/00-foundations/code/requirements.txt
 ```
 
-这里会第一次出现一个非常重要的工程思想：
-
-> **给人看的结果可以是自然语言；给程序做下一步决策的数据，最好有明确结构。**
-
-### 第三步：让模型申请使用外部能力
-
-阅读：
-
-3. [`theory/03-function-calling.zh-CN.md`](theory/03-function-calling.zh-CN.md)
-
-运行：
-
-```bash
-python stages/00-foundations/code/minimal_tool_loop.py
-```
-
-这一章是 Stage 00 的核心。请务必能够解释：
+依赖文件很短：
 
 ```text
-Tool schema != Python function
-ToolCall proposal != Tool execution
-模型生成 arguments != 参数已经安全
-Tool 执行完 != 模型自动知道结果
+openai>=2,<3
+pydantic>=2.11,<3
 ```
 
-### 第四步：理解“选模型”也是应用设计
-
-阅读：
-
-4. [`theory/04-model-capabilities-and-reasoning.zh-CN.md`](theory/04-model-capabilities-and-reasoning.zh-CN.md)
-
-这一章不要求你记住某个模型排行榜，而是学会按任务角色选择模型和推理强度。
-
-### 第五步：开始把每次模型调用当成资源消耗
-
-阅读：
-
-5. [`theory/05-context-tokens-cost-latency.zh-CN.md`](theory/05-context-tokens-cost-latency.zh-CN.md)
-
-运行：
+然后设置两个环境变量。`OPENAI_MODEL` 应选择你项目中可用、并支持 Responses API、Structured Outputs 与 Function Calling 的模型：
 
 ```bash
-python stages/00-foundations/code/context_budget_basics.py
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_MODEL="your-model-id"
 ```
 
-你会看到：Agent 一旦进入循环，同一份 Context 可能被反复发送，因此“多塞一点内容”会同时影响成本、延迟和模型注意力。
-
-### 第六步：学会构造一次真正有边界的模型请求
-
-阅读：
-
-6. [`theory/06-instructions-prompts-and-context-construction.zh-CN.md`](theory/06-instructions-prompts-and-context-construction.zh-CN.md)
-
-最后完成：
-
-7. [`exercises/review-questions.zh-CN.md`](exercises/review-questions.zh-CN.md)
-
----
-
-## 先把 OpenAI 环境准备好
-
-Stage 00 的真实 LLM 示例统一使用当前 OpenAI **Responses API**。这样读者不用一会儿学 Chat Completions、一会儿又换另一套调用方式。
-
-安装项目和 OpenAI 依赖：
-
-```bash
-python -m pip install -e ".[openai]"
-```
-
-配置 API Key：
-
-```bash
-export OPENAI_API_KEY="你的 API Key"
-```
-
-Windows PowerShell：
+不要把 API Key 写进代码或提交到 Git。Windows PowerShell 可以这样设置：
 
 ```powershell
-$env:OPENAI_API_KEY="你的 API Key"
+$env:OPENAI_API_KEY="your-api-key"
+$env:OPENAI_MODEL="your-model-id"
 ```
 
-示例默认使用一个当前可用的 GPT-5.6 系列模型，并允许通过环境变量覆盖：
+示例没有偷偷写死一个“默认模型”。模型名称会变化，不同项目可用的模型也可能不同；显式配置能让报错发生在程序启动时，而不是在读者猜测“为什么教程里的神秘型号用不了”之后。
+
+### 1.2 第一次调用
+
+运行：
 
 ```bash
-export OPENAI_MODEL="gpt-5.6-luna"
+python stages/00-foundations/code/first_llm_call.py
 ```
 
-模型名称会随着 provider 更新而变化，所以不要把某个 model ID 当成课程知识本身。真正应该记住的是请求结构和 Runtime 边界。
+完整代码如下：
 
-OpenAI 当前模型与 Responses API 文档：
+```python
+from __future__ import annotations
 
-- https://developers.openai.com/api/docs/guides/latest-model
-- https://developers.openai.com/api/reference/resources/responses
+import os
+from typing import Any
+
+
+def required_env(name: str) -> str:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        raise RuntimeError(f"Set {name} before running this example.")
+    return value.strip()
+
+
+def create_client() -> Any:
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError(
+            "OpenAI SDK is not installed. Run:\n"
+            "python -m pip install -r "
+            "stages/00-foundations/code/requirements.txt"
+        ) from exc
+
+    required_env("OPENAI_API_KEY")
+    return OpenAI()
+
+
+def main() -> None:
+    client = create_client()
+    model = required_env("OPENAI_MODEL")
+
+    response = client.responses.create(
+        model=model,
+        instructions=(
+            "You are a patient programming teacher. Explain the idea accurately, "
+            "use one concrete analogy, and avoid unexplained jargon."
+        ),
+        input=(
+            "In no more than 120 words, explain why a language model response is "
+            "a proposal produced by a model rather than an action performed by my "
+            "Python program."
+        ),
+    )
+
+    if response.status != "completed":
+        raise RuntimeError(f"The response did not complete: {response.status}")
+    if not response.output_text.strip():
+        raise RuntimeError("The response completed without text output.")
+
+    print("=== response metadata ===")
+    print("response_id:", response.id)
+    print("model:", response.model)
+
+    print("\n=== model output ===")
+    print(response.output_text)
+
+    usage = response.usage
+    if usage is not None:
+        print("\n=== token usage ===")
+        print("input_tokens:", usage.input_tokens)
+        print("output_tokens:", usage.output_tokens)
+        print("total_tokens:", usage.total_tokens)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+这段程序只有一条主线：创建客户端、提交请求、检查状态、读取结果。
+
+```python
+response = client.responses.create(...)
+```
+
+返回的 `response` 不是一段裸字符串，而是一个响应对象。文本只是其中一部分；对象还带有响应编号、实际使用的模型、状态和 token 用量等信息。`response.output_text` 是读取最终文本的便捷入口，不代表整个协议只有文本。
+
+程序还明确检查了：
+
+```python
+if response.status != "completed":
+    ...
+if not response.output_text.strip():
+    ...
+```
+
+“请求没有抛异常”与“得到了可用答案”不是同一件事。把检查写出来，能避免后面的代码抱着空字符串继续狂奔，最后在十公里外摔倒。
+
+### 1.3 `instructions` 和 `input` 为什么分开
+
+示例中：
+
+```python
+instructions="You are a patient programming teacher..."
+input="In no more than 120 words..."
+```
+
+两者承担不同职责：
+
+```text
+instructions  应用希望模型遵守的行为约束
+input         当前这一次真正要处理的任务
+```
+
+将来源不同的内容分开，比把所有文字拼成一条巨型字符串更容易维护。程序以后需要替换任务时，不必同时改动行为约束；需要调整输出风格时，也不必重写用户问题。
+
+到这里，我们完成的是一次普通模型调用。人可以直接阅读自然语言，但程序很快会提出一个更挑剔的问题：**我怎样稳定地读取这些内容？**
 
 ---
 
-## Stage 00 最重要的心智模型
+## 2. 自然语言适合交流，不适合充当脆弱的接口
 
-整个 Tiny-Agent 后面十几个阶段，其实都在不断扩展下面这张图：
+假设程序要把用户请求整理成任务卡。模型返回下面这段话，人一眼就能看懂：
 
 ```text
-               Application / Runtime
-┌───────────────────────────────────────────┐
-│ 选择模型                                  │
-│ 构造 instructions                         │
-│ 选择 Context                              │
-│ 暴露 Tool schema                          │
-│ 校验模型输出                              │
-│ 判断权限                                  │
-│ 执行真实 Python / API                     │
-│ 保存状态                                  │
-│ 控制成本、步骤和停止条件                   │
-└───────────────────────────────────────────┘
-                       │
-                       │ request
-                       ▼
-                 ┌───────────┐
-                 │    LLM    │
-                 │           │
-                 │ 根据收到的 │
-                 │ Context   │
-                 │ 生成下一步 │
-                 └───────────┘
-                       │
-                       │ text / structured data / ToolCall
-                       ▼
-               Application / Runtime
+This looks fairly important. We probably need current weather data first.
 ```
 
-可以把模型想成一个非常强的“语义决策引擎”，但不要把它想成整个程序。
+程序却很为难。你当然可以写：
 
-它可以说：
+```python
+if "important" in answer.lower():
+    priority = "high"
+```
 
-> “我建议调用 `get_weather(city="东京")`。”
+但这相当于拿关键词猜协议。模型把 `important` 换成 `urgent`，程序就突然失忆。
 
-但真正决定：
+程序更希望得到这样的对象：
 
-- 这个 Tool 是否存在；
-- 参数是否合法；
-- 当前用户有没有权限；
-- 是否需要审批；
-- Python 函数是否真的执行；
-- 结果怎样保存和送回下一轮；
+```json
+{
+  "goal": "compare current weather in Tokyo and Paris",
+  "priority": "medium",
+  "needs_external_data": true,
+  "reason": "current weather must be retrieved"
+}
+```
 
-的是应用 Runtime。
+这就是 **Structured Output（结构化输出）** 要解决的问题：让模型输出满足一个机器可检查的数据结构。
 
-因此从 Stage 00 开始一直记住一句话：
+### 2.1 用 Pydantic 写出数据契约
 
-> **模型负责提出下一步；应用负责决定这一步能不能、应不应该、以及怎样真正发生。**
+运行：
+
+```bash
+python stages/00-foundations/code/structured_output.py
+```
+
+完整代码：
+
+```python
+from __future__ import annotations
+
+import os
+from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class Priority(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class TaskCard(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    goal: str = Field(min_length=1)
+    priority: Priority
+    needs_external_data: bool
+    reason: str = Field(min_length=1)
+
+
+def required_env(name: str) -> str:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        raise RuntimeError(f"Set {name} before running this example.")
+    return value.strip()
+
+
+def create_client() -> Any:
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError(
+            "OpenAI SDK is not installed. Run:\n"
+            "python -m pip install -r "
+            "stages/00-foundations/code/requirements.txt"
+        ) from exc
+
+    required_env("OPENAI_API_KEY")
+    return OpenAI()
+
+
+def main() -> None:
+    client = create_client()
+    model = required_env("OPENAI_MODEL")
+
+    response = client.responses.parse(
+        model=model,
+        instructions=(
+            "Turn the request into a task card. Describe only the request itself; "
+            "do not guess the weather or pretend that external data was retrieved."
+        ),
+        input=(
+            "Compare the current weather in Tokyo and Paris and tell me which city "
+            "is warmer."
+        ),
+        text_format=TaskCard,
+    )
+
+    if response.status != "completed":
+        raise RuntimeError(f"The response did not complete: {response.status}")
+
+    task = response.output_parsed
+    if task is None:
+        raise RuntimeError("The response contained no parsed TaskCard.")
+
+    print(task.model_dump_json(indent=2))
+    print(
+        "\nThe shape is validated. The claims still need to be checked against "
+        "real data."
+    )
+
+
+if __name__ == "__main__":
+    main()
+```
+
+这里先用 Pydantic 定义程序真正需要的数据：
+
+```python
+class TaskCard(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    goal: str = Field(min_length=1)
+    priority: Priority
+    needs_external_data: bool
+    reason: str = Field(min_length=1)
+```
+
+这不是“请尽量返回 JSON”的礼貌请求，而是一份明确契约：
+
+- `priority` 只能取 `low`、`medium`、`high`；
+- 必要字段不能缺失；
+- `goal` 和 `reason` 不能为空；
+- `extra="forbid"` 禁止模型随手塞入契约之外的字段。
+
+随后，SDK 根据这个模型解析响应：
+
+```python
+response = client.responses.parse(
+    ...,
+    text_format=TaskCard,
+)
+task = response.output_parsed
+```
+
+拿到的 `task` 已经是 `TaskCard`，程序可以直接写 `task.priority`，而不必从一段自然语言里考古。
+
+### 2.2 结构正确，不等于内容正确
+
+这是本节最重要的边界：
+
+```text
+字段齐全、类型正确
+        ≠
+判断真实、结论可靠
+```
+
+结构化输出可以保证 `needs_external_data` 是布尔值，却不能保证模型对它的判断一定正确。模型也可能生成一个格式无可挑剔、内容一本正经地错了的对象——西装穿得很整齐，不代表简历没有注水。
+
+因此，Structured Output 解决的是：
+
+> **程序怎样可靠地读取模型输出。**
+
+它没有解决：
+
+> **模型怎样获得它本来不知道的外部事实。**
+
+而“比较当前天气”恰好需要外部数据。接下来，我们让模型学会请求一个由 Python 提供的能力。
 
 ---
 
-## 学完这一阶段，你应该能自己讲出什么？
+## 3. Tool Calling：模型提议调用，程序真正执行
 
-不要用“我看完了六篇 Markdown”作为完成标准。
-
-真正的完成标准是：你能不用看笔记，给别人讲清楚下面这条链路：
+模型本身不会自动运行你的 Python 函数。要让它使用外部能力，应用需要准备两样东西：
 
 ```text
-用户输入
-    ↓
-应用选择 instructions / Context / Tools
-    ↓
-调用 OpenAI Responses API
-    ↓
-模型输出文本 / Structured Output / ToolCall
-    ↓
-应用解析并校验
-    ↓
-如果是 ToolCall：Runtime 执行真实函数
-    ↓
-将 Tool 结果作为 function_call_output 交回模型
-    ↓
-模型继续决策或生成最终回答
+给模型看的工具说明
+├── name
+├── description
+└── parameters（JSON Schema）
+
+给程序执行的函数
+└── Python handler
 ```
 
-然后再回答三个问题：
+工具说明告诉模型“有什么能力、何时使用、参数长什么样”；Python 函数才负责真正查询或计算。
 
-1. 为什么“模型支持 Tool Calling”不等于“模型拥有这个 Tool 的权限”？
-2. 为什么“支持超长 Context”不等于“应该把所有信息都塞进去”？
-3. 为什么一次 Function Calling 还不能称为完整的生产级 Agent？
+可以把模型想成隔着玻璃办公的聪明同事。它能递出一张申请单：
 
-如果这三个问题你能讲明白，Stage 01 就已经有了牢固地基。
+```json
+{
+  "name": "get_teaching_weather",
+  "arguments": {"city": "Tokyo"}
+}
+```
+
+但玻璃门的钥匙仍在应用程序手里。程序要检查工具名、解析参数、调用函数，再把结果送回去。
+
+### 3.1 为什么使用“教学天气”而不使用实时天气
+
+本章使用固定数据：
+
+```python
+TEACHING_WEATHER = {
+    "Tokyo": {"temperature_c": 18.0, "condition": "cloudy"},
+    "Paris": {"temperature_c": 12.0, "condition": "light rain"},
+}
+```
+
+它不是天气预报。固定数据能让每位读者看到相同结果，把注意力放在 Tool Calling 的控制流程上，而不是先处理网络、认证和第三方接口波动。
+
+### 3.2 完成一次 model → tool → model 往返
+
+运行：
+
+```bash
+python stages/00-foundations/code/tool_calling.py
+```
+
+完整代码：
+
+```python
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+
+TEACHING_WEATHER = {
+    "Tokyo": {"temperature_c": 18.0, "condition": "cloudy"},
+    "Paris": {"temperature_c": 12.0, "condition": "light rain"},
+}
+
+WEATHER_TOOL = {
+    "type": "function",
+    "name": "get_teaching_weather",
+    "description": (
+        "Return the deterministic teaching weather record for Tokyo or Paris. "
+        "Use this function whenever the user asks about those teaching records."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "city": {
+                "type": "string",
+                "enum": sorted(TEACHING_WEATHER),
+                "description": "The city whose teaching record should be read.",
+            }
+        },
+        "required": ["city"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+
+def required_env(name: str) -> str:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        raise RuntimeError(f"Set {name} before running this example.")
+    return value.strip()
+
+
+def create_client() -> Any:
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError(
+            "OpenAI SDK is not installed. Run:\n"
+            "python -m pip install -r "
+            "stages/00-foundations/code/requirements.txt"
+        ) from exc
+
+    required_env("OPENAI_API_KEY")
+    return OpenAI()
+
+
+def get_teaching_weather(city: str) -> dict[str, Any]:
+    try:
+        record = TEACHING_WEATHER[city]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported city: {city}") from exc
+    return {"city": city, **record}
+
+
+def parse_arguments(raw_arguments: str) -> dict[str, Any]:
+    try:
+        arguments = json.loads(raw_arguments)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Tool arguments are not valid JSON: {raw_arguments!r}") from exc
+    if not isinstance(arguments, dict):
+        raise RuntimeError("Tool arguments must decode to a JSON object.")
+    return arguments
+
+
+def validate_weather_arguments(arguments: dict[str, Any]) -> str:
+    if set(arguments) != {"city"}:
+        raise RuntimeError("get_teaching_weather expects exactly one field: city")
+    city = arguments["city"]
+    if not isinstance(city, str):
+        raise RuntimeError("The city argument must be a string.")
+    if city not in TEACHING_WEATHER:
+        raise RuntimeError(f"Unsupported city: {city}")
+    return city
+
+
+def main() -> None:
+    client = create_client()
+    model = required_env("OPENAI_MODEL")
+
+    first = client.responses.create(
+        model=model,
+        instructions=(
+            "Use the supplied function to read teaching weather records. A function "
+            "call only requests an action; never claim a result before the function "
+            "output is returned."
+        ),
+        input=(
+            "Read Tokyo's deterministic teaching weather record and report the "
+            "temperature and condition."
+        ),
+        tools=[WEATHER_TOOL],
+        tool_choice={"type": "function", "name": "get_teaching_weather"},
+        parallel_tool_calls=False,
+    )
+
+    if first.status != "completed":
+        raise RuntimeError(f"The first response did not complete: {first.status}")
+
+    calls = [item for item in first.output if item.type == "function_call"]
+    if len(calls) != 1:
+        raise RuntimeError(f"Expected exactly one function call, received {len(calls)}.")
+
+    call = calls[0]
+    if call.name != "get_teaching_weather":
+        raise RuntimeError(f"The model requested an unknown function: {call.name}")
+
+    arguments = parse_arguments(call.arguments)
+    city = validate_weather_arguments(arguments)
+    result = get_teaching_weather(city)
+
+    print("=== model proposed ===")
+    print(call.name, arguments)
+    print("\n=== application executed ===")
+    print(result)
+
+    final = client.responses.create(
+        model=model,
+        instructions=(
+            "Answer only from the returned function output. Make clear that this is "
+            "a deterministic teaching record, not live weather."
+        ),
+        previous_response_id=first.id,
+        input=[
+            {
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": json.dumps(result, ensure_ascii=False),
+            }
+        ],
+        tools=[WEATHER_TOOL],
+        tool_choice="none",
+    )
+
+    if final.status != "completed":
+        raise RuntimeError(f"The final response did not complete: {final.status}")
+    if not final.output_text.strip():
+        raise RuntimeError("The final response completed without text output.")
+
+    print("\n=== final answer ===")
+    print(final.output_text)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+不要把这段程序当成一坨一百多行的代码。按时间顺序看，它只有五步。
+
+#### 第一步：把工具说明交给模型
+
+```python
+first = client.responses.create(
+    ...,
+    tools=[WEATHER_TOOL],
+    tool_choice={"type": "function", "name": "get_teaching_weather"},
+    parallel_tool_calls=False,
+)
+```
+
+`tool_choice` 在这个教学例子中强制模型请求指定函数，`parallel_tool_calls=False` 将本轮限制为单个调用。这样我们可以稳定观察一条最小路径，而不是把“模型这次会不会主动调用”混进控制流程实验。
+
+此时模型返回的是 Function Call（函数调用）。**函数还没有执行。**
+
+#### 第二步：验证模型请求的工具
+
+```python
+if call.name != "get_teaching_weather":
+    raise RuntimeError(...)
+```
+
+不要把模型返回的字符串直接交给 `globals()` 或动态执行。模型可以提议一个名称，但程序只允许调用自己明确注册和检查过的函数。
+
+#### 第三步：解析参数并由 Python 执行
+
+```python
+arguments = parse_arguments(call.arguments)
+result = get_teaching_weather(**arguments)
+```
+
+真正读取 `TEACHING_WEATHER` 的是 Python 函数。模型没有越过边界，也没有神秘地“接管”解释器。
+
+#### 第四步：把结果与原调用关联起来
+
+```python
+{
+    "type": "function_call_output",
+    "call_id": call.call_id,
+    "output": json.dumps(result, ensure_ascii=False),
+}
+```
+
+`call_id` 不是装饰。它说明这份结果属于哪一次请求。即使两个调用使用同一个工具名，它们仍可能是不同动作：
+
+```text
+call_A -> get_teaching_weather(Tokyo)
+call_B -> get_teaching_weather(Paris)
+```
+
+只看工具名无法区分二者，`call_id` 保留了这条因果关系。
+
+#### 第五步：让模型基于真实结果回答
+
+```python
+final = client.responses.create(
+    previous_response_id=first.id,
+    input=[function_call_output],
+    tools=[WEATHER_TOOL],
+    tool_choice="none",
+)
+```
+
+`previous_response_id` 把第二次响应接在第一次响应之后；新的输入只包含程序刚刚产生的工具结果。第二轮使用 `tool_choice="none"`，明确要求模型停止请求工具并生成文字。
+
+完整时间线是：
+
+```text
+用户提出任务
+    ↓
+模型生成 Function Call（提案）
+    ↓
+Python 检查名称与参数
+    ↓
+Python 执行函数（动作）
+    ↓
+程序生成 Function Call Output（观察结果）
+    ↓
+模型根据观察结果生成最终文字
+```
+
+这就是本章真正要建立的心智模型。
+
+---
+
+## 4. 三个容易混淆的概念
+
+### 4.1 Structured Output 不是 Tool Calling
+
+两者都使用结构化数据，但目的不同：
+
+```text
+Structured Output
+    模型返回一个供程序读取的数据对象
+
+Tool Calling
+    模型返回一个希望程序执行的动作请求
+```
+
+一张填写规范的申请表仍然只是申请表，不会自己跑去仓库取货。
+
+### 4.2 Tool Calling 不是 Tool Execution
+
+```text
+模型返回 Tool Call
+        ≠
+Python 函数已经运行
+```
+
+只有当应用程序完成检查并显式调用处理函数，动作才真正发生。这个边界决定了谁拥有控制权。
+
+### 4.3 模型输出不是系统事实
+
+无论是自然语言、结构化对象还是 Tool Call，它们首先都是模型生成的内容。程序需要根据用途进行解析、验证和执行，不能因为内容“看起来很像协议”就自动授予它事实地位或执行能力。
+
+---
+
+## 5. 我们现在完成了什么
+
+本章没有造出一个可以无限自主工作的 Agent，也没有必要假装已经造出来。
+
+我们完成的是一个边界清楚的最小闭环：
+
+```text
+一次模型调用
+    ↓
+机器可读的结构化输出
+    ↓
+模型提出工具调用
+    ↓
+应用执行并返回结果
+    ↓
+模型基于结果回答
+```
+
+当前 `tool_calling.py` 明确写死了“先调用一次工具，再请求一次最终回答”。如果任务需要零次、两次或更多次工具调用，继续复制 `first`、`second`、`third` 很快会把程序写成报站员。下一章会从这个实际问题出发，把重复的控制流程整理成一个小型 Runtime。
+
+➡️ [Stage 01：让模型循环工作——亲手写一个最小 Agent Runtime](../01-react-runtime/README.zh-CN.md)
+
+---
+
+## 6. 动手练习
+
+练习的目标不是背术语，而是通过修改程序观察边界。
+
+### 练习一：让结构约束与事实判断打架
+
+给 `TaskCard` 增加一个 `confidence: float` 字段，并约束在 0 到 1 之间。观察结构校验能保证什么，再回答：`confidence=0.99` 是否证明模型判断正确？
+
+### 练习二：允许查询巴黎
+
+修改 `tool_calling.py` 的用户问题，让模型读取巴黎。不要改 handler，只观察参数如何沿着函数调用、Python 函数和函数调用结果传播。
+
+### 练习三：故意制造未知工具
+
+把允许的工具名检查临时改错，观察程序在哪一步停止。然后思考：为什么“模型知道一个名字”不等于“程序里存在这个能力”？
+
+### 练习四：去掉 `call_id`
+
+先在纸上画两次同名调用，再尝试说明每份结果属于谁。这个实验通常只需要三十秒，就能治好“这个字段看起来可以省略”的冲动。
+
+---
+
+## 7. 本章检查表
+
+读完后，你应该能够不用背定义，直接解释下面这些问题：
+
+- `response.output_text` 与完整 `response` 对象有什么区别？
+- Structured Output 保证了什么，又没有保证什么？
+- Tool 的参数结构和 Python 处理函数分别给谁使用？
+- 为什么函数调用只是提案？
+- `call_id` 和 `previous_response_id` 各自关联什么？
+- 为什么本章使用固定教学数据而不是实时天气？
+
+本章目录：
+
+```text
+stages/00-foundations/
+├── README.zh-CN.md
+├── README.md
+└── code/
+    ├── first_llm_call.py
+    ├── structured_output.py
+    ├── tool_calling.py
+    └── requirements.txt
+```
