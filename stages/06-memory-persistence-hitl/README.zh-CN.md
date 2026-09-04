@@ -99,7 +99,7 @@ node restart on resume
 20. 原 process 消失后仍能 resume human-reviewed workflow；
 21. 讨论 memory ownership、consent、retention、deletion、multi-tenant isolation；
 22. 解释 memory poisoning，以及 procedural memory 为什么需要更强 governance；
-23. 知道 Stage 08 应观察哪些 memory/HITL signal。
+23. 知道 Stage 10 应观察哪些 memory/HITL signal。
 
 ---
 
@@ -584,9 +584,9 @@ Stage 06 不宣称已经完成全部 production memory engineering。
 - secret-management system；
 - enterprise RBAC/ABAC approval system；
 - distributed exactly-once side-effect semantics；
-- retry/circuit-breaker/tool sandbox policy（Stage 07）；
-- memory/HITL metrics/tracing（Stage 08）；
-- full service/deployment operations（Stage 10）。
+- retry/circuit-breaker/tool sandbox policy（Stage 09）；
+- memory/HITL metrics/tracing（Stage 10）；
+- full service/deployment operations（Stage 13）。
 
 ---
 

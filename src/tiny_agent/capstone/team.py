@@ -28,7 +28,7 @@ class ReviewOutcome:
 
 
 class ResearchReviewTeam:
-    """Bounded supervisor -> critic -> writer coordination using Stage 09 core."""
+    """Bounded supervisor -> critic -> writer coordination using Stage 11 core."""
 
     def __init__(self, model: ResearchModel) -> None:
         self.model = model

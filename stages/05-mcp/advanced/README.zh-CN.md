@@ -79,7 +79,7 @@ rendered UI
 
 Capability list 的 deterministic ordering 与 cache hint，也有助于 client 保持稳定、可缓存的 capability catalog。
 
-这与 Stage 06A 直接相连：server 可以拥有很多 capability，但进入 model context 的仍应只是当前需要的 subset。
+这与 Stage 07 直接相连：server 可以拥有很多 capability，但进入 model context 的仍应只是当前需要的 subset。
 
 ---
 
@@ -107,7 +107,7 @@ MCP Tasks 表达的是：
 long-running remote capability execution
 ```
 
-Tiny-Agent Stage 10A 处理的是更大的 application harness 问题：
+Tiny-Agent Stage 14 处理的是更大的 application harness 问题：
 
 ```text
 local TaskLedger

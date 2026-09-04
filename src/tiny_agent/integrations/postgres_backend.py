@@ -14,7 +14,7 @@ class PostgresPool:
         try:
             from psycopg_pool import AsyncConnectionPool
         except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("PostgresPool requires the Stage 10 optional dependency") from exc
+            raise RuntimeError("PostgresPool requires the Stage 13 optional dependency") from exc
         self._pool: Any = AsyncConnectionPool(
             conninfo=dsn,
             min_size=min_size,

@@ -354,7 +354,7 @@ whether human approval is required
 
 Schema validation and authorization are separate layers.
 
-Stage 07 will deepen this, but Stage 05 must keep the boundary correct from day one.
+Stage 09 will deepen this, but Stage 05 must keep the boundary correct from day one.
 
 ---
 

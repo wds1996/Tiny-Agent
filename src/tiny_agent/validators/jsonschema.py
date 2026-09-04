@@ -1,6 +1,6 @@
-"""Full JSON Schema adapter for Stage 07.
+"""Full JSON Schema adapter for Stage 09.
 
-This module intentionally depends on the optional ``stage07`` extra so earlier
+This module intentionally depends on the optional ``stage09`` extra so earlier
 learning stages keep a lightweight base installation.
 """
 

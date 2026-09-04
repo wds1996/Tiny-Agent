@@ -236,7 +236,7 @@ def diversify(results, top_k=4, max_per_document=1):
     return selected
 ```
 
-Stage 11 uses this idea in `DiversifiedResearchCorpus`.
+Stage 15 uses this idea in `DiversifiedResearchCorpus`.
 
 Diversity is a heuristic. Some questions legitimately require several passages from one long document, so tune policy to the task.
 

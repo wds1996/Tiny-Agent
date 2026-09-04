@@ -216,7 +216,7 @@ class TeamRuntime:
     not create new authority or bypass these controls.
 
     Async Agent handlers are awaited directly. Sync handlers run in a worker
-    thread so `fan_out()` does not block the event loop. As in Stage 07, thread
+    thread so `fan_out()` does not block the event loop. As in Stage 09, thread
     isolation is not hard termination or a security sandbox.
     """
 
@@ -371,7 +371,7 @@ class TeamRuntime:
                 if inspect.isawaitable(value):
                     value = await value
             if not isinstance(value, str):
-                raise AgentOutputError("Agent handlers must return text in Stage 09 core.")
+                raise AgentOutputError("Agent handlers must return text in Stage 11 core.")
             result = AgentInvocation(source, target, mode, "ok", value, None)
         except asyncio.CancelledError:
             raise
@@ -398,7 +398,7 @@ class TeamRuntime:
 
 
 def coordination_metrics(state: CoordinationState) -> dict[str, float]:
-    """Convert run-scoped coordination state into Stage 08-style metrics."""
+    """Convert run-scoped coordination state into Stage 10-style metrics."""
 
     participants = {state.active_agent}
     failures = 0

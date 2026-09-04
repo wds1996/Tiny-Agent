@@ -143,7 +143,7 @@ def extract_pdf_text(path: str | Path) -> str:
         from pypdf import PdfReader
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
-            "PDF ingestion requires Stage 11 dependencies: python -m pip install -e '.[stage11]'"
+            "PDF ingestion requires Stage 15 dependencies: python -m pip install -e '.[stage15]'"
         ) from exc
     reader = PdfReader(str(path))
     pages = [(page.extract_text() or "").strip() for page in reader.pages]

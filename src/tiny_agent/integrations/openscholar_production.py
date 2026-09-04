@@ -61,7 +61,7 @@ def build_authenticated_openscholar_app(service: BoundedAgentService, *, authent
         from fastapi import FastAPI, HTTPException, Request
         from pydantic import BaseModel, ConfigDict, Field, ValidationError
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("production OpenScholar API requires Stage 11 dependencies") from exc
+        raise RuntimeError("production OpenScholar API requires Stage 15 dependencies") from exc
 
     class Body(BaseModel):
         model_config = ConfigDict(extra="forbid")

@@ -46,28 +46,28 @@ Tiny-Agent 面向那些不希望把 Agent 学成“一堆框架装饰器”的�
 
 ---
 
-# 2026 课程体系
+# 课程体系
 
-数字编号 Stage 构成原始能力进阶路线。字母扩展 Stage 来自 2026 年全项目审查，用于补齐现代 Context、Skills、Sandbox 与长期运行 Harness 等关键能力，同时不打乱已经成熟的历史编号。
+Tiny-Agent 采用一条连续的整数 Stage 路线。每一章只解决一组彼此紧密相关的问题，并为下一章准备必要的概念。
 
 | Stage | 能力 | 核心问题 |
 |---|---|---|
-| [00](stages/00-foundations/README.zh-CN.md) | LLM / messages / Structured Output / Tool Calling / 模型与上下文基础 | 模型究竟做什么？哪些责任仍属于应用？ |
-| [01](stages/01-react-runtime/README.zh-CN.md) | ReAct 与核心 runtime | 一次 ToolCall 如何变成有边界的 decide-act-observe 循环？ |
-| [02](stages/02-planning-routing/README.zh-CN.md) | Workflow / routing / planning | 哪些控制决策应当确定化，哪些才交给模型？ |
-| [03](stages/03-stateful-orchestration/README.zh-CN.md) | 显式 state 与 LangGraph | 什么时候需要状态机或图运行时？ |
-| [04](stages/04-agentic-rag/README.zh-CN.md) | RAG 与 Agentic retrieval | Agent 如何获得并评估外部证据？ |
-| [05](stages/05-mcp/README.zh-CN.md) | MCP 2026 | 如何跨边界标准化外部能力与上下文？ |
-| [06](stages/06-memory-persistence-hitl/README.zh-CN.md) | Memory / durability / HITL | 什么信息应该持久化？执行如何安全暂停与恢复？ |
-| [06A](stages/06a-context-engineering/README.zh-CN.md) | Context Engineering | 在有限注意力预算下，这一轮模型究竟应该看到什么？ |
-| [06B](stages/06b-agent-skills/README.zh-CN.md) | Agent Skills | 可复用程序性知识如何被发现并按需加载？ |
-| [07](stages/07-reliability-safety/README.zh-CN.md) | Reliability / safety / governance | 如何限制、验证、授权、重试以及拒绝执行？ |
-| [08](stages/08-evaluation-observability/README.zh-CN.md) | Tracing 与 evaluation | 到底发生了什么？结果是否优秀？新版本是否回归？ |
-| [09](stages/09-multi-agent/README.zh-CN.md) | Multi-Agent / A2A | 什么时候 delegation / handoff 才能产生可测量价值？ |
-| [09A](stages/09a-agent-workspace-sandbox/README.zh-CN.md) | Workspace 与 sandbox compute | Agent 在哪里检查文件、运行命令，同时又不直接获得宿主机权限？ |
-| [10](stages/10-production-deployment/README.zh-CN.md) | Production service / identity / durable jobs | 当其他用户或 Agent 开始依赖这个服务后，系统发生了什么变化？ |
-| [10A](stages/10a-long-horizon-harness/README.zh-CN.md) | Long-horizon harness | Agent 如何跨会话、worker 与 sandbox 丢失持续推进任务？ |
-| [11](stages/11-capstone-enterprise-agent/README.zh-CN.md) | OpenScholar capstone | 这些机制能否组合成一个真正证据驱动的 Agent 系统？ |
+| [00](stages/00-foundations/README.zh-CN.md) | 模型调用 / Structured Output / Tool Calling | 模型究竟产生了什么？哪些责任仍属于应用程序？ |
+| [01](stages/01-react-runtime/README.zh-CN.md) | ReAct 风格 Agent Runtime | 一次 ToolCall 如何变成有边界的 decide-act-observe 循环？ |
+| [02](stages/02-workflows-routing-planning/README.zh-CN.md) | Workflow / Routing / Planning | 哪些控制决策应该保持确定性，哪些才值得交给模型判断？ |
+| [03](stages/03-stateful-orchestration/README.zh-CN.md) | 显式 State 与编排 | 什么时候需要把状态和状态转移明确表示出来？ |
+| [04](stages/04-agentic-rag/README.zh-CN.md) | Retrieval 与 Agentic RAG | Agent 如何获得并判断外部证据？ |
+| [05](stages/05-mcp/README.zh-CN.md) | MCP | 如何通过标准协议边界暴露外部能力与上下文？ |
+| [06](stages/06-memory-persistence-hitl/README.zh-CN.md) | Memory / Persistence / HITL | 哪些信息需要跨轮次或进程保存？执行如何暂停和恢复？ |
+| [07](stages/07-context-engineering/README.zh-CN.md) | Context Engineering | 当前这一轮模型究竟应该看到什么？ |
+| [08](stages/08-agent-skills/README.zh-CN.md) | Agent Skills | 可复用的程序性知识如何被发现并按需加载？ |
+| [09](stages/09-reliability-safety/README.zh-CN.md) | Reliability / Safety / Governance | 如何验证、限制、授权、重试以及拒绝执行？ |
+| [10](stages/10-evaluation-observability/README.zh-CN.md) | Observability 与 Evaluation | 到底发生了什么？结果是否优秀？新版本是否回归？ |
+| [11](stages/11-multi-agent/README.zh-CN.md) | Multi-Agent / A2A | 什么时候 delegation 或 handoff 才能产生可测量价值？ |
+| [12](stages/12-agent-workspace-sandbox/README.zh-CN.md) | Workspace 与 Sandbox Compute | Agent 在哪里读写文件、运行命令，又不直接获得宿主机权限？ |
+| [13](stages/13-production-deployment/README.zh-CN.md) | Production Service / Durable Jobs | 当真实用户和其他系统开始依赖 Agent 服务后，会发生什么变化？ |
+| [14](stages/14-long-horizon-harness/README.zh-CN.md) | Long-horizon Harness | 任务如何跨会话、worker 与 sandbox 丢失继续推进？ |
+| [15](stages/15-capstone-enterprise-agent/README.zh-CN.md) | OpenScholar Capstone | 这些机制能否组合成一个证据驱动的完整 Agent 系统？ |
 
 详细能力覆盖：**[现代 Agent 能力地图](docs/modern-agent-competency-map.zh-CN.md)**  
 框架与协议映射：**[框架与工具地图](docs/framework-and-tooling-map.zh-CN.md)**
@@ -77,37 +77,39 @@ Tiny-Agent 面向那些不希望把 Agent 学成“一堆框架装饰器”的�
 # 能力阶梯
 
 ```text
-LLM call
+模型调用
   ↓
-Structured decision / ToolCall
+Structured Output / Tool Calling
   ↓
-ReAct runtime
+Agent Runtime
   ↓
-workflow / router / planner
+Workflow / Router / Planner
   ↓
-explicit state graph
+显式 State 与编排
   ↓
-retrieval and external evidence
+检索与外部证据
   ↓
-MCP capability boundary
+MCP 能力边界
   ↓
-memory / checkpoint / HITL
+Memory / Persistence / HITL
   ↓
-context engineering + Agent Skills
+Context Engineering
   ↓
-reliability / permissions / budgets
+Agent Skills
   ↓
-tracing / evaluation / regression
+可靠性 / 权限 / Budget
   ↓
-multi-Agent / A2A
+可观测性 / 评估 / 回归
   ↓
-governed workspace / sandbox compute
+Multi-Agent / A2A
   ↓
-production identity / jobs / infrastructure
+受治理的 Workspace / Sandbox Compute
   ↓
-long-horizon resumable harness
+生产身份 / Jobs / 基础设施
   ↓
-OpenScholar capstone
+可恢复的 Long-horizon Harness
+  ↓
+OpenScholar Capstone
 ```
 
 这个仓库**并不认为图越往下就一定越高级、越适合你的任务**。只使用任务真正需要的复杂度。
@@ -189,15 +191,15 @@ python -m pip install -e ".[dev,stage03]"   # LangGraph / LangChain
 python -m pip install -e ".[dev,stage04]"   # FAISS / Qdrant / LangChain retrieval
 python -m pip install -e ".[dev,stage05]"   # MCP v2
 python -m pip install -e ".[dev,stage06]"   # SQLite/Postgres checkpointing
-python -m pip install -e ".[dev,stage06b]"  # Agent Skills YAML parsing
-python -m pip install -e ".[dev,stage07]"   # jsonschema / Pydantic / Tenacity
-python -m pip install -e ".[dev,stage08]"   # LangSmith / OpenTelemetry
-python -m pip install -e ".[dev,stage09]"   # OpenAI Agents SDK / A2A
-python -m pip install -e ".[dev,stage10]"   # FastAPI / Postgres / Redis / A2A server
-python -m pip install -e ".[dev,stage11]"   # 完整 OpenScholar integrations
+python -m pip install -e ".[dev,stage08]"  # Agent Skills YAML parsing
+python -m pip install -e ".[dev,stage09]"   # jsonschema / Pydantic / Tenacity
+python -m pip install -e ".[dev,stage10]"   # LangSmith / OpenTelemetry
+python -m pip install -e ".[dev,stage11]"   # OpenAI Agents SDK / A2A
+python -m pip install -e ".[dev,stage13]"   # FastAPI / Postgres / Redis / A2A server
+python -m pip install -e ".[dev,stage15]"   # 完整 OpenScholar integrations
 ```
 
-Stage 06A、09A 与 10A 的手写机制主要依赖标准库与 Tiny-Agent core。只有实际运行 Stage 09A 的容器 sandbox 示例时，Docker 才是外部运行时要求。
+Stage 07、09A 与 10A 的手写机制主要依赖标准库与 Tiny-Agent core。只有实际运行 Stage 12 的容器 sandbox 示例时，Docker 才是外部运行时要求。
 
 ---
 
@@ -230,7 +232,7 @@ Stage 06A、09A 与 10A 的手写机制主要依赖标准库与 Tiny-Agent core�
 
 # OpenScholar 最终 Capstone
 
-Stage 11 刻意不是“再做一个框架 Demo”。它组合了：
+Stage 15 刻意不是“再做一个框架 Demo”。它组合了：
 
 ```text
 bounded planning

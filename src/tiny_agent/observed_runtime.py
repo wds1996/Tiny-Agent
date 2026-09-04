@@ -8,7 +8,7 @@ from .observability import Tracer
 
 
 class ObservedGuardedToolExecutor:
-    """Add trace spans around the Stage 07 deterministic execution boundary.
+    """Add trace spans around the Stage 09 deterministic execution boundary.
 
     The wrapped executor still owns validation, authorization, approval,
     budgets, retries, and timeout behavior. This adapter only observes the

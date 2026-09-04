@@ -356,7 +356,7 @@ Consent、authentication、authorization、execution boundary 仍然由 Host 控
 
 Capability list 可以稳定/cacheable，避免 client 每次重建巨大 Tool catalog，也有利于上游 prompt cache 稳定。
 
-这直接连接 Stage 06A context engineering：
+这直接连接 Stage 07 context engineering：
 
 ```text
 server owns many capabilities
@@ -383,7 +383,7 @@ authorization:  may this caller perform this action?
 
 Tool 出现在 `tools/list` 里，只回答第一问。
 
-Stage 07/10 再完整展开 runtime/service policy。
+Stage 09/10 再完整展开 runtime/service policy。
 
 ---
 

@@ -291,7 +291,7 @@ provenance
 memory evaluation / anomaly detection
 ```
 
-This will connect directly to Stage 07 safety.
+This will connect directly to Stage 09 safety.
 
 ---
 
@@ -347,7 +347,7 @@ The right design depends on memory shape.
 
 # 13. Observability: evaluate memory behavior, not just final answers
 
-Stage 08 will formalize evaluation, but Stage 06 should already record useful events:
+Stage 10 will formalize evaluation, but Stage 06 should already record useful events:
 
 ```text
 memory candidate proposed

@@ -97,7 +97,7 @@ After Stage 06, you should be able to:
 20. resume a human-reviewed workflow after the original process is gone;
 21. reason about memory ownership, consent, retention, deletion, and multi-tenant isolation;
 22. explain memory poisoning and why procedural memory needs stronger governance;
-23. identify the observability/evaluation signals that Stage 08 should later measure.
+23. identify the observability/evaluation signals that Stage 10 should later measure.
 
 ---
 
@@ -591,9 +591,9 @@ Deferred or expanded later:
 - secret-management systems;
 - enterprise RBAC/ABAC approval systems;
 - distributed exactly-once side-effect semantics;
-- retry/circuit-breaker/tool sandbox policy (Stage 07);
-- memory/HITL metrics and tracing (Stage 08);
-- full service/deployment operations (Stage 10).
+- retry/circuit-breaker/tool sandbox policy (Stage 09);
+- memory/HITL metrics and tracing (Stage 10);
+- full service/deployment operations (Stage 13).
 
 This stage establishes the correct architecture and durable local/production-backend mechanics before those layers arrive.
 

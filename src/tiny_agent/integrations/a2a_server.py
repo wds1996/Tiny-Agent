@@ -14,7 +14,7 @@ def build_a2a_starlette_app(
     """Build a current A2A 1.0 Starlette service with explicit shutdown drain.
 
     Imports remain lazy so the Tiny-Agent core does not depend on the optional
-    Stage 10 web/A2A stack. The default in-memory task store is appropriate for
+    Stage 13 web/A2A stack. The default in-memory task store is appropriate for
     teaching and smoke tests only; production replicas need shared durable task
     semantics if clients depend on task lookup/resubscription.
     """
@@ -29,8 +29,8 @@ def build_a2a_starlette_app(
         from starlette.applications import Starlette
     except ImportError as exc:  # pragma: no cover - optional extra boundary
         raise RuntimeError(
-            "A2A serving requires the Stage 10 optional dependency: "
-            "python -m pip install -e '.[stage10]'"
+            "A2A serving requires the Stage 13 optional dependency: "
+            "python -m pip install -e '.[stage13]'"
         ) from exc
 
     handler = DefaultRequestHandler(

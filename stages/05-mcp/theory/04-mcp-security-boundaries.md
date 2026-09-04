@@ -297,7 +297,7 @@ unexpected/internal error
 
 and redact model-visible details.
 
-We intentionally do not pretend Stage 05 has solved the entire Stage 07 safety layer.
+We intentionally do not pretend Stage 05 has solved the entire Stage 09 safety layer.
 
 ---
 

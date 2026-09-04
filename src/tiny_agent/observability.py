@@ -42,7 +42,7 @@ class TraceCapturePolicy:
 
     Raw inputs and outputs are disabled by default. Observability is useful only
     if it does not silently undo the redaction and least-privilege boundaries
-    established in Stage 07.
+    established in Stage 09.
     """
 
     capture_inputs: bool = False

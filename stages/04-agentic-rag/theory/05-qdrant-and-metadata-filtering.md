@@ -155,7 +155,7 @@ Do **not** let the model invent:
 
 and treat it as authorization.
 
-Stage 07 will formalize permission boundaries, but RAG needs the idea now.
+Stage 09 will formalize permission boundaries, but RAG needs the idea now.
 
 ---
 

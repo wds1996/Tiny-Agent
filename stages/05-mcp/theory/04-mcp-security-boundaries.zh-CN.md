@@ -273,7 +273,7 @@ unexpected/internal error
 
 并控制 model-visible detail。
 
-Stage 05 不会假装已经替 Stage 07 把安全层全部做完。
+Stage 05 不会假装已经替 Stage 09 把安全层全部做完。
 
 ---
 

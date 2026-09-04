@@ -147,7 +147,7 @@ tenant_id == current_tenant
 
 然后把它当 authorization。
 
-Stage 07 会把 permission boundary 系统化，但 RAG 在这里就必须建立这个概念。
+Stage 09 会把 permission boundary 系统化，但 RAG 在这里就必须建立这个概念。
 
 ---
 

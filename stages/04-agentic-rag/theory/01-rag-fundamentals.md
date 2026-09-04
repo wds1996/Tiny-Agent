@@ -267,7 +267,7 @@ The fact that text came from your knowledge base does not make it a trusted inst
 
 Treat retrieved passages as **data**, not executable policy or higher-priority instructions.
 
-Stage 07 will study prompt injection in depth, but Stage 04 already establishes the boundary:
+Stage 09 will study prompt injection in depth, but Stage 04 already establishes the boundary:
 
 ```text
 retrieved content

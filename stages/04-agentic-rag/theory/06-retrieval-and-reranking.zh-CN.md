@@ -226,7 +226,7 @@ def diversify(results, top_k=4, max_per_document=1):
     return selected
 ```
 
-Stage 11 的 `DiversifiedResearchCorpus` 使用了这个思想。
+Stage 15 的 `DiversifiedResearchCorpus` 使用了这个思想。
 
 但 diversity 只是 heuristic。有些问题确实需要同一长文档多个 passage，所以 policy 要按任务调。
 

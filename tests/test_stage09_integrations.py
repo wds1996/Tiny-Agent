@@ -1,71 +1,65 @@
-from tiny_agent.integrations.a2a import A2ASkillDescriptor, build_agent_card
+import pytest
+from pydantic import BaseModel, ConfigDict, ValidationError
+from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_none
+
+from tiny_agent import ToolInputError, TransientToolError
+from tiny_agent.validators.jsonschema import JsonSchemaToolArgumentsValidator
 
 
-def test_openai_agents_sdk_manager_and_handoff_objects_build_offline():
-    from agents import Agent
+def test_jsonschema_adapter_handles_schema_features_beyond_teaching_subset():
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "target": {
+                "oneOf": [
+                    {"type": "string", "pattern": "^doc-"},
+                    {"type": "integer", "minimum": 1},
+                ]
+            }
+        },
+        "required": ["target"],
+        "additionalProperties": False,
+    }
+    validator = JsonSchemaToolArgumentsValidator()
 
-    refund_agent = Agent(
-        name="Refund specialist",
-        instructions="Handle refund questions only.",
+    validator.validate(schema, {"target": "doc-7"})
+    with pytest.raises(ToolInputError):
+        validator.validate(schema, {"target": "wrong-prefix"})
+
+
+def test_tenacity_can_express_bounded_retry_predicate_without_retrying_fatal_errors():
+    calls = 0
+
+    def flaky():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TransientToolError("temporary")
+        return "ok"
+
+    retryer = Retrying(
+        stop=stop_after_attempt(2),
+        wait=wait_none(),
+        retry=retry_if_exception_type(TransientToolError),
+        reraise=True,
     )
 
-    refund_tool = refund_agent.as_tool(
-        tool_name="refund_expert",
-        tool_description="Ask the refund specialist for a bounded subtask.",
-    )
-    assert refund_tool.name == "refund_expert"
-    assert "refund specialist" in refund_tool.description.lower()
-
-    manager = Agent(
-        name="Support manager",
-        instructions="Own the user conversation and call specialists when useful.",
-        tools=[refund_tool],
-    )
-    assert len(manager.tools) == 1
-
-    triage = Agent(
-        name="Triage",
-        instructions="Transfer refund conversations to the refund specialist.",
-        handoffs=[refund_agent],
-    )
-    assert len(triage.handoffs) == 1
+    assert retryer(flaky) == "ok"
+    assert calls == 2
 
 
-def test_a2a_1_agent_card_builder_uses_current_interface_shape():
-    card = build_agent_card(
-        name="Tiny Research Agent",
-        description="Answers evidence-grounded research questions.",
-        version="0.1.0",
-        url="https://example.com/a2a",
-        streaming=True,
-        skills=[
-            A2ASkillDescriptor(
-                id="research",
-                name="Research",
-                description="Find and synthesize evidence.",
-                tags=("research", "evidence"),
-                examples=("Compare two approaches.",),
-            )
-        ],
-    )
+def test_pydantic_strict_mode_rejects_type_coercion_at_application_boundary():
+    class TransferArgs(BaseModel):
+        model_config = ConfigDict(strict=True, extra="forbid")
+        amount: int
+        currency: str
 
-    assert card.name == "Tiny Research Agent"
-    assert card.capabilities.streaming is True
-    assert len(card.supported_interfaces) == 1
-    assert card.supported_interfaces[0].protocol_binding == "JSONRPC"
-    assert card.supported_interfaces[0].protocol_version == "1.0"
-    assert card.skills[0].id == "research"
+    assert TransferArgs.model_validate({"amount": 10, "currency": "USD"}).amount == 10
 
-
-def test_a2a_message_and_request_objects_build_without_network():
-    from a2a.types import Message, Part, Role, SendMessageRequest
-
-    message = Message(
-        role=Role.ROLE_USER,
-        message_id="message-1",
-        parts=[Part(text="Please summarize the report.")],
-    )
-    request = SendMessageRequest(message=message)
-
-    assert request.message.message_id == "message-1"
-    assert request.message.parts[0].text == "Please summarize the report."
+    with pytest.raises(ValidationError):
+        TransferArgs.model_validate({"amount": "10", "currency": "USD"})
+    with pytest.raises(ValidationError):
+        TransferArgs.model_validate(
+            {"amount": 10, "currency": "USD", "surprise": "extra"}
+        )

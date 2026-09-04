@@ -31,7 +31,7 @@ def build_agent_card(
     """Build an A2A 1.0 AgentCard using the optional official Python SDK.
 
     The import stays inside the function so Tiny-Agent's lightweight core does
-    not require the A2A SDK unless the Stage 09 interoperability extra is used.
+    not require the A2A SDK unless the Stage 11 interoperability extra is used.
     """
 
     if not name.strip() or not description.strip() or not version.strip() or not url.strip():
@@ -43,8 +43,8 @@ def build_agent_card(
         from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
     except ImportError as exc:  # pragma: no cover - exercised only without optional extra
         raise RuntimeError(
-            "A2A integration requires the Stage 09 optional dependency: "
-            "python -m pip install -e '.[stage09]'"
+            "A2A integration requires the Stage 11 optional dependency: "
+            "python -m pip install -e '.[stage11]'"
         ) from exc
 
     return AgentCard(

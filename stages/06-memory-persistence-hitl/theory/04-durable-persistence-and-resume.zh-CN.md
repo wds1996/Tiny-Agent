@@ -233,7 +233,7 @@ payment_api.charge(
 - prepare/commit 分离；
 - 让 operation 天然 idempotent。
 
-Stage 07 会继续深入 reliability。
+Stage 09 会继续深入 reliability。
 
 ---
 

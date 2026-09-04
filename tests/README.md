@@ -94,10 +94,10 @@ Framework-heavy Stages use the extras listed in the root README, for example:
 python -m pip install -e ".[dev,stage03]"
 pytest -q tests/test_langgraph_runtime.py tests/test_stage03_frameworks.py
 
-python -m pip install -e ".[dev,stage07]"
+python -m pip install -e ".[dev,stage09]"
 pytest -q tests/test_validation.py tests/test_reliability.py \
   tests/test_governance.py tests/test_guarded_runtime.py \
-  tests/test_stage07_integrations.py
+  tests/test_stage09_integrations.py
 ```
 
 Tests that really need external infrastructure are intentionally explicit:
@@ -108,7 +108,7 @@ pytest -q tests/test_stage06_postgres.py
 
 TEST_REDIS_URL='redis://...' \
 TEST_POSTGRES_URI='postgresql://...' \
-pytest -q tests/test_stage10_integrations.py
+pytest -q tests/test_stage13_integrations.py
 ```
 
 Do not put real production credentials in commands, fixtures, test output, or committed files.
@@ -130,7 +130,7 @@ Read with the consolidated [Stage 01 chapter](../stages/01-react-runtime/README.
 
 ## Stage 02 — Routing, structured decisions, planning, and budgets
 
-Read with [Stage 02](../stages/02-planning-routing/README.md), [routing patterns](../stages/02-planning-routing/theory/02-routing-patterns.md), [planning/replanning](../stages/02-planning-routing/theory/03-planning-and-replanning.md), and [Planner/Executor](../stages/02-planning-routing/theory/04-planner-executor.md).
+Read with the consolidated [Stage 02](../stages/02-workflows-routing-planning/README.md). The chapter develops deterministic workflows, hybrid routing, structured planning, Planner/Executor separation, bounded replanning, and execution budgets as one continuous control-flow lesson.
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
@@ -162,7 +162,7 @@ Read with [Stage 04](../stages/04-agentic-rag/README.md), [vector search](../sta
 | [`test_retrieval.py`](test_retrieval.py) | Core | Chunk overlap/metadata, invalid chunk settings, cosine behavior, deterministic normalized teaching embeddings, top-k ranking, and metadata filtering before ranking. | Protects the first-principles retrieval semantics underneath every later vector backend. |
 | [`test_rag.py`](test_rag.py) | Core | Basic RAG always retrieves; Agentic RAG may skip retrieval, rewrite once, answer from sufficient evidence, abstain when evidence stays weak, and reject malformed control decisions. | Makes "Agentic RAG" a bounded workflow instead of "keep searching until the model feels confident." |
 | [`test_stage04_vector_backends.py`](test_stage04_vector_backends.py) | Framework | FAISS nearest-neighbor behavior, the deliberate lack of fake native metadata filtering in the teaching adapter, Qdrant local search + payload filter, and LangChain retriever adaptation. | Shows what each backend actually owns instead of flattening all vector systems into one abstraction. |
-| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Framework, offline/shared | The OpenAI embedding adapter follows the provider-neutral embedding contract and validates dimensions using a fake client. Stage 11 reuses this adapter in its production-oriented retrieval path. | Protects the interface boundary between Stage 04 retrieval and later real embedding providers. |
+| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Framework, offline/shared | The OpenAI embedding adapter follows the provider-neutral embedding contract and validates dimensions using a fake client. Stage 15 reuses this adapter in its production-oriented retrieval path. | Protects the interface boundary between Stage 04 retrieval and later real embedding providers. |
 
 Install `.[dev,stage04]` for FAISS/Qdrant/LangChain backend tests.
 
@@ -190,66 +190,66 @@ Read with [Stage 06](../stages/06-memory-persistence-hitl/README.md), [context/s
 
 Use `.[dev,stage06]`; Postgres tests require a test database.
 
-## Stage 06A — Context Engineering
+## Stage 07 — Context Engineering
 
-Read with [Stage 06A](../stages/06a-context-engineering/README.md), especially [context as an attention budget](../stages/06a-context-engineering/theory/01-context-is-an-attention-budget.md) and [selection/compaction](../stages/06a-context-engineering/theory/02-context-assembly-selection-compaction.md).
+Read with [Stage 07](../stages/07-context-engineering/README.md), especially [context as an attention budget](../stages/07-context-engineering/theory/01-context-is-an-attention-budget.md) and [selection/compaction](../stages/07-context-engineering/theory/02-context-assembly-selection-compaction.md).
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
 | [`test_context_engineering.py`](test_context_engineering.py) | Core | Required and high-priority items survive selection, required context fails closed if it cannot fit, and compaction records provenance plus estimated token savings. | A context window is a budgeted selection problem, not a bucket that should always be filled. |
 
-## Stage 06B — Agent Skills
+## Stage 08 — Agent Skills
 
-Read with [Stage 06B](../stages/06b-agent-skills/README.md), especially [Skill format/progressive disclosure](../stages/06b-agent-skills/theory/02-skill-format-and-progressive-disclosure.md).
+Read with [Stage 08](../stages/08-agent-skills/README.md), especially [Skill format/progressive disclosure](../stages/08-agent-skills/theory/02-skill-format-and-progressive-disclosure.md).
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
 | [`test_skills.py`](test_skills.py) | Core/framework-format | Skill metadata can be discovered without loading the full procedure, activation loads instructions/allowed Tools/references, and the declared Skill name must match its directory. | Progressive disclosure only works if discovery and activation are distinct, validated operations. |
 
-Install `.[dev,stage06b]` for YAML parsing.
+Install `.[dev,stage08]` for YAML parsing.
 
-## Stage 07 — Reliability, safety, and governance
+## Stage 09 — Reliability, safety, and governance
 
-Read with [Stage 07](../stages/07-reliability-safety/README.md), [failure model](../stages/07-reliability-safety/theory/01-agent-failure-modes.md), [validation](../stages/07-reliability-safety/theory/02-validation-and-output-handling.md), [timeouts/retries](../stages/07-reliability-safety/theory/03-timeout-retry-cancellation.md), [budgets/loops](../stages/07-reliability-safety/theory/04-execution-budgets-and-loops.md), [permissions](../stages/07-reliability-safety/theory/05-tool-permissions-and-least-privilege.md), and [prompt injection/sandboxing](../stages/07-reliability-safety/theory/06-prompt-injection-and-sandboxing.md).
+Read with [Stage 09](../stages/09-reliability-safety/README.md), [failure model](../stages/09-reliability-safety/theory/01-agent-failure-modes.md), [validation](../stages/09-reliability-safety/theory/02-validation-and-output-handling.md), [timeouts/retries](../stages/09-reliability-safety/theory/03-timeout-retry-cancellation.md), [budgets/loops](../stages/09-reliability-safety/theory/04-execution-budgets-and-loops.md), [permissions](../stages/09-reliability-safety/theory/05-tool-permissions-and-least-privilege.md), and [prompt injection/sandboxing](../stages/09-reliability-safety/theory/06-prompt-injection-and-sandboxing.md).
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
 | [`test_validation.py`](test_validation.py) | Core | The teaching JSON-Schema subset accepts supported valid inputs and fails closed on missing/wrong/extra/nested values; malformed application schemas are distinguished from bad model arguments. | Validation must happen before execution, and developer schema bugs should not be mislabeled as model errors. |
 | [`test_reliability.py`](test_reliability.py) | Core | Safe failure classification/redaction, retryable timeout, explicit safe errors, bounded backoff, Tool/retry/token/cost budgets, fingerprints, and repeated-call detection. | Reliability policy needs typed data; it cannot be reconstructed from arbitrary exception strings. |
 | [`test_governance.py`](test_governance.py) | Core | Default-deny permissions, role allowlists, approval separate from authorization, high-risk approval gates, and exact argument binding via stable fingerprints. | Approval for one reviewed action must not become a reusable permission token for another action. |
-| [`test_guarded_runtime.py`](test_guarded_runtime.py) | Core composition | Composes validation -> permission -> approval -> budget -> loop check -> execution -> timeout/retry -> safe failure. It verifies that blocked calls never reach the handler and retries happen only for retry-safe operations. | This is the main executable specification of the Stage 07 guarded execution pipeline. |
+| [`test_guarded_runtime.py`](test_guarded_runtime.py) | Core composition | Composes validation -> permission -> approval -> budget -> loop check -> execution -> timeout/retry -> safe failure. It verifies that blocked calls never reach the handler and retries happen only for retry-safe operations. | This is the main executable specification of the Stage 09 guarded execution pipeline. |
 | [`test_trust.py`](test_trust.py) | Core | External content is labeled untrusted; simple prompt-injection detection is treated as a signal rather than authorization policy. | "Looks suspicious" and "is allowed to control execution" are completely different questions. |
-| [`test_stage07_integrations.py`](test_stage07_integrations.py) | Framework | Full `jsonschema` features, Tenacity bounded retry predicates, and Pydantic strict application boundaries. | Maps the handwritten safety concepts to mature libraries without surrendering application policy. |
+| [`test_stage09_integrations.py`](test_stage09_integrations.py) | Framework | Full `jsonschema` features, Tenacity bounded retry predicates, and Pydantic strict application boundaries. | Maps the handwritten safety concepts to mature libraries without surrendering application policy. |
 
-Install with `.[dev,stage07]` for integration-library tests.
+Install with `.[dev,stage09]` for integration-library tests.
 
-## Stage 08 — Observability and evaluation
+## Stage 10 — Observability and evaluation
 
-Read with [Stage 08](../stages/08-evaluation-observability/README.md), [tracing/observability](../stages/08-evaluation-observability/theory/02-tracing-and-observability.md), [Tool/trajectory evaluation](../stages/08-evaluation-observability/theory/03-tool-and-trajectory-evaluation.md), [LLM-as-judge](../stages/08-evaluation-observability/theory/05-graders-and-llm-as-judge.md), and [quality/cost/latency regression](../stages/08-evaluation-observability/theory/06-quality-cost-latency-and-regression.md).
+Read with [Stage 10](../stages/10-evaluation-observability/README.md), [tracing/observability](../stages/10-evaluation-observability/theory/02-tracing-and-observability.md), [Tool/trajectory evaluation](../stages/10-evaluation-observability/theory/03-tool-and-trajectory-evaluation.md), [LLM-as-judge](../stages/10-evaluation-observability/theory/05-graders-and-llm-as-judge.md), and [quality/cost/latency regression](../stages/10-evaluation-observability/theory/06-quality-cost-latency-and-regression.md).
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
 | [`test_observability.py`](test_observability.py) | Core | Parent/child trace trees, privacy-safe default capture, opt-in redaction/truncation, nested sanitization, and safe exception recording. | Observability must help engineers without turning traces into a second secret-leak channel. |
-| [`test_observed_runtime.py`](test_observed_runtime.py) | Core composition | Wraps the guarded Tool executor with tracing, verifies Agent -> Tool span parentage, useful attributes/attempt counts, and safe failure classification without raw arguments or secret exception text. | Shows how Stage 07 execution semantics become Stage 08 observable behavior. |
+| [`test_observed_runtime.py`](test_observed_runtime.py) | Core composition | Wraps the guarded Tool executor with tracing, verifies Agent -> Tool span parentage, useful attributes/attempt counts, and safe failure classification without raw arguments or secret exception text. | Shows how Stage 09 execution semantics become Stage 10 observable behavior. |
 | [`test_evaluation.py`](test_evaluation.py) | Core | Tool precision/recall/F1, argument accuracy, trajectory sequence vs policy safety, repetitions, execution success, metric coverage, regression gates, higher/lower-is-better metrics, LLM-judge validation, and non-finite-number rejection. | A correct final string is not enough; trajectory, safety, coverage, cost, and statistical comparability are separate signals. |
-| [`test_stage08_integrations.py`](test_stage08_integrations.py) | Framework | LangSmith tracing can be disabled offline; OpenTelemetry exports nested spans and records error status without leaking exception messages/events. | Verifies production observability mappings while preserving the privacy boundary defined by the core tracer. |
+| [`test_stage10_integrations.py`](test_stage10_integrations.py) | Framework | LangSmith tracing can be disabled offline; OpenTelemetry exports nested spans and records error status without leaking exception messages/events. | Verifies production observability mappings while preserving the privacy boundary defined by the core tracer. |
 
-Install with `.[dev,stage08]`.
+Install with `.[dev,stage10]`.
 
-## Stage 09 — Multi-Agent coordination and A2A
+## Stage 11 — Multi-Agent coordination and A2A
 
-Read with [Stage 09](../stages/09-multi-agent/README.md), [delegation/handoff/supervision](../stages/09-multi-agent/theory/02-delegation-handoffs-supervision.md), [context ownership](../stages/09-multi-agent/theory/03-context-ownership-and-shared-state.md), [parallel coordination](../stages/09-multi-agent/theory/04-parallelism-and-coordination.md), and [delegation governance](../stages/09-multi-agent/theory/05-delegation-governance.md).
+Read with [Stage 11](../stages/11-multi-agent/README.md), [delegation/handoff/supervision](../stages/11-multi-agent/theory/02-delegation-handoffs-supervision.md), [context ownership](../stages/11-multi-agent/theory/03-context-ownership-and-shared-state.md), [parallel coordination](../stages/11-multi-agent/theory/04-parallelism-and-coordination.md), and [delegation governance](../stages/11-multi-agent/theory/05-delegation-governance.md).
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
 | [`test_multi_agent.py`](test_multi_agent.py) | Core | Delegation keeps manager ownership, successful handoff transfers ownership, failed handoff does not, context is projected, policies default-deny, handoff loops/parallelism are bounded, fan-out is prevalidated, failures are redacted, and coordination metrics distinguish attempts from successes. | Multi-Agent is a coordination/control problem, not merely "call several models." |
-| [`test_stage09_integrations.py`](test_stage09_integrations.py) | Framework, offline | OpenAI Agents SDK manager-as-Tool vs handoff objects, current A2A 1.0 Agent Card shape, and A2A Message/request objects without network calls. | Maps Tiny-Agent coordination semantics to real ecosystem interfaces while keeping the test deterministic. |
+| [`test_stage11_integrations.py`](test_stage11_integrations.py) | Framework, offline | OpenAI Agents SDK manager-as-Tool vs handoff objects, current A2A 1.0 Agent Card shape, and A2A Message/request objects without network calls. | Maps Tiny-Agent coordination semantics to real ecosystem interfaces while keeping the test deterministic. |
 
-Install with `.[dev,stage09]`.
+Install with `.[dev,stage11]`.
 
-## Stage 09A — Workspace and sandbox compute
+## Stage 12 — Workspace and sandbox compute
 
-Read with [Stage 09A](../stages/09a-agent-workspace-sandbox/README.md), [workspace/file policy](../stages/09a-agent-workspace-sandbox/theory/02-files-artifacts-and-workspace-policy.md), and [container isolation/threat model](../stages/09a-agent-workspace-sandbox/theory/03-container-isolation-and-threat-model.md).
+Read with [Stage 12](../stages/12-agent-workspace-sandbox/README.md), [workspace/file policy](../stages/12-agent-workspace-sandbox/theory/02-files-artifacts-and-workspace-policy.md), and [container isolation/threat model](../stages/12-agent-workspace-sandbox/theory/03-container-isolation-and-threat-model.md).
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
@@ -257,43 +257,43 @@ Read with [Stage 09A](../stages/09a-agent-workspace-sandbox/README.md), [workspa
 
 The test builds the Docker command; it does not need to launch a real container.
 
-## Stage 10 — Production service, identity, jobs, and infrastructure
+## Stage 13 — Production service, identity, jobs, and infrastructure
 
-Read with [Stage 10](../stages/10-production-deployment/README.md), [service boundaries/identities](../stages/10-production-deployment/theory/01-service-boundaries-and-identities.md), [async/concurrency/streaming](../stages/10-production-deployment/theory/02-async-concurrency-streaming.md), [Postgres/Redis/state](../stages/10-production-deployment/theory/03-postgres-redis-and-state.md), and [authentication/tenancy/durable jobs](../stages/10-production-deployment/theory/08-authentication-tenancy-and-durable-jobs.md).
+Read with [Stage 13](../stages/13-production-deployment/README.md), [service boundaries/identities](../stages/13-production-deployment/theory/01-service-boundaries-and-identities.md), [async/concurrency/streaming](../stages/13-production-deployment/theory/02-async-concurrency-streaming.md), [Postgres/Redis/state](../stages/13-production-deployment/theory/03-postgres-redis-and-state.md), and [authentication/tenancy/durable jobs](../stages/13-production-deployment/theory/08-authentication-tenancy-and-durable-jobs.md).
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
 | [`test_production.py`](test_production.py) | Core | Bounded async service execution, sync handlers off the event loop, backpressure/capacity rejection, typed timeouts, the subtle rule that a timed-out sync thread still occupies capacity until it actually finishes, and privacy-safe readiness failures. | An HTTP timeout does not magically kill a worker thread; service capacity must reflect real execution. |
 | [`test_service_identity.py`](test_service_identity.py) | Core | Client payloads cannot assert trusted identity; authenticated subject/tenant are server-bound; owner checks enforce both subject and tenant. | `user_id` from request JSON is data, not authentication. |
 | [`test_jobs.py`](test_jobs.py) | Core/durable | SQLite run queue survives object recreation, uses leases, and only the worker that owns the lease can complete the job. | Durable work needs explicit ownership after the request/process that created it is gone. |
-| [`test_stage10_integrations.py`](test_stage10_integrations.py) | Framework + Service | FastAPI liveness/readiness/run/request-id/streaming, safe HTTP failures, secret-safe settings, current A2A route serving, plus real Redis fixed-window and Postgres pool checks when their environment variables are present. | This is the main service-boundary integration suite for Stage 10. |
+| [`test_stage13_integrations.py`](test_stage13_integrations.py) | Framework + Service | FastAPI liveness/readiness/run/request-id/streaming, safe HTTP failures, secret-safe settings, current A2A route serving, plus real Redis fixed-window and Postgres pool checks when their environment variables are present. | This is the main service-boundary integration suite for Stage 13. |
 
-Install `.[dev,stage10]`. Redis/Postgres cases require their explicit test-service environment variables.
+Install `.[dev,stage13]`. Redis/Postgres cases require their explicit test-service environment variables.
 
-## Stage 10A — Long-horizon harness
+## Stage 14 — Long-horizon harness
 
-Read with [Stage 10A](../stages/10a-long-horizon-harness/README.md).
+Read with [Stage 14](../stages/14-long-horizon-harness/README.md).
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
 | [`test_harness.py`](test_harness.py) | Core/durable | A task ledger externalizes progress, a new runtime object resumes unfinished work, and a task left `running` by a crashed worker is recovered and retried. | Long-horizon progress must survive model session/process loss; "the chat remembers" is not a durability mechanism. |
 
-[`test_jobs.py`](test_jobs.py) is also relevant here: Stage 10A builds on Stage 10 durable job/lease concepts, but the task ledger and service run queue remain different scopes.
+[`test_jobs.py`](test_jobs.py) is also relevant here: Stage 14 builds on Stage 13 durable job/lease concepts, but the task ledger and service run queue remain different scopes.
 
-## Stage 11 — OpenScholar capstone
+## Stage 15 — OpenScholar capstone
 
-Read with [Stage 11](../stages/11-capstone-enterprise-agent/README.md). These tests deliberately combine mechanisms from earlier Stages instead of re-teaching them in isolation.
+Read with [Stage 15](../stages/15-capstone-enterprise-agent/README.md). These tests deliberately combine mechanisms from earlier Stages instead of re-teaching them in isolation.
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
 | [`test_capstone.py`](test_capstone.py) | Core composition | Evidence thresholds/abstention, grounded report evaluation, explicit-request memory, HITL-gated export, workspace path confinement, and unknown-citation detection. | Proves that a research Agent must be evidence-governed even when every individual component works. |
 | [`test_capstone_v2.py`](test_capstone_v2.py) | Core + Framework | Diversifies repeated chunks from one document, reuses the Stage 04 Qdrant retriever contract, and separates semantic citation support from mere citation-label existence. | A citation marker can exist and still fail to support the claim. Retrieval diversity is also a synthesis-quality concern. |
-| [`test_openscholar_production.py`](test_openscholar_production.py) | Framework | Serves OpenScholar through an authenticated FastAPI boundary and proves identity comes from server authentication, not request-body `user_id`. | Reconnects the capstone to Stage 10 identity/tenant rules. |
-| [`test_stage11_integrations.py`](test_stage11_integrations.py) | Framework composition | LangGraph OpenScholar completion, HITL resume/export, base + graph HTTP implementations, and smoke tests for the Stage 11 MCP, A2A, and API examples. | Final composition check that the major ecosystem boundaries can coexist without changing the domain invariants. |
+| [`test_openscholar_production.py`](test_openscholar_production.py) | Framework | Serves OpenScholar through an authenticated FastAPI boundary and proves identity comes from server authentication, not request-body `user_id`. | Reconnects the capstone to Stage 13 identity/tenant rules. |
+| [`test_stage15_integrations.py`](test_stage15_integrations.py) | Framework composition | LangGraph OpenScholar completion, HITL resume/export, base + graph HTTP implementations, and smoke tests for the Stage 15 MCP, A2A, and API examples. | Final composition check that the major ecosystem boundaries can coexist without changing the domain invariants. |
 
-`test_openai_embeddings.py` is also run in the Stage 11 path because the capstone can replace the deterministic teaching embedding with a provider adapter.
+`test_openai_embeddings.py` is also run in the Stage 15 path because the capstone can replace the deterministic teaching embedding with a provider adapter.
 
-Install with `.[dev,stage11]` for the complete integration suite.
+Install with `.[dev,stage15]` for the complete integration suite.
 
 ---
 
@@ -303,10 +303,10 @@ Some tests intentionally belong to more than one lesson. That is a feature: late
 
 | Test file | Connects | What it protects |
 |---|---|---|
-| [`test_workflow_safety.py`](test_workflow_safety.py) | Stage 02 workflows + Stage 07 safe failures | Expected `StepFailure` may expose an explicitly safe operational message, while an unexpected exception keeps only a safe type/classification and does not copy internal secret text into workflow state. |
-| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Stage 04 retrieval + Stage 11 production retrieval | The provider-specific embedding implementation must continue to satisfy the same provider-neutral `EmbeddingModel` contract used by earlier retrieval code. |
-| [`test_observed_runtime.py`](test_observed_runtime.py) | Stage 07 guarded execution + Stage 08 tracing | Adding observability must not bypass redaction/permission/failure semantics. |
-| [`test_jobs.py`](test_jobs.py) | Stage 10 durable jobs + Stage 10A harness | Both need durable ownership/progress, but a service run lease is not the same object as the harness task ledger. |
+| [`test_workflow_safety.py`](test_workflow_safety.py) | Stage 02 workflows + Stage 09 safe failures | Expected `StepFailure` may expose an explicitly safe operational message, while an unexpected exception keeps only a safe type/classification and does not copy internal secret text into workflow state. |
+| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Stage 04 retrieval + Stage 15 production retrieval | The provider-specific embedding implementation must continue to satisfy the same provider-neutral `EmbeddingModel` contract used by earlier retrieval code. |
+| [`test_observed_runtime.py`](test_observed_runtime.py) | Stage 09 guarded execution + Stage 10 tracing | Adding observability must not bypass redaction/permission/failure semantics. |
+| [`test_jobs.py`](test_jobs.py) | Stage 13 durable jobs + Stage 14 harness | Both need durable ownership/progress, but a service run lease is not the same object as the harness task ledger. |
 
 When one of these fails after a later-stage change, do not automatically "update the test." First decide whether the architecture intentionally changed or whether a later abstraction has violated an earlier invariant.
 

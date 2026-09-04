@@ -239,7 +239,7 @@ Other strategies:
 - separate prepare and commit steps;
 - make the operation naturally idempotent when possible.
 
-Stage 07 will go deeper into reliability controls.
+Stage 09 will go deeper into reliability controls.
 
 ---
 

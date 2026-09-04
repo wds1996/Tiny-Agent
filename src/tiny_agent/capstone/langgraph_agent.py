@@ -70,7 +70,7 @@ class LangGraphOpenScholarAgent:
             from langgraph.types import interrupt
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
-                "LangGraph capstone requires: python -m pip install -e '.[stage11]'"
+                "LangGraph capstone requires: python -m pip install -e '.[stage15]'"
             ) from exc
 
         saver = checkpointer or InMemorySaver()
@@ -104,7 +104,7 @@ class LangGraphOpenScholarAgent:
         def retrieve_node(state: OpenScholarGraphState) -> dict[str, Any]:
             """Run the async retrieval fan-out from a synchronous graph node.
 
-            Stage 11 keeps graph nodes synchronous so Python 3.10 can execute the
+            Stage 15 keeps graph nodes synchronous so Python 3.10 can execute the
             whole graph with ``graph.invoke`` in one worker thread. Current
             LangGraph interrupt context is not reliably propagated through its
             Python 3.10 async runnable path. On Python 3.11+ the graph still uses

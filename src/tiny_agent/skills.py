@@ -108,7 +108,7 @@ def _parse_skill_file(path: Path) -> tuple[SkillDescriptor, str]:
         import yaml
     except ImportError as exc:  # pragma: no cover - exercised in core-only installs
         raise RuntimeError(
-            "Agent Skills parsing requires: python -m pip install -e '.[stage06b]'"
+            "Agent Skills parsing requires: python -m pip install -e '.[stage08]'"
         ) from exc
 
     data = yaml.safe_load(frontmatter) or {}

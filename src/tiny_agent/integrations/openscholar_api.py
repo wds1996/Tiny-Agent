@@ -23,7 +23,7 @@ def build_openscholar_app(
         from pydantic import BaseModel, Field
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
-            "OpenScholar HTTP serving requires: python -m pip install -e '.[stage11]'"
+            "OpenScholar HTTP serving requires: python -m pip install -e '.[stage15]'"
         ) from exc
 
     class ResearchBody(BaseModel):

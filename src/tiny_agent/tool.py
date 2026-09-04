@@ -67,7 +67,7 @@ class ToolRegistry:
     def get(self, name: str) -> Tool:
         """Return a registered Tool for policy-aware runtimes.
 
-        Stage 07 needs to inspect handler/schema metadata before execution. The
+        Stage 09 needs to inspect handler/schema metadata before execution. The
         registry still owns lookup; callers do not reach into ``_tools``.
         """
         tool = self._tools.get(name)

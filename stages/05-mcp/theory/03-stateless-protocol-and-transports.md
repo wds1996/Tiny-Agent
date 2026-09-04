@@ -344,7 +344,7 @@ The Host still owns consent, authentication, authorization, and execution bounda
 
 Capability list responses can be stable/cacheable so clients do not repeatedly rebuild large Tool catalogs and destabilize upstream prompt caches.
 
-This links directly to Stage 06A context engineering:
+This links directly to Stage 07 context engineering:
 
 ```text
 server owns many capabilities
@@ -369,7 +369,7 @@ authorization:  may this caller perform this action?
 
 A Tool appearing in `tools/list` answers only the first question.
 
-Stage 07 and Stage 10 own the broader runtime/service policy story.
+Stage 09 and Stage 13 own the broader runtime/service policy story.
 
 ---
 

@@ -21,7 +21,7 @@ class AgentRuntime:
     The model decides whether to call a tool or return a final answer.
     The runtime owns execution, observations, stopping conditions, and errors.
 
-    Stage 07 hardens one legacy boundary here: unexpected tool exception
+    Stage 09 hardens one legacy boundary here: unexpected tool exception
     messages are no longer copied verbatim into the model transcript. Advanced
     validation, permissions, timeouts, retries, and budgets live in the
     dedicated GuardedToolExecutor rather than bloating this Stage 01 runtime.

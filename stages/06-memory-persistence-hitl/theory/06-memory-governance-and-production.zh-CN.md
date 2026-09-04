@@ -283,7 +283,7 @@ provenance
 memory evaluation / anomaly detection
 ```
 
-这会直接连接 Stage 07 safety。
+这会直接连接 Stage 09 safety。
 
 ---
 
@@ -339,7 +339,7 @@ Production solution 可能包括：
 
 # 13. Observability：评估 memory behavior，而不仅是 final answer
 
-Stage 08 会正式系统化，但 Stage 06 就应考虑记录：
+Stage 10 会正式系统化，但 Stage 06 就应考虑记录：
 
 ```text
 memory candidate proposed

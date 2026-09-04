@@ -12,7 +12,7 @@ This document answers one question:
 | Structured Output / JSON Schema | 00 | schema-constrained control data |
 | Function/Tool Calling | 00 | ToolCall -> runtime -> observation |
 | model capability/selection | 00 | reasoning/cost/latency trade-offs |
-| context/token budgeting | 00, 06A | explicit ContextBudget |
+| context/token budgeting | 00, 07 | explicit ContextBudget |
 | provider adapters | 01, 02 | normalized Model/StructuredDecisionModel |
 
 ## Layer 2 — Agent control flow
@@ -20,7 +20,7 @@ This document answers one question:
 | Competency | Stage |
 |---|---|
 | ReAct / decide-act-observe | 01 |
-| bounded stopping | 01, 07 |
+| bounded stopping | 01, 09 |
 | deterministic workflow vs Agent | 02 |
 | semantic routing | 02 |
 | planner-executor | 02 |
@@ -36,62 +36,62 @@ This document answers one question:
 | chunking / embeddings / similarity | 04 |
 | FAISS / Qdrant | 04 |
 | reranking / Agentic RAG | 04 |
-| retrieval evaluation | 04, 08 |
+| retrieval evaluation | 04, 10 |
 | MCP Tools/Resources/Prompts | 05 |
 | MCP 2026 stateless core | 05 |
 | MCP extensions/Tasks/MRTR/Apps | 05 advanced |
 | short/long-term memory | 06 |
-| Context Engineering | 06A |
-| compaction/provenance/JIT context | 06A |
-| Agent Skills / progressive disclosure | 06B |
+| Context Engineering | 07 |
+| compaction/provenance/JIT context | 07 |
+| Agent Skills / progressive disclosure | 08 |
 
 ## Layer 4 — Safety, reliability, authority
 
 | Competency | Stage |
 |---|---|
-| local schema validation | 07 |
-| failure taxonomy/redaction | 07 |
-| timeout/cancellation/retry | 07 |
-| idempotency reasoning | 06, 07, 10 |
-| run-wide budgets / loop detection | 07 |
-| principals/least privilege | 07 |
-| exact approval binding | 07 |
-| prompt-injection boundaries | 07 |
-| memory/Skill provenance | 06, 06B |
-| workspace path policy | 09A |
-| controlled sandbox compute | 09A |
-| network/credential separation | 09A |
+| local schema validation | 09 |
+| failure taxonomy/redaction | 09 |
+| timeout/cancellation/retry | 09 |
+| idempotency reasoning | 06, 09, 13 |
+| run-wide budgets / loop detection | 09 |
+| principals/least privilege | 09 |
+| exact approval binding | 09 |
+| prompt-injection boundaries | 09 |
+| memory/Skill provenance | 06, 08 |
+| workspace path policy | 12 |
+| controlled sandbox compute | 12 |
+| network/credential separation | 12 |
 
 ## Layer 5 — Evaluation and collaboration
 
 | Competency | Stage |
 |---|---|
-| traces/spans/privacy-aware capture | 08 |
-| Tool/trajectory evaluation | 08 |
-| deterministic vs LLM judges | 08 |
-| offline/online eval | 08 |
-| cost/latency/quality regression gates | 08 |
-| delegation vs handoff | 09 |
-| context projection | 09 |
-| fan-out/fan-in | 09 |
-| A2A 1.0 interoperability | 09, 10 |
+| traces/spans/privacy-aware capture | 10 |
+| Tool/trajectory evaluation | 10 |
+| deterministic vs LLM judges | 10 |
+| offline/online eval | 10 |
+| cost/latency/quality regression gates | 10 |
+| delegation vs handoff | 11 |
+| context projection | 11 |
+| fan-out/fan-in | 11 |
+| A2A 1.0 interoperability | 11, 13 |
 
 ## Layer 6 — Production and long horizon
 
 | Competency | Stage |
 |---|---|
-| thin service boundary | 10 |
-| request/run/thread/identity separation | 10 |
-| trusted auth/tenant binding | 10 |
-| concurrency/backpressure/deadlines | 10 |
-| durable jobs/leases | 10 |
-| Postgres/Redis lifecycle | 10 |
-| liveness/readiness/shutdown | 10 |
-| Docker/Compose topology | 10 |
-| task ledger / session handoff | 10A |
-| externalized progress/artifacts | 10A |
-| evaluator/repair loop | 10A |
-| harness/compute rehydration | 09A, 10A |
+| thin service boundary | 13 |
+| request/run/thread/identity separation | 13 |
+| trusted auth/tenant binding | 13 |
+| concurrency/backpressure/deadlines | 13 |
+| durable jobs/leases | 13 |
+| Postgres/Redis lifecycle | 13 |
+| liveness/readiness/shutdown | 13 |
+| Docker/Compose topology | 13 |
+| task ledger / session handoff | 14 |
+| externalized progress/artifacts | 14 |
+| evaluator/repair loop | 14 |
+| harness/compute rehydration | 12, 14 |
 
 ## Layer 7 — Capstone synthesis
 

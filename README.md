@@ -46,28 +46,28 @@ State what the abstraction does NOT solve
 
 ---
 
-# 2026 curriculum
+# Curriculum
 
-The numbered stages are the original capability progression. The lettered extension stages were added after a full-project 2026 audit so the repository could cover modern context/skills/sandbox/harness patterns without renumbering mature historical stages.
+Tiny-Agent uses one continuous integer sequence. Each Stage should answer one main engineering question and prepare the vocabulary needed by the next Stage.
 
 | Stage | Capability | Main question |
 |---|---|---|
-| [00](stages/00-foundations/) | LLM / messages / Structured Output / Tool Calling / model & context basics | What does the model actually do, and what remains application responsibility? |
-| [01](stages/01-react-runtime/) | ReAct & core runtime | How does one ToolCall become a bounded decide-act-observe loop? |
-| [02](stages/02-planning-routing/) | Workflow / routing / planning | Which control decisions should be deterministic vs model-driven? |
-| [03](stages/03-stateful-orchestration/) | Explicit state & LangGraph | When does a state machine/graph runtime become useful? |
-| [04](stages/04-agentic-rag/) | RAG & Agentic retrieval | How does an Agent obtain and evaluate external evidence? |
-| [05](stages/05-mcp/) | MCP 2026 | How are external capabilities/context standardized across boundaries? |
-| [06](stages/06-memory-persistence-hitl/) | Memory / durability / HITL | What should survive, and how can execution pause/resume safely? |
-| [06A](stages/06a-context-engineering/) | Context Engineering | What should the model see on this exact turn under a finite attention budget? |
-| [06B](stages/06b-agent-skills/) | Agent Skills | How is reusable procedural knowledge discovered and loaded on demand? |
-| [07](stages/07-reliability-safety/) | Reliability / safety / governance | How do we bound, validate, authorize, retry, and refuse execution? |
-| [08](stages/08-evaluation-observability/) | Tracing & evaluation | What happened, was it good, and did a new version regress? |
-| [09](stages/09-multi-agent/) | Multi-Agent / A2A | When does delegation/handoff create measurable value? |
-| [09A](stages/09a-agent-workspace-sandbox/) | Workspace & sandbox compute | Where can an Agent inspect files/run commands without handing it the host machine? |
-| [10](stages/10-production-deployment/) | Production service / identity / durable jobs | What changes when other users/Agents depend on the service? |
-| [10A](stages/10a-long-horizon-harness/) | Long-horizon harness | How does an Agent keep making progress across sessions, workers, and sandbox loss? |
-| [11](stages/11-capstone-enterprise-agent/) | OpenScholar capstone | Can all relevant mechanisms compose into one evidence-grounded Agent system? |
+| [00](stages/00-foundations/) | Model calls / Structured Output / Tool Calling | What does the model actually produce, and what remains application responsibility? |
+| [01](stages/01-react-runtime/) | ReAct-style Agent Runtime | How does Tool use become a bounded decide-act-observe loop? |
+| [02](stages/02-workflows-routing-planning/) | Workflow / Routing / Planning | Which control decisions should stay deterministic, and which benefit from model judgment? |
+| [03](stages/03-stateful-orchestration/) | Explicit state & orchestration | When do state transitions need to become explicit? |
+| [04](stages/04-agentic-rag/) | Retrieval & Agentic RAG | How does an Agent obtain and judge external evidence? |
+| [05](stages/05-mcp/) | MCP | How are external capabilities and context exposed across a standard protocol boundary? |
+| [06](stages/06-memory-persistence-hitl/) | Memory / persistence / HITL | What should survive a turn or process, and how can execution pause and resume? |
+| [07](stages/07-context-engineering/) | Context Engineering | What should the model see on this exact turn? |
+| [08](stages/08-agent-skills/) | Agent Skills | How can reusable procedural knowledge be discovered and loaded on demand? |
+| [09](stages/09-reliability-safety/) | Reliability / safety / governance | How do we validate, bound, authorize, retry, and refuse execution? |
+| [10](stages/10-evaluation-observability/) | Observability & evaluation | What happened, was it good, and did a new version regress? |
+| [11](stages/11-multi-agent/) | Multi-Agent / A2A | When does delegation or handoff create measurable value? |
+| [12](stages/12-agent-workspace-sandbox/) | Workspace & sandbox compute | Where can an Agent inspect files and run commands without receiving the host machine? |
+| [13](stages/13-production-deployment/) | Production service & durable jobs | What changes when real users and other systems depend on the Agent service? |
+| [14](stages/14-long-horizon-harness/) | Long-horizon harness | How does work continue across sessions, workers, and sandbox loss? |
+| [15](stages/15-capstone-enterprise-agent/) | OpenScholar capstone | Can the relevant mechanisms compose into one evidence-grounded Agent system? |
 
 Detailed competency coverage: **[Modern Agent Competency Map](docs/modern-agent-competency-map.md)**  
 Framework/protocol mapping: **[Framework & Tooling Map](docs/framework-and-tooling-map.md)**
@@ -77,27 +77,29 @@ Framework/protocol mapping: **[Framework & Tooling Map](docs/framework-and-tooli
 # Capability ladder
 
 ```text
-LLM call
+model call
   ↓
-Structured decision / ToolCall
+Structured Output / Tool Calling
   ↓
-ReAct runtime
+Agent Runtime
   ↓
-workflow / router / planner
+Workflow / Router / Planner
   ↓
-explicit state graph
+explicit state & orchestration
   ↓
 retrieval and external evidence
   ↓
 MCP capability boundary
   ↓
-memory / checkpoint / HITL
+memory / persistence / HITL
   ↓
-context engineering + Agent Skills
+context engineering
+  ↓
+Agent Skills
   ↓
 reliability / permissions / budgets
   ↓
-tracing / evaluation / regression
+observability / evaluation / regression
   ↓
 multi-Agent / A2A
   ↓
@@ -189,15 +191,15 @@ python -m pip install -e ".[dev,stage03]"   # LangGraph / LangChain
 python -m pip install -e ".[dev,stage04]"   # FAISS / Qdrant / LangChain retrieval
 python -m pip install -e ".[dev,stage05]"   # MCP v2
 python -m pip install -e ".[dev,stage06]"   # SQLite/Postgres checkpointing
-python -m pip install -e ".[dev,stage06b]"  # Agent Skills YAML parsing
-python -m pip install -e ".[dev,stage07]"   # jsonschema / Pydantic / Tenacity
-python -m pip install -e ".[dev,stage08]"   # LangSmith / OpenTelemetry
-python -m pip install -e ".[dev,stage09]"   # OpenAI Agents SDK / A2A
-python -m pip install -e ".[dev,stage10]"   # FastAPI / Postgres / Redis / A2A server
-python -m pip install -e ".[dev,stage11]"   # complete OpenScholar integrations
+python -m pip install -e ".[dev,stage08]"  # Agent Skills YAML parsing
+python -m pip install -e ".[dev,stage09]"   # jsonschema / Pydantic / Tenacity
+python -m pip install -e ".[dev,stage10]"   # LangSmith / OpenTelemetry
+python -m pip install -e ".[dev,stage11]"   # OpenAI Agents SDK / A2A
+python -m pip install -e ".[dev,stage13]"   # FastAPI / Postgres / Redis / A2A server
+python -m pip install -e ".[dev,stage15]"   # complete OpenScholar integrations
 ```
 
-Stages 06A, 09A, and 10A use the standard library plus Tiny-Agent core for their handwritten mechanisms. Docker is an external runtime requirement only for actually executing the Stage 09A container sandbox example.
+Stages 06A, 09A, and 10A use the standard library plus Tiny-Agent core for their handwritten mechanisms. Docker is an external runtime requirement only for actually executing the Stage 12 container sandbox example.
 
 ---
 
@@ -230,7 +232,7 @@ Run these Agent mechanism and integration checks directly with `pytest`; reposit
 
 # OpenScholar final capstone
 
-Stage 11 is intentionally not “one more framework demo.”
+Stage 15 is intentionally not “one more framework demo.”
 
 It combines:
 

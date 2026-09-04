@@ -25,7 +25,7 @@ class SimpleToolArgumentsValidator:
     It is deliberately *not* a full JSON Schema implementation. Invalid or
     unsupported application-owned schema shapes raise ``ValueError``; model
     arguments that fail a valid supported schema raise ``ToolInputError``.
-    Stage 07 also provides a ``jsonschema`` adapter for complete schema work.
+    Stage 09 also provides a ``jsonschema`` adapter for complete schema work.
     """
 
     def validate(self, schema: dict[str, Any], arguments: dict[str, Any]) -> None:

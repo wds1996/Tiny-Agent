@@ -94,10 +94,10 @@ pytest -q tests/test_guarded_runtime.py -k retry
 python -m pip install -e ".[dev,stage03]"
 pytest -q tests/test_langgraph_runtime.py tests/test_stage03_frameworks.py
 
-python -m pip install -e ".[dev,stage07]"
+python -m pip install -e ".[dev,stage09]"
 pytest -q tests/test_validation.py tests/test_reliability.py \
   tests/test_governance.py tests/test_guarded_runtime.py \
-  tests/test_stage07_integrations.py
+  tests/test_stage09_integrations.py
 ```
 
 确实需要外部基础设施的测试会显式要求环境变量：
@@ -108,7 +108,7 @@ pytest -q tests/test_stage06_postgres.py
 
 TEST_REDIS_URL='redis://...' \
 TEST_POSTGRES_URI='postgresql://...' \
-pytest -q tests/test_stage10_integrations.py
+pytest -q tests/test_stage13_integrations.py
 ```
 
 不要把真实生产凭证写进命令、fixture、测试输出或提交到仓库中。
@@ -130,7 +130,7 @@ pytest -q tests/test_stage10_integrations.py
 
 ## Stage 02 — Routing、Structured Decision、Planning 与 Budget
 
-对应课程：[Stage 02 中文教程](../stages/02-planning-routing/README.zh-CN.md)，重点配合 [Routing Patterns](../stages/02-planning-routing/theory/02-routing-patterns.zh-CN.md)、[Planning 与 Replanning](../stages/02-planning-routing/theory/03-planning-and-replanning.zh-CN.md)、[Planner / Executor](../stages/02-planning-routing/theory/04-planner-executor.zh-CN.md)。
+对应课程为整合后的 [Stage 02 中文教程](../stages/02-workflows-routing-planning/README.zh-CN.md)。Workflow、混合路由、结构化 Plan、Planner / Executor 分工、有界 Replanning 与执行 Budget 都在该主章节中连续讲解。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
@@ -139,7 +139,7 @@ pytest -q tests/test_stage10_integrations.py
 | [`test_structured_decision_edges.py`](test_structured_decision_edges.py) | Framework，离线 | Provider refusal 与 incomplete response 会被表示成两个一等错误结果，而不是和“JSON 解析失败”混为一谈。 | Production control flow 必须知道“为什么没有合法 decision”。 |
 | [`test_workflow_budgets.py`](test_workflow_budgets.py) | Core | 最大 Plan 长度、step id 唯一性、total execution-step budget。 | Model 生成的 Plan 仍然只是 proposal，application 必须在执行前和执行中限制它。 |
 
-这一部分在 Stage 07 后还有一个安全回归测试：[`test_workflow_safety.py`](test_workflow_safety.py)，见下方 **Cross-stage tests**。
+这一部分在 Stage 09 后还有一个安全回归测试：[`test_workflow_safety.py`](test_workflow_safety.py)，见下方 **Cross-stage tests**。
 
 ## Stage 03 — Explicit State 与 LangGraph
 
@@ -162,7 +162,7 @@ Framework tests 使用 `.[dev,stage03]`。
 | [`test_retrieval.py`](test_retrieval.py) | Core | Chunk overlap/metadata、非法 chunk 参数、cosine 边界、确定且归一化的教学 embedding、top-k ranking、metadata filter 在 ranking 前生效。 | 保护所有后续向量后端下面的第一性原理 retrieval semantics。 |
 | [`test_rag.py`](test_rag.py) | Core | Basic RAG 必须先 retrieve；Agentic RAG 可以跳过检索、最多进行 bounded query rewrite、证据足够后回答、证据持续不足时 abstain，并拒绝 malformed control decision。 | 让 Agentic RAG 成为 bounded workflow，而不是“模型觉得不够就无限搜”。 |
 | [`test_stage04_vector_backends.py`](test_stage04_vector_backends.py) | Framework | FAISS 最近邻；教学 FAISS adapter 不伪装原生 metadata filtering；Qdrant local mode + payload filter；LangChain Retriever adapter。 | 帮助学习者看到不同 backend 真正负责什么，而不是把所有 vector system 当成同一种东西。 |
-| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Framework，离线/复用 | 用 fake client 验证 OpenAI embedding adapter 遵守 provider-neutral embedding contract 与 dimension 约束。Stage 11 的生产型 retrieval path 也复用它。 | 保护 Stage 04 定义的 embedding interface，使后面替换真实 provider 时不改 retrieval 核心语义。 |
+| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Framework，离线/复用 | 用 fake client 验证 OpenAI embedding adapter 遵守 provider-neutral embedding contract 与 dimension 约束。Stage 15 的生产型 retrieval path 也复用它。 | 保护 Stage 04 定义的 embedding interface，使后面替换真实 provider 时不改 retrieval 核心语义。 |
 
 FAISS/Qdrant/LangChain tests 使用 `.[dev,stage04]`。
 
@@ -190,66 +190,66 @@ FAISS/Qdrant/LangChain tests 使用 `.[dev,stage04]`。
 
 使用 `.[dev,stage06]`；Postgres 测试需要测试数据库。
 
-## Stage 06A — Context Engineering
+## Stage 07 — Context Engineering
 
-对应课程：[Stage 06A 中文教程](../stages/06a-context-engineering/README.zh-CN.md)，重点配合 [Context 是 Attention Budget](../stages/06a-context-engineering/theory/01-context-is-an-attention-budget.zh-CN.md) 与 [Context Selection / Compaction](../stages/06a-context-engineering/theory/02-context-assembly-selection-compaction.zh-CN.md)。
+对应课程：[Stage 07 中文教程](../stages/07-context-engineering/README.zh-CN.md)，重点配合 [Context 是 Attention Budget](../stages/07-context-engineering/theory/01-context-is-an-attention-budget.zh-CN.md) 与 [Context Selection / Compaction](../stages/07-context-engineering/theory/02-context-assembly-selection-compaction.zh-CN.md)。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
 | [`test_context_engineering.py`](test_context_engineering.py) | Core | Required item 与高优先级 item 应被保留；required context 放不下时 fail closed；compaction 必须记录 provenance 与估算 token savings。 | Context window 是一个预算化 selection 问题，不是“有多少容量就塞多少”。 |
 
-## Stage 06B — Agent Skills
+## Stage 08 — Agent Skills
 
-对应课程：[Stage 06B 中文教程](../stages/06b-agent-skills/README.zh-CN.md)，重点配合 [Skill Format 与 Progressive Disclosure](../stages/06b-agent-skills/theory/02-skill-format-and-progressive-disclosure.zh-CN.md)。
+对应课程：[Stage 08 中文教程](../stages/08-agent-skills/README.zh-CN.md)，重点配合 [Skill Format 与 Progressive Disclosure](../stages/08-agent-skills/theory/02-skill-format-and-progressive-disclosure.zh-CN.md)。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
 | [`test_skills.py`](test_skills.py) | Core / format integration | Discovery 阶段只读取 Skill metadata 而不把完整 procedure 放进 prompt；activation 才加载 instructions / allowed Tools / references；声明的 Skill name 必须与目录一致。 | Progressive disclosure 成立的前提，就是 discovery 与 activation 必须是两个不同、可验证的动作。 |
 
-YAML parsing 使用 `.[dev,stage06b]`。
+YAML parsing 使用 `.[dev,stage08]`。
 
-## Stage 07 — Reliability、Safety 与 Governance
+## Stage 09 — Reliability、Safety 与 Governance
 
-对应课程：[Stage 07 中文教程](../stages/07-reliability-safety/README.zh-CN.md)，重点配合 [Agent Failure Modes](../stages/07-reliability-safety/theory/01-agent-failure-modes.zh-CN.md)、[Validation 与 Output Handling](../stages/07-reliability-safety/theory/02-validation-and-output-handling.zh-CN.md)、[Timeout / Retry / Cancellation](../stages/07-reliability-safety/theory/03-timeout-retry-cancellation.zh-CN.md)、[Execution Budgets 与 Loops](../stages/07-reliability-safety/theory/04-execution-budgets-and-loops.zh-CN.md)、[Tool Permission 与 Least Privilege](../stages/07-reliability-safety/theory/05-tool-permissions-and-least-privilege.zh-CN.md)、[Prompt Injection 与 Sandboxing](../stages/07-reliability-safety/theory/06-prompt-injection-and-sandboxing.zh-CN.md)。
+对应课程：[Stage 09 中文教程](../stages/09-reliability-safety/README.zh-CN.md)，重点配合 [Agent Failure Modes](../stages/09-reliability-safety/theory/01-agent-failure-modes.zh-CN.md)、[Validation 与 Output Handling](../stages/09-reliability-safety/theory/02-validation-and-output-handling.zh-CN.md)、[Timeout / Retry / Cancellation](../stages/09-reliability-safety/theory/03-timeout-retry-cancellation.zh-CN.md)、[Execution Budgets 与 Loops](../stages/09-reliability-safety/theory/04-execution-budgets-and-loops.zh-CN.md)、[Tool Permission 与 Least Privilege](../stages/09-reliability-safety/theory/05-tool-permissions-and-least-privilege.zh-CN.md)、[Prompt Injection 与 Sandboxing](../stages/09-reliability-safety/theory/06-prompt-injection-and-sandboxing.zh-CN.md)。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
 | [`test_validation.py`](test_validation.py) | Core | 教学版 JSON-Schema subset 对合法输入通过；对 missing/wrong/extra/nested value fail closed；application 自己写坏 schema 时不能误报成 model input error。 | Validation 必须在 execution 前发生，而且 developer bug 和 model bad arguments 不是同一类错误。 |
 | [`test_reliability.py`](test_reliability.py) | Core | Safe failure classification/redaction、retryable timeout、显式 safe error、bounded backoff、Tool/retry/token/cost budget、fingerprint、repeated-call detector。 | Reliability policy 需要 typed data，不能靠解析任意 exception string 临时猜。 |
 | [`test_governance.py`](test_governance.py) | Core | Default-deny permission、role allowlist、approval 与 authorization 分离、高风险 approval gate、审批与精确 arguments fingerprint 绑定。 | 对一次操作的人工批准不能变成另一组参数也能复用的“万能通行证”。 |
-| [`test_guarded_runtime.py`](test_guarded_runtime.py) | Core composition | 把 validation -> permission -> approval -> budget -> loop check -> execution -> timeout/retry -> safe failure 串起来；验证被拒绝的调用不会触达 handler，retry 只允许 retry-safe operation。 | 这是 Stage 07 guarded execution pipeline 最完整的可执行规范。 |
+| [`test_guarded_runtime.py`](test_guarded_runtime.py) | Core composition | 把 validation -> permission -> approval -> budget -> loop check -> execution -> timeout/retry -> safe failure 串起来；验证被拒绝的调用不会触达 handler，retry 只允许 retry-safe operation。 | 这是 Stage 09 guarded execution pipeline 最完整的可执行规范。 |
 | [`test_trust.py`](test_trust.py) | Core | External content 被标记为 untrusted；简单 prompt-injection detector 只是 signal，而不是 authorization policy。 | “内容看起来可疑”和“它有没有权控制执行”是完全不同的问题。 |
-| [`test_stage07_integrations.py`](test_stage07_integrations.py) | Framework | 完整 `jsonschema` 特性、Tenacity bounded retry predicate、Pydantic strict application boundary。 | 把前面手写的安全语义映射到成熟库，同时不把 policy ownership 交给库。 |
+| [`test_stage09_integrations.py`](test_stage09_integrations.py) | Framework | 完整 `jsonschema` 特性、Tenacity bounded retry predicate、Pydantic strict application boundary。 | 把前面手写的安全语义映射到成熟库，同时不把 policy ownership 交给库。 |
 
-Integration tests 使用 `.[dev,stage07]`。
+Integration tests 使用 `.[dev,stage09]`。
 
-## Stage 08 — Observability 与 Evaluation
+## Stage 10 — Observability 与 Evaluation
 
-对应课程：[Stage 08 中文教程](../stages/08-evaluation-observability/README.zh-CN.md)，重点配合 [Tracing 与 Observability](../stages/08-evaluation-observability/theory/02-tracing-and-observability.zh-CN.md)、[Tool 与 Trajectory Evaluation](../stages/08-evaluation-observability/theory/03-tool-and-trajectory-evaluation.zh-CN.md)、[Graders 与 LLM-as-Judge](../stages/08-evaluation-observability/theory/05-graders-and-llm-as-judge.zh-CN.md)、[Quality / Cost / Latency / Regression](../stages/08-evaluation-observability/theory/06-quality-cost-latency-and-regression.zh-CN.md)。
+对应课程：[Stage 10 中文教程](../stages/10-evaluation-observability/README.zh-CN.md)，重点配合 [Tracing 与 Observability](../stages/10-evaluation-observability/theory/02-tracing-and-observability.zh-CN.md)、[Tool 与 Trajectory Evaluation](../stages/10-evaluation-observability/theory/03-tool-and-trajectory-evaluation.zh-CN.md)、[Graders 与 LLM-as-Judge](../stages/10-evaluation-observability/theory/05-graders-and-llm-as-judge.zh-CN.md)、[Quality / Cost / Latency / Regression](../stages/10-evaluation-observability/theory/06-quality-cost-latency-and-regression.zh-CN.md)。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
 | [`test_observability.py`](test_observability.py) | Core | Parent/child trace tree；默认不保存 raw input/output；opt-in capture 时 redaction/truncation；nested sanitization；exception 标记错误但不保存敏感 raw message。 | Observability 应帮助工程师定位问题，而不能成为第二条 secret-leak 通道。 |
-| [`test_observed_runtime.py`](test_observed_runtime.py) | Core composition | 给 guarded Tool executor 加 tracing，验证 Agent -> Tool span parentage、Tool name/attempt 属性，以及 failure classification；仍然不记录 raw arguments 或敏感 exception text。 | 展示 Stage 07 execution semantics 如何变成 Stage 08 可观察行为。 |
+| [`test_observed_runtime.py`](test_observed_runtime.py) | Core composition | 给 guarded Tool executor 加 tracing，验证 Agent -> Tool span parentage、Tool name/attempt 属性，以及 failure classification；仍然不记录 raw arguments 或敏感 exception text。 | 展示 Stage 09 execution semantics 如何变成 Stage 10 可观察行为。 |
 | [`test_evaluation.py`](test_evaluation.py) | Core | Tool precision/recall/F1、argument accuracy、trajectory sequence 与 policy safety 分开计分、repetition、execution success、metric coverage、regression gate、higher/lower-is-better metric、LLM judge score validation、NaN/Inf 拒绝。 | Final answer 对了远远不够；trajectory、安全、coverage、成本与 regression 都是不同信号。 |
-| [`test_stage08_integrations.py`](test_stage08_integrations.py) | Framework | LangSmith tracing 可以完全离线禁用；OpenTelemetry nested span export；error status 不泄露 exception message/event。 | 验证生产型 observability mapping 仍然遵守 core tracer 的 privacy boundary。 |
+| [`test_stage10_integrations.py`](test_stage10_integrations.py) | Framework | LangSmith tracing 可以完全离线禁用；OpenTelemetry nested span export；error status 不泄露 exception message/event。 | 验证生产型 observability mapping 仍然遵守 core tracer 的 privacy boundary。 |
 
-使用 `.[dev,stage08]`。
+使用 `.[dev,stage10]`。
 
-## Stage 09 — Multi-Agent Coordination 与 A2A
+## Stage 11 — Multi-Agent Coordination 与 A2A
 
-对应课程：[Stage 09 中文教程](../stages/09-multi-agent/README.zh-CN.md)，重点配合 [Delegation / Handoff / Supervision](../stages/09-multi-agent/theory/02-delegation-handoffs-supervision.zh-CN.md)、[Context Ownership](../stages/09-multi-agent/theory/03-context-ownership-and-shared-state.zh-CN.md)、[Parallelism 与 Coordination](../stages/09-multi-agent/theory/04-parallelism-and-coordination.zh-CN.md)、[Delegation Governance](../stages/09-multi-agent/theory/05-delegation-governance.zh-CN.md)。
+对应课程：[Stage 11 中文教程](../stages/11-multi-agent/README.zh-CN.md)，重点配合 [Delegation / Handoff / Supervision](../stages/11-multi-agent/theory/02-delegation-handoffs-supervision.zh-CN.md)、[Context Ownership](../stages/11-multi-agent/theory/03-context-ownership-and-shared-state.zh-CN.md)、[Parallelism 与 Coordination](../stages/11-multi-agent/theory/04-parallelism-and-coordination.zh-CN.md)、[Delegation Governance](../stages/11-multi-agent/theory/05-delegation-governance.zh-CN.md)。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
 | [`test_multi_agent.py`](test_multi_agent.py) | Core | Delegation 保持 manager ownership；成功 handoff 才转移 active Agent；失败 handoff 不转移；context projection；default-deny；handoff loop/parallel budget；fan-out 全量 prevalidation；failure redaction；coordination metrics 区分 attempt 与 success。 | Multi-Agent 的核心是 coordination/control，不是“多调用几个模型”。 |
-| [`test_stage09_integrations.py`](test_stage09_integrations.py) | Framework，离线 | OpenAI Agents SDK 中 manager-as-Tool 与 handoff object；当前 A2A 1.0 Agent Card；A2A Message/request object，全程不需要网络。 | 把 Tiny-Agent 的 coordination semantics 映射到真实生态接口，同时保持 deterministic test。 |
+| [`test_stage11_integrations.py`](test_stage11_integrations.py) | Framework，离线 | OpenAI Agents SDK 中 manager-as-Tool 与 handoff object；当前 A2A 1.0 Agent Card；A2A Message/request object，全程不需要网络。 | 把 Tiny-Agent 的 coordination semantics 映射到真实生态接口，同时保持 deterministic test。 |
 
-使用 `.[dev,stage09]`。
+使用 `.[dev,stage11]`。
 
-## Stage 09A — Workspace 与 Sandbox Compute
+## Stage 12 — Workspace 与 Sandbox Compute
 
-对应课程：[Stage 09A 中文教程](../stages/09a-agent-workspace-sandbox/README.zh-CN.md)，重点配合 [Files / Artifacts / Workspace Policy](../stages/09a-agent-workspace-sandbox/theory/02-files-artifacts-and-workspace-policy.zh-CN.md) 与 [Container Isolation / Threat Model](../stages/09a-agent-workspace-sandbox/theory/03-container-isolation-and-threat-model.zh-CN.md)。
+对应课程：[Stage 12 中文教程](../stages/12-agent-workspace-sandbox/README.zh-CN.md)，重点配合 [Files / Artifacts / Workspace Policy](../stages/12-agent-workspace-sandbox/theory/02-files-artifacts-and-workspace-policy.zh-CN.md) 与 [Container Isolation / Threat Model](../stages/12-agent-workspace-sandbox/theory/03-container-isolation-and-threat-model.zh-CN.md)。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
@@ -257,43 +257,43 @@ Integration tests 使用 `.[dev,stage07]`。
 
 这个测试只构造 Docker command，不需要真的启动容器。
 
-## Stage 10 — Production Service、Identity、Jobs 与 Infrastructure
+## Stage 13 — Production Service、Identity、Jobs 与 Infrastructure
 
-对应课程：[Stage 10 中文教程](../stages/10-production-deployment/README.zh-CN.md)，重点配合 [Service Boundaries 与 Identities](../stages/10-production-deployment/theory/01-service-boundaries-and-identities.zh-CN.md)、[Async / Concurrency / Streaming](../stages/10-production-deployment/theory/02-async-concurrency-streaming.zh-CN.md)、[Postgres / Redis / State](../stages/10-production-deployment/theory/03-postgres-redis-and-state.zh-CN.md)、[Authentication / Tenancy / Durable Jobs](../stages/10-production-deployment/theory/08-authentication-tenancy-and-durable-jobs.zh-CN.md)。
+对应课程：[Stage 13 中文教程](../stages/13-production-deployment/README.zh-CN.md)，重点配合 [Service Boundaries 与 Identities](../stages/13-production-deployment/theory/01-service-boundaries-and-identities.zh-CN.md)、[Async / Concurrency / Streaming](../stages/13-production-deployment/theory/02-async-concurrency-streaming.zh-CN.md)、[Postgres / Redis / State](../stages/13-production-deployment/theory/03-postgres-redis-and-state.zh-CN.md)、[Authentication / Tenancy / Durable Jobs](../stages/13-production-deployment/theory/08-authentication-tenancy-and-durable-jobs.zh-CN.md)。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
 | [`test_production.py`](test_production.py) | Core | Bounded async service、sync handler 离开 event loop、backpressure/capacity rejection、typed timeout，以及一个很重要的细节：sync worker 即使请求已经 timeout，只要真实 thread 还没结束，就仍然占用 capacity；readiness error 还必须脱敏。 | HTTP request timeout 不会自动杀死 worker thread，service capacity 必须反映真实 execution。 |
 | [`test_service_identity.py`](test_service_identity.py) | Core | Client payload 不能自行声明 trusted identity；subject/tenant 只能由 server-authenticated identity 绑定；resource owner check 同时验证 subject 与 tenant。 | Request JSON 中写一个 `user_id` 不等于 authentication。 |
 | [`test_jobs.py`](test_jobs.py) | Core / durable | SQLite run queue 跨 object recreation 存活；worker 通过 lease 获得 ownership；只有 lease owner 能 complete job。 | Durable work 在原 request/process 消失后仍然需要明确的执行所有权。 |
-| [`test_stage10_integrations.py`](test_stage10_integrations.py) | Framework + Service | FastAPI liveness/readiness/run/request-id/streaming、安全 HTTP error、secret-safe settings、当前 A2A route；设置对应环境变量时还会运行真实 Redis fixed-window 与 Postgres pool 检查。 | 这是 Stage 10 最主要的 service-boundary integration suite。 |
+| [`test_stage13_integrations.py`](test_stage13_integrations.py) | Framework + Service | FastAPI liveness/readiness/run/request-id/streaming、安全 HTTP error、secret-safe settings、当前 A2A route；设置对应环境变量时还会运行真实 Redis fixed-window 与 Postgres pool 检查。 | 这是 Stage 13 最主要的 service-boundary integration suite。 |
 
-使用 `.[dev,stage10]`。Redis/Postgres case 需要显式测试服务环境变量。
+使用 `.[dev,stage13]`。Redis/Postgres case 需要显式测试服务环境变量。
 
-## Stage 10A — Long-Horizon Harness
+## Stage 14 — Long-Horizon Harness
 
-对应课程：[Stage 10A 中文教程](../stages/10a-long-horizon-harness/README.zh-CN.md)。
+对应课程：[Stage 14 中文教程](../stages/14-long-horizon-harness/README.zh-CN.md)。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
 | [`test_harness.py`](test_harness.py) | Core / durable | Task ledger 把 progress 外部化；新的 runtime object 可以接着完成未完成任务；worker crash 后遗留为 `running` 的 task 会被新 runtime 恢复并重试。 | Long-horizon progress 必须跨 model session/process loss 生存；“聊天还记得”不是 durability mechanism。 |
 
-[`test_jobs.py`](test_jobs.py) 在这里也很重要：Stage 10A 建立在 Stage 10 durable job/lease 思想之上，但 service run queue 与 harness task ledger 仍然是不同 scope。
+[`test_jobs.py`](test_jobs.py) 在这里也很重要：Stage 14 建立在 Stage 13 durable job/lease 思想之上，但 service run queue 与 harness task ledger 仍然是不同 scope。
 
-## Stage 11 — OpenScholar Capstone
+## Stage 15 — OpenScholar Capstone
 
-对应课程：[Stage 11 中文教程](../stages/11-capstone-enterprise-agent/README.zh-CN.md)。这些测试不是重新孤立讲解前面的机制，而是验证它们组合之后是否仍然保持原来的边界。
+对应课程：[Stage 15 中文教程](../stages/15-capstone-enterprise-agent/README.zh-CN.md)。这些测试不是重新孤立讲解前面的机制，而是验证它们组合之后是否仍然保持原来的边界。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
 | [`test_capstone.py`](test_capstone.py) | Core composition | Evidence threshold / abstention、grounded report evaluation、explicit-request memory、HITL export、workspace path confinement、unknown citation detection。 | 证明即使单个组件都能工作，研究 Agent 仍然必须受到 evidence 与 side-effect governance。 |
 | [`test_capstone_v2.py`](test_capstone_v2.py) | Core + Framework | 限制同一 document 重复 chunk、复用 Stage 04 Qdrant retriever contract，并把 semantic citation support 与“citation label 是否存在”分开。 | 有 `[E1]` 并不代表 `[E1]` 真能支撑这一句 claim；retrieval diversity 也会影响 synthesis quality。 |
-| [`test_openscholar_production.py`](test_openscholar_production.py) | Framework | 通过 authenticated FastAPI boundary 提供 OpenScholar，并验证 identity 来自 server authentication，而不是 request body 的 `user_id`。 | 把最终 capstone 重新接回 Stage 10 identity / tenant rule。 |
-| [`test_stage11_integrations.py`](test_stage11_integrations.py) | Framework composition | LangGraph OpenScholar 完成任务、HITL resume/export、base 与 graph 两种 HTTP implementation，以及 Stage 11 MCP / A2A / API examples 的 smoke test。 | 最终验证主要生态边界可以组合在一起，而不会改变 domain invariant。 |
+| [`test_openscholar_production.py`](test_openscholar_production.py) | Framework | 通过 authenticated FastAPI boundary 提供 OpenScholar，并验证 identity 来自 server authentication，而不是 request body 的 `user_id`。 | 把最终 capstone 重新接回 Stage 13 identity / tenant rule。 |
+| [`test_stage15_integrations.py`](test_stage15_integrations.py) | Framework composition | LangGraph OpenScholar 完成任务、HITL resume/export、base 与 graph 两种 HTTP implementation，以及 Stage 15 MCP / A2A / API examples 的 smoke test。 | 最终验证主要生态边界可以组合在一起，而不会改变 domain invariant。 |
 
-Stage 11 还会运行 [`test_openai_embeddings.py`](test_openai_embeddings.py)，因为 capstone 可以把确定性的教学 embedding 替换成 provider adapter。
+Stage 15 还会运行 [`test_openai_embeddings.py`](test_openai_embeddings.py)，因为 capstone 可以把确定性的教学 embedding 替换成 provider adapter。
 
-使用 `.[dev,stage11]` 运行完整 integration suite。
+使用 `.[dev,stage15]` 运行完整 integration suite。
 
 ---
 
@@ -303,10 +303,10 @@ Stage 11 还会运行 [`test_openai_embeddings.py`](test_openai_embeddings.py)�
 
 | 测试文件 | 连接哪些 Stage | 保护什么 |
 |---|---|---|
-| [`test_workflow_safety.py`](test_workflow_safety.py) | Stage 02 Workflow + Stage 07 Safe Failure | 预期的 `StepFailure` 可以携带开发者明确声明安全的 operational message；意外 exception 则只能留下安全 type/classification，不能把内部 secret text 写进 workflow state。 |
-| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Stage 04 Retrieval + Stage 11 Production Retrieval | Provider-specific embedding implementation 必须继续满足 Stage 04 已经定义好的 provider-neutral `EmbeddingModel` contract。 |
-| [`test_observed_runtime.py`](test_observed_runtime.py) | Stage 07 Guarded Execution + Stage 08 Tracing | 增加 observability 之后不能绕过原来的 redaction / permission / failure semantics。 |
-| [`test_jobs.py`](test_jobs.py) | Stage 10 Durable Jobs + Stage 10A Harness | 两者都需要 durable ownership/progress，但 service run lease 与 harness task ledger 不是同一个对象。 |
+| [`test_workflow_safety.py`](test_workflow_safety.py) | Stage 02 Workflow + Stage 09 Safe Failure | 预期的 `StepFailure` 可以携带开发者明确声明安全的 operational message；意外 exception 则只能留下安全 type/classification，不能把内部 secret text 写进 workflow state。 |
+| [`test_openai_embeddings.py`](test_openai_embeddings.py) | Stage 04 Retrieval + Stage 15 Production Retrieval | Provider-specific embedding implementation 必须继续满足 Stage 04 已经定义好的 provider-neutral `EmbeddingModel` contract。 |
+| [`test_observed_runtime.py`](test_observed_runtime.py) | Stage 09 Guarded Execution + Stage 10 Tracing | 增加 observability 之后不能绕过原来的 redaction / permission / failure semantics。 |
+| [`test_jobs.py`](test_jobs.py) | Stage 13 Durable Jobs + Stage 14 Harness | 两者都需要 durable ownership/progress，但 service run lease 与 harness task ledger 不是同一个对象。 |
 
 如果后续重构让这类测试失败，不要第一反应就是“把 test 改到通过”。先判断：架构是否真的有意改变？还是新的 abstraction 破坏了前面 Stage 的不变量？
 

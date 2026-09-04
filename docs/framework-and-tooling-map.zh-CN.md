@@ -13,15 +13,15 @@ Tiny-Agent 只有在先展示某个抽象背后的机制之后，才引入框架
 | 04 | embeddings / cosine / Retriever / RAG | FAISS、Qdrant、LangChain Retriever |
 | 05 | MCPToolBridge | MCP 2026-07-28 Python SDK v2 |
 | 06 | memory policy / approval primitives | LangGraph Checkpointer / Store / SQLite / Postgres |
-| 06A | ContextBudget / ContextBuilder / compaction | provider token usage；LangGraph context / memory patterns |
-| 06B | SkillCatalog / progressive activation | Agent Skills 开放 `SKILL.md` 标准 |
-| 07 | GuardedToolExecutor | jsonschema、Pydantic、Tenacity、OWASP mappings |
-| 08 | local tracer / eval suite | OpenTelemetry、LangSmith |
-| 09 | TeamRuntime / context / delegation policy | OpenAI Agents SDK patterns、A2A 1.0 |
-| 09A | AgentWorkspace / DockerSandboxRunner | container / managed sandbox concepts；OpenAI Agents SDK sandbox direction |
-| 10 | BoundedAgentService / SQLiteRunQueue / identity binding | FastAPI、Uvicorn、Postgres、Redis、Docker、A2A server |
-| 10A | TaskLedger / LongHorizonHarness | durable workflow / harness concepts；MCP Tasks 邻接关系 |
-| 11 | OpenScholar domain + base orchestration | LangGraph、OpenAI、Qdrant、MCP、A2A、FastAPI |
+| 07 | ContextBudget / ContextBuilder / compaction | provider token usage；LangGraph context / memory patterns |
+| 08 | SkillCatalog / progressive activation | Agent Skills 开放 `SKILL.md` 标准 |
+| 09 | GuardedToolExecutor | jsonschema、Pydantic、Tenacity、OWASP mappings |
+| 10 | local tracer / eval suite | OpenTelemetry、LangSmith |
+| 11 | TeamRuntime / context / delegation policy | OpenAI Agents SDK patterns、A2A 1.0 |
+| 12 | AgentWorkspace / DockerSandboxRunner | container / managed sandbox concepts；OpenAI Agents SDK sandbox direction |
+| 13 | BoundedAgentService / SQLiteRunQueue / identity binding | FastAPI、Uvicorn、Postgres、Redis、Docker、A2A server |
+| 14 | TaskLedger / LongHorizonHarness | durable workflow / harness concepts；MCP Tasks 邻接关系 |
+| 15 | OpenScholar domain + base orchestration | LangGraph、OpenAI、Qdrant、MCP、A2A、FastAPI |
 
 ## 框架使用原则
 

@@ -130,7 +130,7 @@ def build_langgraph_agent(
                 result = tools.execute(call["name"], call["arguments"])
                 observation = str(result)
             except Exception as exc:
-                # Stage 03 preserves the Stage 01 teaching behavior. Stage 07
+                # Stage 03 preserves the Stage 01 teaching behavior. Stage 09
                 # will replace raw exception messages with governed error types.
                 observation = f"ToolError[{type(exc).__name__}]: {exc}"
 

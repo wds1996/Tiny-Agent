@@ -170,7 +170,7 @@ Possible evaluation approaches include:
 - human grading;
 - carefully designed LLM-as-judge evaluation.
 
-Stage 08 will study evaluator design in depth.
+Stage 10 will study evaluator design in depth.
 
 For now, the key principle is:
 

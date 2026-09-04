@@ -151,7 +151,7 @@ question -> retrieval -> generation -> final answer
 - human grading；
 - carefully designed LLM-as-judge。
 
-Stage 08 会系统讲 evaluator design。
+Stage 10 会系统讲 evaluator design。
 
 核心区别：
 

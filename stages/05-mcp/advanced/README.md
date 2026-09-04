@@ -51,7 +51,7 @@ The 2026 release hardened OAuth/OIDC alignment and moved away from Dynamic Clien
 
 ## 7. Relationship to Tiny-Agent long-horizon work
 
-MCP Tasks can represent long-running remote capability execution. Tiny-Agent Stage 10A teaches the broader application harness problem: local task ledgers, durable run ownership, workspace artifacts, context compaction, evaluator/repair, and sandbox rehydration.
+MCP Tasks can represent long-running remote capability execution. Tiny-Agent Stage 14 teaches the broader application harness problem: local task ledgers, durable run ownership, workspace artifacts, context compaction, evaluator/repair, and sandbox rehydration.
 
 They solve adjacent layers, not the same abstraction.
 

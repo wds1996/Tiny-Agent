@@ -255,7 +255,7 @@ retrieved content
     != system authority
 ```
 
-Stage 07 会继续讨论 prompt injection。
+Stage 09 会继续讨论 prompt injection。
 
 ---
 
