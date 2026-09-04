@@ -41,9 +41,10 @@ This document answers one question:
 | bounded Agentic RAG / query rewrite / abstention | 04 |
 | FAISS / Qdrant | 04 |
 | retrieval evaluation (Recall@K / MRR) | 04, 10 |
-| MCP Tools/Resources/Prompts | 05 |
-| MCP 2026 stateless core | 05 |
-| MCP extensions/Tasks/MRTR/Apps | 05 advanced |
+| MCP Tools / Resources / Prompts | 05 |
+| MCP 2026-07-28 stateless core | 05 |
+| MCP stdio / Streamable HTTP transports | 05 |
+| MCP Tool bridging / async execution | 05 |
 | short/long-term memory | 06 |
 | Context Engineering | 07 |
 | compaction/provenance/JIT context | 07 |

@@ -9,7 +9,7 @@ Tiny-Agent uses frameworks only after exposing the mechanism they abstract.
 | 02 | routers / planners / replanners | Structured Outputs; LangGraph workflow patterns |
 | 03 | State / Node / Edge / Reducer / MiniStateGraph | LangGraph StateGraph |
 | 04 | chunking / embeddings / cosine / Retriever / bounded RAG control | FAISS, Qdrant, OpenAI Responses generation |
-| 05 | MCPToolBridge | MCP 2026-07-28 Python SDK v2 |
+| 05 | MCPServer / Client / async Tool bridge | MCP 2026-07-28 + Python SDK v2 |
 | 06 | memory policy / approval primitives | LangGraph Checkpointer / Store / SQLite / Postgres |
 | 07 | ContextBudget / ContextBuilder / compaction | provider token usage; LangGraph context/memory patterns |
 | 08 | SkillCatalog / progressive activation | Agent Skills open `SKILL.md` standard |

@@ -1,29 +1,26 @@
-"""Launch the Stage 05 server as a subprocess and connect over stdio."""
-
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
+import sys
 
 from mcp import Client, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 
 async def main() -> None:
-    server_file = Path(__file__).with_name("mcp_server.py").resolve()
-    params = StdioServerParameters(
+    server_path = Path(__file__).with_name("mcp_server.py")
+    parameters = StdioServerParameters(
         command=sys.executable,
-        args=[str(server_file)],
+        args=[str(server_path)],
     )
 
-    transport = stdio_client(params)
+    transport = stdio_client(parameters)
     async with Client(transport) as client:
-        print("negotiated protocol:", client.protocol_version)
+        print("protocol:", client.protocol_version)
         tools = await client.list_tools()
-        print("discovered tools:", [tool.name for tool in tools.tools])
-
-        result = await client.call_tool("stage_summary", {"stage": 5})
+        print("tools:", [tool.name for tool in tools.tools])
+        result = await client.call_tool("add", {"a": 6, "b": 7})
         print("result:", result.structured_content)
 
 

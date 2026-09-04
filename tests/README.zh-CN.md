@@ -166,16 +166,17 @@ Framework tests 使用 `.[dev,stage03]`。Checkpoint、Interrupt 与 Resume 的�
 
 Framework tests 使用 `.[dev,stage04]`。本章自己的 `checks.py` 还会离线验证 reranking、证据约束生成、query rewrite budget、Recall@K 与 Reciprocal Rank。
 
-## Stage 05 — MCP 与 Async Tool Execution
+## Stage 05 — MCP 互操作与异步 Tool 执行
 
-对应课程：[Stage 05 中文教程](../stages/05-mcp/README.zh-CN.md)，重点配合 [MCP Mental Model](../stages/05-mcp/theory/01-mcp-mental-model.zh-CN.md)、[Stateless Protocol 与 Transports](../stages/05-mcp/theory/03-stateless-protocol-and-transports.zh-CN.md)、[Python SDK v2 与 Tiny-Agent Bridge](../stages/05-mcp/theory/05-python-sdk-v2-and-tiny-agent-bridge.zh-CN.md)。
+对应课程为整合后的 [Stage 05 中文教程](../stages/05-mcp/README.zh-CN.md)。这一章从本地 Tool 的边界开始，逐步讲到外部 MCP Server，并连续解释 Tools / Resources / Prompts、`2026-07-28` 无会话协议模型、进程内 / stdio / Streamable HTTP 连接，以及如何把发现到的 MCP Tool 重新适配回异步本地 Tool Registry。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
-| [`test_async_tools.py`](test_async_tools.py) | Core | `ToolRegistry.aexecute()` 可以执行 sync handler，也会正确 await async handler；反过来，sync `execute()` 遇到 async handler 必须报错，而不能把 coroutine object 当结果返回。 | Remote MCP Tool 天然是 async，因此 Tool abstraction 必须有真实的 async boundary。 |
-| [`test_stage05_mcp.py`](test_stage05_mcp.py) | Framework | MCP v2 / `2026-07-28` protocol、Tools/Resources/Prompts discovery、structured Tool result、bridge namespace、ToolRegistry population、remote async execution 与显式 MCP Tool error。 | 确保教程验证的是当前 MCP，而不是旧 `initialize()` 生命周期。 |
+| [`test_async_tools.py`](test_async_tools.py) | Core | `ToolRegistry.aexecute()` 既能执行同步 handler，也能正确 await 异步 handler；同步 `execute()` 遇到异步 Tool 时会明确拒绝，而不是把 coroutine object 泄漏进运行轨迹。 | 远程 MCP Tool 天然带有异步 I/O，因此本地 Tool 抽象必须诚实地拥有 async execution path。 |
+| [`test_stage05_mcp.py`](test_stage05_mcp.py) | Framework | v2 `Client` 协商 `2026-07-28`，发现 Tool / Resource / Resource Template / Prompt，读取模板 Resource，区分结构化成功结果与 Tool 级错误，并将带 namespace 的 MCP Tool 接入 Tiny-Agent。 | 直接验证本章真正讲授的互操作边界，同时避免把 discovery 当成 authorization，也避免把所有 MCP Primitive 压扁成 Tool。 |
 
-使用 `.[dev,stage05]`。
+使用 `.[dev,stage05]`。测试通过进程内 `MCPServer` 运行真实当前 SDK，不需要额外网络服务。
+
 
 ## Stage 06 — Memory、Durable Persistence 与 HITL
 

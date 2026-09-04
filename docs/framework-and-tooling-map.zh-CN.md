@@ -11,7 +11,7 @@ Tiny-Agent 只有在先展示某个抽象背后的机制之后，才引入框架
 | 02 | routers / planners / replanners | Structured Outputs；LangGraph workflow patterns |
 | 03 | State / Node / Edge / Reducer / MiniStateGraph | LangGraph StateGraph |
 | 04 | chunking / embeddings / cosine / Retriever / bounded RAG control | FAISS、Qdrant、OpenAI Responses generation |
-| 05 | MCPToolBridge | MCP 2026-07-28 Python SDK v2 |
+| 05 | MCPServer / Client / 异步 Tool bridge | MCP 2026-07-28 + Python SDK v2 |
 | 06 | memory policy / approval primitives | LangGraph Checkpointer / Store / SQLite / Postgres |
 | 07 | ContextBudget / ContextBuilder / compaction | provider token usage；LangGraph context / memory patterns |
 | 08 | SkillCatalog / progressive activation | Agent Skills 开放 `SKILL.md` 标准 |

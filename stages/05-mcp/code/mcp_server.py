@@ -1,71 +1,63 @@
-"""Stage 05 demo MCP server.
-
-Default execution uses stdio so a host/client can launch this file as a child
-process. See ``streamable_http_server.py`` for the remote HTTP variant.
-"""
-
 from __future__ import annotations
 
 from mcp.server import MCPServer
 
 
-STAGE_SUMMARIES = {
-    1: "ReAct and provider-neutral tool execution.",
-    2: "Routing, planning, workflows, and bounded replanning.",
-    3: "Explicit state and LangGraph orchestration.",
-    4: "RAG, vector retrieval, reranking, and grounded answers.",
-    5: "MCP: standardized discovery and invocation across boundaries.",
+HANDBOOK = {
+    "refunds": (
+        "Orders may be refunded to the original payment method within 30 days. "
+        "After 30 days, support may offer store credit after review."
+    ),
+    "shipping": (
+        "Standard shipping normally takes 3-5 business days after dispatch."
+    ),
 }
 
 mcp = MCPServer(
-    "Tiny-Agent Stage 05 Demo",
+    "Tiny-Agent Stage 05",
     instructions=(
-        "This teaching server exposes one executable tool, two resources, and "
-        "one prompt so learners can compare the three MCP primitives."
+        "Teaching server for MCP Tools, Resources, and Prompts. "
+        "The host remains responsible for deciding which capabilities are trusted and exposed."
     ),
 )
 
 
 @mcp.tool()
 def add(a: int, b: int) -> dict[str, int]:
-    """Add two integers and return a structured result."""
+    """Add two integers and return structured data."""
     return {"result": a + b}
 
 
 @mcp.tool()
-def stage_summary(stage: int) -> dict[str, object]:
-    """Return a short summary for a Tiny-Agent learning stage."""
-    if stage not in STAGE_SUMMARIES:
-        raise ValueError(f"Unknown Tiny-Agent stage: {stage}")
-    return {"stage": stage, "summary": STAGE_SUMMARIES[stage]}
+def lookup_policy(topic: str) -> dict[str, str]:
+    """Return one handbook policy by topic."""
+    normalized = topic.strip().lower()
+    if normalized not in HANDBOOK:
+        raise ValueError(f"unknown policy topic: {topic}")
+    return {"topic": normalized, "policy": HANDBOOK[normalized]}
 
 
 @mcp.resource("tiny-agent://about")
 def about() -> str:
-    """Return a short description of the Tiny-Agent project."""
-    return "Tiny-Agent teaches Agent engineering from mechanism to production."
+    """Describe the teaching server."""
+    return "Tiny-Agent Stage 05 demonstrates MCP interoperability boundaries."
 
 
-@mcp.resource("tiny-agent://stage/{stage}")
-def stage_resource(stage: str) -> str:
-    """Read a stage summary through a URI template."""
-    try:
-        stage_number = int(stage)
-    except ValueError as exc:
-        raise ValueError("stage must be an integer") from exc
-
-    summary = STAGE_SUMMARIES.get(stage_number)
-    if summary is None:
-        raise ValueError(f"Unknown Tiny-Agent stage: {stage_number}")
-    return summary
+@mcp.resource("tiny-agent://handbook/{topic}")
+def handbook(topic: str) -> str:
+    """Read a handbook entry by URI."""
+    normalized = topic.strip().lower()
+    if normalized not in HANDBOOK:
+        raise ValueError(f"unknown handbook topic: {topic}")
+    return HANDBOOK[normalized]
 
 
 @mcp.prompt()
-def explain_stage(stage: str, audience: str = "beginner") -> str:
-    """Create a model-ready instruction for explaining a learning stage."""
+def explain_mcp(topic: str, audience: str = "beginner") -> str:
+    """Create a reusable model-facing instruction about MCP."""
     return (
-        f"Explain Tiny-Agent Stage {stage} to a {audience}. "
-        "Start with the problem it solves, then give one concrete example."
+        f"Explain {topic} to a {audience}. "
+        "Start from the concrete problem, then give one MCP example and one non-example."
     )
 
 

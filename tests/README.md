@@ -166,16 +166,17 @@ Read with the integrated [Stage 04 chapter](../stages/04-agentic-rag/README.md).
 
 Install `.[dev,stage04]` for the framework tests. The chapter's own `checks.py` additionally exercises reranking, evidence-bound generation, query-rewrite budgets, and Recall@K / Reciprocal Rank without network access.
 
-## Stage 05 — MCP and asynchronous Tool execution
+## Stage 05 — MCP interoperability and asynchronous Tool execution
 
-Read with [Stage 05](../stages/05-mcp/README.md), [MCP mental model](../stages/05-mcp/theory/01-mcp-mental-model.md), [current stateless protocol/transports](../stages/05-mcp/theory/03-stateless-protocol-and-transports.md), and [the Tiny-Agent bridge](../stages/05-mcp/theory/05-python-sdk-v2-and-tiny-agent-bridge.md).
+Read with the integrated [Stage 05 chapter](../stages/05-mcp/README.md). It develops the boundary from local Tools to external MCP Servers, keeps Tools / Resources / Prompts distinct, explains the `2026-07-28` sessionless protocol model, compares in-process / stdio / Streamable HTTP connections, and finally adapts discovered MCP Tools back into an async local Tool registry.
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
-| [`test_async_tools.py`](test_async_tools.py) | Core | `ToolRegistry.aexecute()` can run sync handlers and await async handlers; synchronous `execute()` refuses an async handler instead of leaking a coroutine object. | Remote MCP Tools are naturally async, so the Tool abstraction needs an honest async boundary. |
-| [`test_stage05_mcp.py`](test_stage05_mcp.py) | Framework | MCP v2 / protocol `2026-07-28`, Tool/Resource/Prompt discovery, structured Tool results, bridge namespacing, registry population, remote async execution, and explicit MCP Tool errors. | Confirms current MCP semantics rather than relying on older `initialize()`-era tutorials. |
+| [`test_async_tools.py`](test_async_tools.py) | Core | `ToolRegistry.aexecute()` can execute synchronous handlers and await asynchronous handlers; synchronous `execute()` rejects an async handler instead of leaking a coroutine object. | A remote MCP Tool is naturally asynchronous, so the local Tool abstraction needs an honest async execution path. |
+| [`test_stage05_mcp.py`](test_stage05_mcp.py) | Framework | The v2 `Client` negotiates `2026-07-28`, discovers Tools / Resources / Resource Templates / Prompts, reads a templated Resource, distinguishes structured success from Tool-level error, and bridges namespaced MCP Tools into Tiny-Agent. | Verifies the exact interoperability boundary taught by the chapter without confusing discovery with authorization or flattening every MCP primitive into a Tool. |
 
-Install with `.[dev,stage05]`.
+Install with `.[dev,stage05]`. The tests use an in-process `MCPServer`, so they exercise the real current SDK without requiring a network service.
+
 
 ## Stage 06 — Memory, durable persistence, and HITL
 
