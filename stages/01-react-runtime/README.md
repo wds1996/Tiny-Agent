@@ -2,80 +2,61 @@
 
 > Language: **English** | [简体中文](README.zh-CN.md)
 
-Stage 00 completed one fixed `model → tool → model` round trip: call the model, execute one requested Tool, call the model again, and produce the final answer.
+Stage 00 deliberately stopped at an awkward but useful point. The application could let the model request one Tool, Python could execute it, and the result could go back to the model. What the program could not do was handle an unknown number of decisions cleanly.
 
-It works because the program quietly assumes the entire route:
+Imagine hiring an assistant and hard-coding today's route: first visit the archive, then perform one calculation, then report back. That works until tomorrow's task needs no archive visit, or two lookups, or a second decision after new information arrives. You do not want to begin every morning by guessing how many variables named `first_response`, `second_response`, and `third_response` the assistant will need.
 
-```text
-the first turn requests a Tool
-the Tool runs exactly once
-the second turn finishes
-```
+So this chapter is not really about adding another Tool. It is about a deeper problem:
 
-Ask for “read the teaching weather, then convert Celsius to Fahrenheit,” and the code naturally grows variables named `first`, `second`, and `third`. Add a few more decisions and the variable names start needing a family registry.
+> **When the model may choose the next step on every turn, how does the application contain that uncertainty inside a controlled loop?**
 
-This chapter addresses the actual problem:
+That loop is the heart of an Agent Runtime.
 
-> **When a model may request zero, one, or many Tools, how can the application organize those decisions into a bounded, testable, replaceable execution loop?**
-
-We will build a small Agent Runtime from first principles. It first runs offline with a deterministic Model Double, then connects to the OpenAI Responses API through an Adapter.
-
-Complete implementations live only in [`code/`](code/). The chapter explains each mechanism with focused excerpts instead of duplicating every source file. This keeps the lesson continuous without creating two copies of the code to maintain.
+Complete runnable programs still live only in [`code/`](code/). The prose uses focused excerpts so we can reason about one mechanism at a time without maintaining a second copy of the implementation in Markdown.
 
 ---
 
-## 1. Learning goals
+## 1. Where the fixed script becomes clumsy
 
-After completing the chapter, you should be able to:
-
-- distinguish a deterministic Workflow, an Agent, a Model, a Tool, and a Runtime by asking who controls the next step;
-- interpret ReAct as an observable `decision → action → observation` loop;
-- explain why the Runtime should not depend directly on one provider’s Response classes;
-- describe the contracts of `ToolCall`, `ModelTurn`, `Tool`, `ToolRegistry`, and `RunResult`;
-- explain why a Tool needs both a model-facing schema and an application-side handler;
-- distinguish provider-side generation constraints from runtime-side execution validation;
-- trace one complete execution through `AgentRuntime.run()`;
-- explain why the transcript is application-owned state rather than memory inside the model;
-- show how `max_steps`, unique call IDs, and categorized errors bound execution;
-- test the Runtime with a deterministic Model Double without a network call;
-- explain how an Adapter translates provider protocol objects without changing the core loop.
-
----
-
-## 2. Why the fixed script is not enough
-
-The Stage 00 control flow can be summarized as:
+The Stage 00 example can be summarized as:
 
 ```python
 first = call_model(user_request)
-call = read_function_call(first)
+call = read_tool_call(first)
 result = execute(call)
 final = call_model(result)
 return final.output_text
 ```
 
-This is not bad code for a one-Tool task. Its limitation is that the **task trajectory** is embedded in the **program structure**.
+There is nothing wrong with that code for a task that always needs exactly one Tool call. In fact, for a tiny deterministic task, it is clearer than a framework-heavy abstraction.
 
-A model may finish immediately:
+The problem is that the path is encoded in the program structure.
 
-```text
-user → model → final answer
-```
+Ask instead:
 
-Or it may need two actions:
+> Read Tokyo's teaching weather and convert the temperature to Fahrenheit.
+
+A sensible path may be:
 
 ```text
 user
-  → model requests weather
-  → application returns weather
-  → model requests conversion
-  → application returns conversion
-  → model returns final answer
+  ↓
+model: get_teaching_weather("Tokyo")
+  ↓
+application: 18.0°C, cloudy
+  ↓
+model: celsius_to_fahrenheit(18.0)
+  ↓
+application: 64.4°F
+  ↓
+model: final answer
 ```
 
-It may also change its next choice after seeing an Observation. The application cannot know how many variables named `next_response` to prepare.
+Another task may require no Tool at all. A third may need a Tool result before the model can decide what to do next.
 
-The repeated shape needs one rule:
+The application does not know the number of turns in advance. What it does know is a repeated rule: ask the model for one decision, execute requested Tools, record observations, and continue until the model finishes or the application stops the run.
+
+In pseudocode:
 
 ```python
 for step in range(max_steps):
@@ -91,181 +72,107 @@ for step in range(max_steps):
 raise MaxStepsExceeded
 ```
 
-This small loop carries four responsibilities:
-
-1. request one decision from the model based on current state;
-2. map requested actions to application capabilities;
-3. write execution results back into state;
-4. continue, finish, or fail according to explicit rules.
-
-Once those responsibilities are represented clearly, the fixed Tool loop becomes a Runtime.
+Everything else in this chapter exists to make the responsibilities around that loop explicit. We are not adding classes to make a short loop look impressive.
 
 ---
 
-## 3. Workflow, Agent, and Runtime: ask who chooses the next step
+## 2. Workflow, Agent, and Runtime: ask who chooses the next step
 
-Using a language model does not automatically make a system an Agent. A more useful question is: **who decides the next step?**
+Before writing the Runtime, clear up one idea that tends to become fuzzier the longer people work with LLM applications: does using a model automatically make a system an Agent?
 
-### 3.1 Deterministic Workflow
+No.
+
+Consider a deterministic workflow:
 
 ```python
 weather = get_weather("Tokyo")
-converted = celsius_to_fahrenheit(weather["temperature_c"])
-return format_answer(weather, converted)
+fahrenheit = celsius_to_fahrenheit(weather["temperature_c"])
+return format_answer(weather, fahrenheit)
 ```
 
-The programmer fixes the steps, order, and branches. A model may participate in one step, but it does not control the route. This is a deterministic Workflow.
+The developer already chose the steps, their order, and the routing. `format_answer()` could even call an LLM and the overall control flow would still be deterministic.
 
-Its strengths are straightforward:
-
-- behavior is easier to predict;
-- testing is simpler;
-- cost and call counts are easier to estimate;
-- the model is not given control authority the task does not need.
-
-### 3.2 Agent loop
+An Agent loop changes one important thing: the model receives limited authority to choose the next semantic step.
 
 ```python
 turn = model.generate(messages, available_tools)
 ```
 
-The model can choose, within a constrained interface, whether to:
+It may return a final answer, request the weather Tool, or request the conversion Tool. But “may choose the next step” does not mean “owns the process.” The model is still selecting from outputs the Runtime understands and capabilities the application exposes.
 
-- return final text;
-- request the weather Tool;
-- request the conversion Tool;
-- choose a different next action after observing a result.
+A short phrase helps keep the roles straight:
 
-The model receives limited authority over the next semantic step. It does not take ownership of the Python process; it can only use exits accepted by the Runtime.
+> **The Model proposes the next step. The Runtime manages the next step. The Tool implements the next step.**
 
-### 3.3 Runtime carries the control process
+The Runtime is closer to a stage manager than an actor. It does not provide the intelligence, but it controls when the scene begins, which props exist, and when the performance must stop.
 
-The Runtime is not itself intelligent. It turns model decisions into a controlled execution trace:
+### 2.1 When you should prefer a Workflow
 
-```text
-Model
-    chooses the next semantic action
+Do not treat Agent loops as the default “advanced” version of a program. If the next step can be chosen reliably with ordinary code, use ordinary code. Deterministic workflows are easier to test, easier to budget, and easier to explain.
 
-Runtime
-    owns the loop, state, routing, execution, and stopping rules
+An Agent becomes useful when the task genuinely requires the model to interpret open-ended language or observations and decide what semantic action should happen next.
 
-Tool
-    exposes a capability through a described and validated interface
-```
-
-A compact rule is:
-
-> **The Model proposes the next step, the Runtime governs it, and the Tool implements it.**
-
-A stage can host an actor, but the stage does not suddenly deliver the monologue. Likewise, a Runtime can carry Agent behavior without being the source of intelligence.
-
-### 3.4 When an Agent is unnecessary
-
-If ordinary conditions can choose the next step reliably, prefer deterministic code.
-
-```text
-Can a clear if/else choose the next step?
-        ↓ yes
-prefer a Workflow
-
-        ↓ no, the choice depends on open language and observations
-consider model participation
-```
-
-An Agent loop is not a more advanced default. It trades additional complexity for a more open decision space. The trade is useful only when the task needs that space.
+That is a trade: more flexibility in exchange for more control complexity. Use it when the task earns the complexity.
 
 ---
 
-## 4. ReAct: orchestrate observable events, not hidden thoughts
+## 3. ReAct without the mythology
 
-ReAct combines reasoning and acting. For this implementation, its useful engineering meaning is:
+You will see the term ReAct frequently. It comes from Reasoning and Acting. Older examples often show a transcript like:
 
 ```text
-Model Decision
-      ↓
-Action / Tool Call
-      ↓
-Application Execution
-      ↓
-Observation
-      ↓
-Next Model Decision
+Thought: I need the weather first.
+Action: get_weather
+Observation: ...
+Thought: Now I should convert the temperature.
 ```
 
-The Runtime handles observable, recordable objects:
+That is a useful teaching picture, but it is a poor requirement for a Runtime. The Runtime does not need the model's private chain of thought. It needs observable events that software can record and validate.
 
-- whether the model requested a Tool;
-- the Tool name and arguments;
-- the result returned by application execution;
-- whether the model produced final text.
+For this chapter, ReAct means:
 
-This chapter does not depend on the model emitting a `Thought:` string or exposing private chain-of-thought. A controller such as:
+```text
+Decision
+   ↓
+Action / Tool Call
+   ↓
+Application executes
+   ↓
+Observation
+   ↓
+Next Decision
+```
+
+If your controller depends on text formatting such as:
 
 ```python
 if "Action:" in model_text:
     ...
 ```
 
-makes program behavior depend on prose formatting. One missing colon should not disable the control plane.
+then your execution protocol is built on punctuation. One missing colon and the system suddenly forgets how to operate.
 
-We represent actions as structured `ToolCall` objects and observations as Tool messages. The loop operates on protocol data rather than on a literary convention.
-
-### 4.1 Reasoning is not execution authority
-
-A model may perform sophisticated reasoning internally. Its effect on the application is still limited to the outputs the Runtime recognizes. This chapter accepts two semantic exits:
-
-```text
-final_text
-or
-tool_calls
-```
-
-Model capability influences the choice. The Runtime contract determines how that choice can enter the system.
+Structured Tool Calls solve that problem by making the action request data rather than prose.
 
 ---
 
-## 5. Three roles: Model, Runtime, and Tool
+## 4. The Runtime needs its own small internal language
 
-A minimal architecture looks like this:
+Provider responses are usually rich objects. They may contain output items, function calls, response IDs, status fields, and provider-specific state.
 
-```text
-                   ┌──────────────┐
-                   │    Model     │
-                   │ decide next  │
-                   └──────┬───────┘
-                          │ ModelTurn
-                          ▼
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│  messages    │◀─▶│   Runtime    │──▶│     Tool     │
-│  run state   │   │ control loop │   │ validate/run │
-└──────────────┘   └──────────────┘   └──────┬───────┘
-                                             │
-                                             ▼
-                                        Observation
+You can certainly write a Runtime that directly inspects those objects:
+
+```python
+for item in response.output:
+    if item.type == "function_call":
+        ...
 ```
 
-**Model** consumes current run state and Tool descriptions, then returns one provider-neutral decision.
+The price is coupling. The core loop now knows how one provider encodes function calls.
 
-**Tool** connects a model-facing capability description and argument contract to an application-side Python handler.
+Instead, ask what the Runtime actually needs.
 
-**Runtime** owns the loop. It invokes the Model, checks the returned value, routes a Tool, runs the handler, appends the Observation, and decides when execution stops.
-
-When all three are mixed into one function, a provider response change can disturb Tool routing and control flow at the same time. Every failure then lands in one bucket labelled “AI logic,” which is not a useful place to debug anything.
-
----
-
-## 6. Define an internal protocol before connecting a provider
-
-The complete offline Runtime is in [`code/runtime.py`](code/runtime.py). Install the chapter dependencies and run it:
-
-```bash
-python -m pip install -r stages/01-react-runtime/code/requirements.txt
-python stages/01-react-runtime/code/runtime.py
-```
-
-We first model only the data the Runtime actually needs. No OpenAI Response class appears in the core loop.
-
-### 6.1 `ToolCall`: one proposed action
+For one Tool request:
 
 ```python
 @dataclass(frozen=True)
@@ -275,19 +182,7 @@ class ToolCall:
     arguments: dict[str, Any]
 ```
 
-The Runtime needs three facts:
-
-```text
-call_id    which invocation is this?
-name       which capability is requested?
-arguments  what inputs were proposed?
-```
-
-`__post_init__` checks that the ID and name are non-empty strings and that arguments are a dictionary.
-
-`frozen=True` prevents ordinary code from mutating a call after creation. Immutability is not a complete state model, but it reduces the chance that the call shown in the trace differs from the call eventually executed.
-
-### 6.2 `ModelTurn`: one decision, one semantic exit
+For one model decision:
 
 ```python
 @dataclass(frozen=True)
@@ -296,73 +191,56 @@ class ModelTurn:
     tool_calls: tuple[ToolCall, ...] = ()
 ```
 
-This Runtime permits exactly one of two outcomes:
+That is enough for the loop to decide whether to stop or act.
 
-```text
-A. final_text — finish the run
-or
-B. one or more tool_calls — execute, observe, continue
-```
+### 4.1 Why `ModelTurn` forces one exit
 
-The invariant is explicit:
+The implementation rejects a turn that contains neither final text nor Tool Calls, and it also rejects one that contains both:
 
 ```python
 has_final = self.final_text is not None
 has_calls = bool(self.tool_calls)
+
 if has_final == has_calls:
     raise InvalidModelTurnError(
         "A model turn must contain exactly one of final_text or tool_calls"
     )
 ```
 
-If neither exists, the Runtime has no next state. If both exist, it is unclear whether the answer is final or actions must run first.
+A real provider may support more complicated output combinations. Our internal protocol does not have to copy every external possibility.
 
-A provider may support richer mixed output. The internal protocol does not need to reproduce every provider possibility. It should represent only semantics the application deliberately supports.
+The benefit is a clean state transition:
 
-The calls are stored in a tuple to match the frozen value object and to communicate that the call set for this turn is complete, not an open list awaiting unrelated mutation.
+```text
+ModelTurn(final_text=...)
+    → END
 
-### 6.3 Call IDs must remain unique
-
-`ModelTurn` rejects duplicate IDs within one turn. `AgentRuntime` also rejects reusing an ID anywhere in the run:
-
-```python
-repeated = [
-    call.call_id for call in turn.tool_calls if call.call_id in seen_call_ids
-]
-if repeated:
-    raise InvalidModelTurnError(
-        f"Tool call IDs must be unique within a run: {repeated}"
-    )
+ModelTurn(tool_calls=...)
+    → ACT → OBSERVE → NEXT TURN
 ```
 
-Observations are correlated through `call_id`. If one ID can refer to two actions, the transcript cannot uniquely answer which result belongs to which request.
+This is one of the quiet advantages of an Adapter layer: the external protocol may be complicated without forcing the Runtime to be equally complicated.
 
-### 6.4 The `Model` Protocol depends on behavior, not a vendor class
+### 4.2 Why Tool Call IDs must remain unique
 
-```python
-class Model(Protocol):
-    def generate(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-    ) -> ModelTurn:
-        ...
-```
-
-Any object satisfying this contract can drive the Runtime:
-
-- a deterministic test double;
-- a local model Adapter;
-- an OpenAI Responses Adapter;
-- another provider integration.
-
-The Runtime does not branch on `isinstance(model, OpenAI...)`. The point of the Protocol is not an extra layer of ceremony; it allows the controller to be tested without a network and without provider wire types.
+The Runtime also rejects repeated call IDs within a run. Tool Outputs are correlated back to Tool Calls through those IDs. Reusing the same ID for unrelated actions is like printing the same tracking number on two different packages. The simple example may survive it; a longer trajectory will not.
 
 ---
 
-## 7. A Tool combines interface, validation, and implementation
+## 5. A Tool is more than a Python function
 
-The chapter’s Tool value object is:
+For a quick demo, a dictionary of handlers is enough:
+
+```python
+handlers = {
+    "get_weather": get_weather,
+    "convert": convert,
+}
+```
+
+A reusable Runtime needs a little more. The model needs a description and parameter schema. The application needs a handler and a validation boundary.
+
+The chapter's Tool object puts those pieces together:
 
 ```python
 @dataclass(frozen=True)
@@ -373,18 +251,11 @@ class Tool:
     handler: Callable[[Any], Any]
 ```
 
-Each field serves a different boundary:
+The model-facing side comes from `name`, `description`, and the JSON Schema generated from `arguments_model`. The application-side behavior is the handler.
 
-| Field | Primary consumer | Purpose |
-|---|---|---|
-| `name` | Model and Registry | identifies the capability |
-| `description` | Model | explains when and why to use it |
-| `arguments_model` | Model and Runtime | generates schema and validates execution input |
-| `handler` | Runtime | performs the Python operation |
+### 5.1 Validate again at the execution boundary
 
-### 7.1 One argument model supports two separate checks
-
-The Pydantic type produces a model-facing JSON Schema and validates concrete input at execution:
+The weather Tool uses a strict Pydantic model:
 
 ```python
 class WeatherArguments(BaseModel):
@@ -393,176 +264,63 @@ class WeatherArguments(BaseModel):
     city: Literal["Tokyo", "Paris"]
 ```
 
-- `extra="forbid"` rejects undeclared fields;
-- `strict=True` avoids unwanted coercion;
-- `Literal` limits values to cities supported by the teaching dataset.
-
-The Tool schema comes from:
-
-```python
-def schema(self) -> dict[str, Any]:
-    return {
-        "name": self.name,
-        "description": self.description,
-        "parameters": self.arguments_model.model_json_schema(),
-    }
-```
-
-The execution boundary validates again:
+Before the handler runs:
 
 ```python
 arguments = self.arguments_model.model_validate(raw_arguments)
 ```
 
-These operations are not redundant:
+The provider may already constrain normal generation with a strict schema. That does not remove the Runtime's responsibility to validate the concrete input it is about to execute.
 
-```text
-schema tells upstream what should be generated
-validation checks what was actually received locally
-```
+This is ordinary backend thinking. A browser form may validate input too; the server still validates before writing to a database because the server owns the consequence.
 
-Provider-side strict generation is a generation constraint. Runtime-side validation protects execution. The application owns the handler call, so it owns the final argument check.
+### 5.2 The Registry is the first capability boundary
 
-### 7.2 Handlers receive validated objects
+The Runtime never looks up arbitrary generated names in the Python global namespace. It executes only registered Tools:
 
 ```python
-def celsius_to_fahrenheit(
-    arguments: TemperatureArguments,
-) -> dict[str, float]:
-    converted = round(arguments.temperature_c * 9 / 5 + 32, 1)
-    return {"temperature_f": converted}
+tool = self._tools.get(call.name)
+if tool is None:
+    raise UnknownToolError(f"Unknown tool: {call.name}")
 ```
 
-The handler no longer rummages through an untrusted dictionary and guesses field types. It receives a validated value and can focus on the operation.
+A Registry is not a complete authorization system, but it establishes an essential rule: **a generated name does not create a capability.**
 
-### 7.3 Descriptions influence model behavior
-
-This description is not useful:
-
-```text
-Convert stuff.
-```
-
-The chapter uses:
-
-```text
-Convert a Celsius value to Fahrenheit.
-```
-
-A good Tool description states what the capability returns, when it applies, what important arguments mean, and any material limitation.
-
-Vague Tool design forces the model to guess. Replacing the model with a larger one afterward often produces a more eloquent guess, not a clearer interface.
+If the model requests `delete_everything` and the application never registered such a Tool, nothing becomes executable merely because the string exists.
 
 ---
 
-## 8. `ToolRegistry`: a capability whitelist and a router
+## 6. Walk through the Runtime one turn at a time
 
-The model returns a string name. The Runtime must not dynamically execute any object with a matching name. It looks up only explicitly registered Tools:
+The complete implementation is in [`code/runtime.py`](code/runtime.py). Run it before reading further:
 
-```python
-class ToolRegistry:
-    def __init__(self, tools: list[Tool]) -> None:
-        self._tools: dict[str, Tool] = {}
-        for tool in tools:
-            if tool.name in self._tools:
-                raise ValueError(f"Duplicate tool name: {tool.name}")
-            self._tools[tool.name] = tool
+```bash
+python stages/01-react-runtime/code/runtime.py
 ```
 
-Execution is a whitelist lookup:
+It uses a deterministic `ScriptedWeatherModel`, so no API key is required. You should see a trajectory similar to:
 
-```python
-def execute(self, call: ToolCall) -> Any:
-    tool = self._tools.get(call.name)
-    if tool is None:
-        raise UnknownToolError(f"Unknown tool: {call.name}")
-    return tool.invoke(call.arguments)
+```text
+[1] ACTION  get_teaching_weather({'city': 'Tokyo'})
+[1] OBSERVE {"city": "Tokyo", "temperature_c": 18.0, "condition": "cloudy"}
+[2] ACTION  celsius_to_fahrenheit({'temperature_c': 18.0})
+[2] OBSERVE {"temperature_f": 64.4}
+[3] FINAL   Tokyo's deterministic teaching record is 18.0°C (64.4°F), cloudy.
 ```
 
-This establishes a minimal capability boundary: only Tools explicitly registered by the application can enter the execution path. Generating `move_the_moon` does not cause the Runtime to acquire an orbital engineering department.
+The easiest way to understand the Runtime is to follow `AgentRuntime.run()` rather than reading every class top to bottom.
 
-Be precise about the limit: the Registry is a capability whitelist, not a complete user-identity authorization system. It answers whether this application process possesses and exposes a capability; it does not decide whether a particular user may use it on a particular resource.
+### 6.1 The application owns the run transcript
 
-Duplicate names fail during construction. Otherwise, one name could refer to two handlers and behavior would depend on registration order.
-
-The Registry exposes schemas to the Model, not handlers:
-
-```python
-def schemas(self) -> list[dict[str, Any]]:
-    return [tool.schema() for tool in self._tools.values()]
-```
-
-The model sees capability descriptions. The application retains implementations.
-
----
-
-## 9. Walk through `AgentRuntime.run()` one turn at a time
-
-The complete implementation remains in [`code/runtime.py`](code/runtime.py). Follow the control flow through one run.
-
-### 9.1 Create explicit run state
+A run begins with explicit state:
 
 ```python
 messages: list[dict[str, Any]] = [
     {"role": "user", "content": user_input}
 ]
-seen_call_ids: set[str] = set()
 ```
 
-`messages` is the run transcript. The application owns it; it is not hidden memory inside the model.
-
-This chapter uses three message roles:
-
-```text
-user
-    the task
-
-assistant
-    final model text or a model Tool request
-
-tool
-    the Observation returned by application execution
-```
-
-`seen_call_ids` protects call/result correlation.
-
-### 9.2 Ask for exactly one model decision per turn
-
-```python
-for step in range(1, self.max_steps + 1):
-    turn = self.model.generate(messages, self.registry.schemas())
-```
-
-The Model receives current state and allowed Tool descriptions. It returns a `ModelTurn`, but it does not own the Python loop. The Runtime decides whether another turn happens.
-
-The boundary checks the actual return value:
-
-```python
-if not isinstance(turn, ModelTurn):
-    raise InvalidModelTurnError(
-        "Model.generate() must return a ModelTurn"
-    )
-```
-
-An Adapter’s promise to follow a Protocol is useful; validating the actual object is safer.
-
-### 9.3 Final-text branch: record and finish
-
-```python
-if turn.final_text is not None:
-    messages.append({"role": "assistant", "content": turn.final_text})
-    return RunResult(
-        answer=turn.final_text,
-        model_turns=step,
-        messages=tuple(messages),
-    )
-```
-
-The final answer is added to the transcript. `RunResult` returns the answer, number of model turns, and full trace rather than discarding everything except one string.
-
-### 9.4 Tool branch: record the request before execution
-
-The Runtime first appends the assistant Tool Call:
+When the model requests Tools, the Runtime records the request:
 
 ```python
 messages.append(
@@ -574,19 +332,9 @@ messages.append(
 )
 ```
 
-Then it executes each call:
+After execution, it records the Observation:
 
 ```python
-for call in turn.tool_calls:
-    result = self.registry.execute(call)
-```
-
-Request first, Observation second. If the application stores only results, the trace suddenly contains weather data with no record of who requested it or with which arguments.
-
-### 9.5 Return the Tool result as an Observation
-
-```python
-observation = json.dumps(result, ensure_ascii=False, default=str)
 messages.append(
     {
         "role": "tool",
@@ -597,46 +345,53 @@ messages.append(
 )
 ```
 
-The next model turn can use a Tool result because the Runtime explicitly places it in state, not because Python execution creates telepathy.
+This is worth pausing on because people often say “the model remembers what happened.” In this implementation, the more precise statement is: **the application records what happened and includes that record in the next model call.**
 
-A full trace looks like:
+The state is explicit and inspectable. That makes the Runtime easier to test and debug.
 
-```text
-user request
-    ↓
-assistant requests call-weather
-    ↓
-tool(call-weather) returns weather
-    ↓
-assistant requests call-convert
-    ↓
-tool(call-convert) returns Fahrenheit
-    ↓
-assistant returns final text
+### 6.2 One turn, one decision
+
+The center of the loop is:
+
+```python
+for step in range(1, self.max_steps + 1):
+    turn = self.model.generate(messages, self.registry.schemas())
 ```
 
-### 9.6 Multiple calls in one turn do not imply concurrency
+If the turn contains final text, the Runtime stops:
 
-`ModelTurn` can represent multiple calls, but this Runtime executes them with a normal `for` loop:
+```python
+if turn.final_text is not None:
+    return RunResult(...)
+```
+
+If the turn contains Tool Calls, the Runtime executes them:
 
 ```python
 for call in turn.tool_calls:
     result = self.registry.execute(call)
 ```
 
-Therefore:
+The Runtime does not decide which Tool the model should choose. It enforces the process around that choice.
 
-```text
-multiple calls can be represented in one turn
-        ≠
-the calls execute concurrently
+That distinction is the core of the architecture: semantic choice belongs to the model; execution control belongs to the application.
+
+### 6.3 Multiple Tool Calls do not imply concurrent execution
+
+`ModelTurn` can represent more than one Tool Call, but the current Runtime uses a normal loop:
+
+```python
+for call in turn.tool_calls:
+    result = self.registry.execute(call)
 ```
 
-Sequential execution keeps completion order and side effects easier to reason about. This chapter does not put a “parallel” label on an ordinary loop and hope nobody inspects the engine.
+So execution is sequential.
 
-### 9.7 `max_steps`: the model may propose continuing; the system may decline
+This is an easy place to over-read the term “parallel Tool Calls.” A model may propose several calls in one turn. Whether the Runtime executes them concurrently is a separate engineering decision involving shared state, cancellation, partial failures, and ordering. This chapter keeps execution synchronous and easy to reason about.
 
-If every turn requests another Tool, the Runtime eventually raises:
+### 6.4 What `max_steps` actually counts
+
+If the model never finishes, the Runtime eventually raises:
 
 ```python
 raise MaxStepsExceeded(
@@ -644,150 +399,70 @@ raise MaxStepsExceeded(
 )
 ```
 
-A step is one **model decision turn**, not one Tool call. A turn containing two calls still consumes one model step.
+`max_steps` counts model decision turns, not the total number of Tool invocations. One turn may contain several calls.
 
-`max_steps` is a logical execution budget. It is not a wall-clock timeout and does not guarantee a fixed bill, but it prevents an unbounded decision loop. An unrestricted `while True` has a charming sense of adventure; invoices sometimes share the enthusiasm.
-
----
-
-## 10. Why explicit state matters
-
-The Runtime explicitly owns:
-
-- the user request;
-- every model Tool Call;
-- every Tool Output;
-- the final answer;
-- all used call IDs.
-
-This serves three purposes.
-
-### 10.1 It gives the next turn necessary information
-
-Without the Observation, the model cannot base the next decision on the Tool result.
-
-### 10.2 It creates a testable trace
-
-Tests can assert message order, call IDs, and model-turn count rather than checking only the final sentence.
-
-### 10.3 It localizes failure
-
-A bad result can be traced to Tool selection, arguments, handler behavior, or final synthesis.
-
-The transcript exists only for one `run()` in memory. It is not cross-task long-term memory and does not automatically survive a process restart. The lesson here is narrower: **run state belongs to the application and must be represented explicitly.**
+This is a basic execution budget, not a complete cost or timeout system. Still, it matters. An unbounded `while True` looks pleasantly simple until the model discovers a loop and the invoice becomes a performance metric.
 
 ---
 
-## 11. Why use `ScriptedWeatherModel` before a real model
+## 7. “The Agent failed” is not a useful error category
 
-Connecting a real model first looks more impressive but makes a poor controller test. If execution fails, two questions become entangled:
+Follow the path through the Runtime and you can see several distinct failure locations.
 
-```text
-Is the Runtime wrong?
-Or did the model choose a different valid path this time?
-```
+If the model returns something that violates the internal protocol, that is an `InvalidModelTurnError`. If it requests an unregistered Tool, that is an `UnknownToolError`. If Pydantic rejects the arguments, that is a `ToolArgumentsError`. If the arguments are valid but the Python handler itself fails, that is a `ToolExecutionError`.
 
-`ScriptedWeatherModel` follows a deterministic script:
+They may all result in an unfinished task, but they belong to different owners.
+
+That distinction tells you where to look. An unknown Tool suggests a capability or model-selection problem. Invalid arguments suggest a schema or input problem. A handler exception points to application code or an external service.
+
+This is much better than the universal diagnosis, “the Agent seems confused.”
+
+### 7.1 Why Tool failure stops the run in this chapter
+
+Another valid design is to convert a Tool error into an Observation and let the model try again. Many systems do that.
+
+The moment you add automatic recovery, however, new questions appear: Is the operation safe to repeat? Did it partially change state before failing? How many retries are allowed?
+
+Those are important reliability questions, but they are not free. This chapter chooses an intentionally simple rule: **a Tool execution failure ends the run.**
+
+That makes one fact easy to reason about: you know exactly how many times the handler ran. We can add more sophisticated recovery only after the base semantics are clear.
+
+---
+
+## 8. Why a scripted Model is better than a real Model for testing the Runtime
+
+If your first Runtime test uses a live model, a failed trajectory leaves you with an annoying ambiguity: did the Runtime break, or did the model simply make a different choice this time?
+
+`runtime.py` therefore includes a deterministic model double:
 
 ```python
-observations = [m for m in messages if m.get("role") == "tool"]
-
-if not observations:
-    return ModelTurn(tool_calls=(weather_call,))
-
-if len(observations) == 1:
-    return ModelTurn(tool_calls=(conversion_call,))
-
-return ModelTurn(final_text="...")
+class ScriptedWeatherModel:
+    ...
 ```
 
-It is not trying to imitate language intelligence. It is a Model Double with a fixed transition:
+It has no language intelligence. With no Tool observations it requests weather; after one observation it requests conversion; after two it returns final text.
 
-```text
-0 Observations → request weather
-1 Observation  → request conversion
-2 Observations → return final text
-```
+That lack of intelligence is exactly what makes it useful. The controller can now be tested with a stable input-output sequence.
 
-That isolates the Runtime:
-
-- no API key is required;
-- every trajectory is identical;
-- the test cannot fail because a remote model used an unexpected synonym;
-- failure points first toward the controller rather than “the model’s mood.”
-
-Run:
-
-```bash
-python stages/01-react-runtime/code/runtime.py
-```
-
-Expected trace:
-
-```text
-[1] ACTION  get_teaching_weather({'city': 'Tokyo'})
-[1] OBSERVE {"city": "Tokyo", "temperature_c": 18.0, "condition": "cloudy"}
-[2] ACTION  celsius_to_fahrenheit({'temperature_c': 18.0})
-[2] OBSERVE {"temperature_f": 64.4}
-[3] FINAL   Tokyo's deterministic teaching record is 18.0°C (64.4°F), cloudy.
-```
-
-| Model turn | Model returns | Runtime does |
-|---|---|---|
-| 1 | weather Tool Call | validate, execute, append weather Observation |
-| 2 | conversion Tool Call | validate, execute, append conversion Observation |
-| 3 | `final_text` | append final message and return `RunResult` |
-
----
-
-## 12. Errors need ownership, not one large bucket
-
-The Runtime defines five error categories:
-
-| Error | Meaning | First place to inspect |
-|---|---|---|
-| `InvalidModelTurnError` | Model output violates the internal protocol | Model or Adapter boundary |
-| `UnknownToolError` | requested name is absent from the Registry | Tool routing |
-| `ToolArgumentsError` | arguments fail Pydantic validation | Tool input contract |
-| `ToolExecutionError` | the handler fails after valid input | Tool implementation or dependency |
-| `MaxStepsExceeded` | the run does not finish within the turn budget | Model behavior and control budget |
-
-### 12.1 Argument failure and execution failure are different
-
-```text
-{"city": "Atlantis"}
-```
-
-should fail before the handler as `ToolArgumentsError`.
-
-Valid arguments entering a handler that then fails produce `ToolExecutionError`.
-
-The repair paths differ. One points toward schema or generated inputs; the other points toward implementation or an external dependency. `except Exception: return "error"` does not simplify this distinction. It merely puts the error in witness protection.
-
-### 12.2 This chapter chooses “failure stops the run”
-
-`Tool.invoke()` wraps a handler exception and raises it:
+The Runtime depends on a small Protocol:
 
 ```python
-try:
-    return self.handler(arguments)
-except Exception as exc:
-    raise ToolExecutionError(
-        f"Tool {self.name!r} failed with {type(exc).__name__}"
-    ) from exc
+class Model(Protocol):
+    def generate(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> ModelTurn:
+        ...
 ```
 
-The Runtime does not retry automatically and does not return an error Observation to the model. That is an intentional simple policy: the number of handler executions remains easy to determine.
+A real provider Adapter and a scripted test double both satisfy the same contract. The Runtime does not need a separate loop for each one.
 
-Retries are not a free reliability switch. Repeating a side-effecting Tool may be more damaging than the first failure. Without an explicit retry contract, “try again” is hope with a loop around it.
-
-### 12.3 Error text is also part of the boundary
-
-The wrapper preserves the Python causal chain with `raise ... from exc` while presenting a stable error category. Arbitrary internal exception details are not copied into a model Observation because this Runtime stops instead of asking the model to recover.
+A useful testing habit for Agent systems is: **when you are testing control logic, remove model randomness whenever you can.**
 
 ---
 
-## 13. Deterministic tests should inspect the trajectory
+## 9. Test the trajectory, not only the final sentence
 
 Run the chapter checks:
 
@@ -795,20 +470,15 @@ Run the chapter checks:
 python stages/01-react-runtime/code/runtime_checks.py
 ```
 
-The complete suite is [`code/runtime_checks.py`](code/runtime_checks.py). It uses standard-library `unittest` and does not access the network.
+The complete tests live in [`code/runtime_checks.py`](code/runtime_checks.py).
 
-### 13.1 The happy path checks more than the answer
+The happy-path test checks the final answer:
 
 ```python
-result = AgentRuntime(
-    ScriptedWeatherModel(), build_tools(), verbose=False
-).run("weather then conversion")
-
-self.assertEqual(result.model_turns, 3)
 self.assertIn("64.4°F", result.answer)
 ```
 
-It also checks call correlation in Tool messages:
+But it also checks the Tool call correlation IDs in the transcript:
 
 ```python
 self.assertEqual(
@@ -817,351 +487,161 @@ self.assertEqual(
 )
 ```
 
-A correct final sentence can still emerge from a bad trajectory: duplicated side effects, bypassed validation, or mismatched results. Agent quality cannot be judged from the final prose alone.
+Why inspect the trajectory? Because a final answer can be correct for the wrong reason.
 
-### 13.2 Counterexamples reveal the contract
+Suppose a system is required to query a database before answering. The model guesses correctly once without using the Tool. A string-only test passes. A trajectory test reveals that the required action never happened.
 
-The suite includes:
+The chapter checks also force unknown Tools, invalid arguments, handler failures, repeated call IDs, and a model that never finishes. Those “bad” examples are not edge-case decoration; they are executable definitions of the Runtime's boundaries.
 
-- a Model that never finishes;
-- a Model requesting an unknown name;
-- a Model emitting invalid city arguments;
-- a Model reusing a call ID;
-- a Tool whose handler always raises;
-- a fake provider client.
-
-For example:
-
-```python
-with self.assertRaises(UnknownToolError):
-    runtime.run("request an unregistered tool")
-```
-
-The important contract is not the exception class name. It is that a generated string cannot make an unregistered capability executable.
-
-### 13.3 Why a real model is not a unit-test fixture
-
-A live model is useful for end-to-end experiments. A unit test needs to answer whether a precise Runtime transition always follows from a precise input.
-
-If the first explanation for a failed test is “the model may have phrased it differently today,” the test has not isolated the controller.
+A useful rule of thumb is: if you cannot write a deterministic counterexample for a claimed Runtime invariant, you may not have defined the invariant clearly enough yet.
 
 ---
 
-## 14. The Adapter keeps provider protocol outside the Runtime
+## 10. Only now connect a real Provider
 
-The offline Runtime is complete. To connect a real model, configure credentials and run:
+Once the core Runtime works offline, we can attach the OpenAI Responses API without modifying `AgentRuntime.run()`.
+
+Configure:
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
 export OPENAI_MODEL="your-model-id"
+```
+
+Then run:
+
+```bash
 python stages/01-react-runtime/code/openai_runtime.py
 ```
 
-The complete Adapter is [`code/openai_runtime.py`](code/openai_runtime.py). Its goal is simple: **add a provider without changing `AgentRuntime.run()`.**
+The complete Adapter is in [`code/openai_runtime.py`](code/openai_runtime.py). The key class is:
+
+```python
+class OpenAIResponsesModel:
+    ...
+```
+
+It satisfies the same `Model.generate(...) -> ModelTurn` contract as the scripted model.
+
+Its job is translation:
 
 ```text
-OpenAI Response
+Runtime Tool schema
       ↓
-OpenAIResponsesModel
+OpenAI function Tool
+
+OpenAI function_call
       ↓
-ModelTurn / ToolCall
+ToolCall
+
+Runtime Tool Observation
       ↓
-AgentRuntime
+function_call_output
 ```
 
-### 14.1 Three translations belong in the Adapter
+The core Runtime does not import the provider SDK or inspect provider-specific output objects. That is the real value of the Adapter. It is not “another class for architecture points”; it is a boundary that keeps unstable external protocol details from spreading into the control loop.
 
-First, convert an internal Tool schema to a provider function Tool:
+### 10.1 Why the Adapter remembers `previous_response_id`
 
-```python
-@staticmethod
-def _to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "name": tool["name"],
-        "description": tool["description"],
-        "parameters": tool["parameters"],
-        "strict": True,
-    }
-```
+After the first provider response contains a Tool Call, the next request must continue the same provider conversation chain.
 
-Second, normalize provider `function_call` output into `ToolCall`:
-
-```python
-calls.append(
-    ToolCall(
-        call_id=item.call_id,
-        name=item.name,
-        arguments=arguments,
-    )
-)
-```
-
-Third, convert a Runtime Tool message into `function_call_output`:
-
-```python
-outputs.append(
-    {
-        "type": "function_call_output",
-        "call_id": call_id,
-        "output": str(message.get("content", "")),
-    }
-)
-```
-
-Provider-specific fields remain in the Adapter. The Runtime continues to speak only `ModelTurn` and `ToolCall`. The extra class exists to stop wire-format details from spreading through the controller.
-
-### 14.2 `previous_response_id` chains provider Responses
-
-The Adapter stores the most recent provider Response ID:
+The Adapter stores:
 
 ```python
 self._previous_response_id: str | None = None
 ```
 
-Later requests include:
+and later sends:
 
 ```python
-if self._previous_response_id is not None:
-    request["previous_response_id"] = self._previous_response_id
+request["previous_response_id"] = self._previous_response_id
 ```
 
-The next turn can then send only newly produced Tool Outputs rather than manually reconstructing every provider output item.
+That means the current Adapter instance carries run-level state. In this teaching implementation, one Adapter instance belongs to one Runtime run. Reusing it for unrelated user tasks could accidentally chain the second task onto the first provider response.
 
-When using `previous_response_id`, the request still supplies `instructions` explicitly. The Adapter does not assume that instructions from an earlier Response are automatically carried into the next request.
+That is not a universal law about Adapters. It is the actual behavior of this implementation, and the tutorial should tell you so plainly.
 
-### 14.3 Submit only new Tool Outputs
+### 10.2 Why only new Tool Outputs are submitted
 
-The Runtime passes a complete transcript on every turn. If the Adapter re-sends every historical Tool message, one `call_id` may be submitted repeatedly.
+The Runtime transcript contains the whole trajectory. Old Tool observations remain in `messages` on later turns.
 
-It therefore tracks:
+The Provider should not receive the same `function_call_output` repeatedly, so the Adapter tracks submitted IDs:
 
 ```python
 self._submitted_tool_call_ids: set[str] = set()
 ```
 
-`_next_input()` selects only unseen Tool Outputs. Internal state is updated only after the provider returns a valid completed Response:
+Only new Tool Outputs are sent in the next request.
 
-```python
-self._previous_response_id = response_id
-self._submitted_tool_call_ids.update(pending_call_ids)
-```
+This tiny detail illustrates why the Adapter boundary matters. The Runtime thinks in terms of “the run has an Observation.” The Provider cares about wire format, continuation IDs, and whether that Observation has already been submitted. Those are different concerns.
 
-Validate first, commit Adapter state second. A failed request should not be recorded as successfully submitted.
+### 10.3 Why the live example disables parallel Tool Calls
 
-### 14.4 One Adapter instance represents one run
-
-`_previous_response_id` and `_submitted_tool_call_ids` belong to one execution trajectory. This chapter therefore defines:
-
-```text
-one OpenAIResponsesModel instance
-        ↔
-one AgentRuntime.run(...)
-```
-
-Do not share one instance across unrelated user tasks. That could attach a new task to an old provider Response chain. This is a constraint of this Adapter design, not a universal claim about every provider client.
-
-### 14.5 Provider Responses are external input too
-
-The Adapter verifies:
-
-- `status` is `completed`;
-- the Response ID is a non-empty string;
-- function arguments decode to a JSON object;
-- a turn without Tool Calls contains non-empty final text.
-
-For example:
-
-```python
-try:
-    arguments = json.loads(item.arguments)
-except json.JSONDecodeError as exc:
-    raise ProviderResponseError(
-        f"Arguments for function {item.name!r} are not valid JSON"
-    ) from exc
-```
-
-An Adapter is more than a field-name converter. It prevents malformed provider data from entering the internal protocol.
-
-### 14.6 Why the live example disables parallel Tool Calls
-
-The request sets:
+The Adapter sends:
 
 ```python
 "parallel_tool_calls": False,
 ```
 
-That keeps the live demonstration to one linear action per provider turn, matching the offline trace. The internal `ModelTurn` can still represent multiple calls; this particular integration deliberately chooses a narrower behavior.
+This is a teaching choice, not a claim that the Runtime can only represent one call. `ModelTurn` still supports multiple `ToolCall` objects.
 
-That is a useful design pattern: an internal protocol can retain reasonable generality while one integration adopts a simpler policy for its current use case.
+For the live example, a single-line trajectory is easier to inspect. Turning on concurrency would introduce execution ordering, shared side effects, cancellation, and partial failure before we have a reason to teach them.
 
----
-
-## 15. A control-authority inventory
-
-In this Runtime, the Model may:
-
-- choose final text or a Tool Call from the available interface;
-- choose an exposed Tool name;
-- propose Tool arguments;
-- revise its next decision after seeing an Observation.
-
-The Model may not directly:
-
-- invoke an arbitrary Python object;
-- bypass the Registry;
-- bypass Pydantic argument validation;
-- change `max_steps`;
-- reuse a call ID without rejection;
-- decide that an exception should be ignored;
-- continue execution after returning final text.
-
-Agent autonomy is not one switch. It is a set of deliberately allocated decisions. The clearer the allocation, the easier the system is to reason about.
+Good teaching code should not enable every feature merely to prove the features exist.
 
 ---
 
-## 16. The exact specification of this Runtime
+## 11. What the minimal Runtime now gives you—and what it does not
 
-The implementation provides:
+At this point, the Runtime has more substance than a raw loop. The model speaks through a provider-neutral contract. Tools carry descriptions, schemas, and handlers. A Registry limits executable capabilities. The Runtime owns the transcript and stopping rule. Arguments are validated immediately before execution. Errors are separated by responsibility. A deterministic model double makes the control path testable offline. A Provider Adapter isolates external protocol details.
 
-```text
-provider-neutral Model contract
-Tool schema plus handler
-runtime-side argument validation
-Tool Registry routing
-decision → action → observation loop
-explicit transcript
-call/result correlation
-unique call IDs
-model-turn budget
-categorized errors
-deterministic Model Double
-offline tests
-OpenAI Responses Adapter
-```
+That is enough to call it a small, coherent Agent Runtime.
 
-It deliberately does not provide:
+It is still deliberately small. Tool execution is synchronous and sequential. Run state lives in the current process. Tool failure ends the run. There is no automatic retry policy, no concurrent scheduler, and no extra persistence mechanism in this chapter.
 
-- asynchronous or concurrent Tool execution;
-- automatic retries;
-- model recovery from an error Observation;
-- persisted run state;
-- process-restart recovery;
-- complete user authorization and side-effect policy;
-- combined time, token, and cost budgets;
-- streaming output;
-- multi-user Adapter lifecycle management.
+Those are not hidden defects. They are the current specification.
 
-Listing omissions is not an apology. It is an accurate specification. One successful demo proves one path works; reliable reasoning also requires knowing how other paths stop.
+One of the most useful habits in Agent engineering is to ask not only “what can this system do?” but also “what does this code explicitly not promise?” Marketing adjectives are poor substitutes for that answer.
 
 ---
 
-## 17. Common mistakes
+## 12. Experiments that make the architecture stick
 
-### “A Runtime is just a while loop.”
+Instead of copying the Runtime again, change one assumption.
 
-The loop is the shell. The important parts are the protocol, state ownership, Tool routing, validation, error categories, and stopping rules.
+Make `ScriptedWeatherModel` return two Tool Calls in the same turn and observe the execution order. Then deliberately reuse a `call_id` and see where the internal protocol rejects it.
 
-### “A Tool Call should be executed because the model returned it.”
+Add a third Tool such as `describe_temperature`, which maps a Fahrenheit value to `cold`, `mild`, or `hot`. Update the scripted model but do not modify `AgentRuntime.run()`. If adding one more Tool requires changing the core loop, the abstraction is not yet as general as it should be.
 
-The Runtime still checks the internal protocol, call ID, Registry name, and arguments. A Tool Call is a proposal, not privileged command authority.
+Make a handler raise an exception and compare two possible semantics on paper: stop the run immediately, or convert the error into an Observation and let the model try again. Before deciding which is “better,” ask whether the Tool has side effects and whether a retry could duplicate them.
 
-### “A fake Model has no intelligence, so the test is meaningless.”
-
-The object under test is the Runtime controller, not model capability. Determinism is precisely what isolates it.
-
-### “Supporting multiple Tool Calls means the Runtime is concurrent.”
-
-The data structure can represent multiple calls. Execution policy is a separate concern; this implementation remains sequential.
-
-### “The final answer is correct, so the Agent succeeded.”
-
-Correct prose can come from duplicated execution, mismatched observations, or bypassed validation. Result quality and trajectory quality are separate signals.
-
-### “The Adapter is only unnecessary field conversion.”
-
-The Adapter performs protocol translation and external-input validation. It keeps the Runtime independent of provider wire details.
+Finally, set `max_steps=1`. The experiment makes one thing unmistakable: the model may choose a next action, but the application still owns the outer execution budget.
 
 ---
 
-## 18. Exercises
+## 13. By the end of the chapter, you should be able to narrate one run
 
-### Exercise 1: emit two Tool Calls in one turn
+If I ask, “What is Tokyo's teaching weather, and what is that temperature in Fahrenheit?” you should be able to narrate the program, not recite an Agent formula.
 
-Make `ScriptedWeatherModel` request Tokyo and Paris weather in the first turn using different call IDs. Inspect execution and transcript order.
+The user input enters the Runtime. The Runtime gives the transcript and Tool schemas to the Model. The Model returns a `ToolCall`. The Runtime resolves it through the Registry. Pydantic validates the arguments. The handler executes. The result becomes a Tool Observation in the transcript. The next Model turn sees that Observation and requests the conversion Tool. A second Observation is recorded. Finally, the Model returns `final_text`, and the Runtime returns a `RunResult`.
 
-### Exercise 2: reuse a call ID deliberately
+If you can point to who owns control at each step, you understand the important part of the chapter.
 
-Use `call-weather` again in the second turn. Confirm that the Runtime rejects it before handler execution and explain which correlation invariant is protected.
-
-### Exercise 3: add a third Tool
-
-Create `describe_temperature`, accepting Fahrenheit and returning `cold`, `mild`, or `hot`. Modify the Tool set and scripted Model, but do not change `AgentRuntime.run()`.
-
-If a normal new Tool requires a controller rewrite, task detail has leaked into the Runtime abstraction.
-
-### Exercise 4: compare argument and execution failures
-
-Produce both:
-
-```text
-{"city": "Atlantis"}
-a valid input passed to a handler that always raises
-```
-
-Verify that they produce different error categories and identify different repair locations.
-
-### Exercise 5: turn a Tool error into an Observation
-
-In a copy, serialize the error and return it to the Model. Also add a maximum recovery-attempt count and track whether the handler may execute more than once. Compare this policy with “failure stops the run.”
-
-### Exercise 6: remove Adapter deduplication
-
-Delete `_submitted_tool_call_ids` and use `FakeResponsesAPI` to inspect a later request. Observe whether old Tool Outputs are sent again.
-
-### Exercise 7: guard Adapter reuse
-
-Make an `OpenAIResponsesModel` instance reject a second unrelated user task after one run finishes. Add a deterministic test for that lifecycle rule.
-
-### Exercise 8: build the deterministic comparison
-
-Write the same “weather → conversion → answer” task as a plain Workflow. Compare code size, predictability, and the additional decision authority purchased by the Agent loop. Do not assume the Agent version wins automatically.
+You do not need to memorize a slogan such as “Agent = LLM + Tools + Memory + Planning.” It is more useful to open the code and know where decisions happen, where execution happens, where state lives, where invalid input is rejected, and where the loop is forced to stop.
 
 ---
 
-## 19. Check your understanding
-
-Answer from the control and data flow rather than memorized definitions:
-
-1. Why can a fixed two-call script not represent a general Tool loop?
-2. What is the key control difference between a Workflow and an Agent loop?
-3. What does ReAct mean here, and why does the Runtime not parse `Thought:` text?
-4. Why must `ModelTurn` choose exactly one of `final_text` and `tool_calls`?
-5. At which boundaries do Tool schema, Pydantic validation, and the handler operate?
-6. Why is the Registry both a router and a minimal capability whitelist?
-7. Why record the assistant Tool Call before the Tool Observation?
-8. What does `max_steps` count, and what does it not guarantee?
-9. Why is a deterministic Model Double better than a live model for Runtime unit tests?
-10. Why does the Adapter track both `previous_response_id` and submitted call IDs?
-11. Why does one Adapter instance correspond to one run in this design?
-12. How can correct final text still come from a failed trajectory?
-13. Which tasks should remain deterministic Workflows rather than Agent loops?
-
-If you can answer those by tracing the program, you understand more than how to “run an Agent.” You understand what governs it.
-
----
-
-## 20. Chapter files
+## 14. Chapter files
 
 ```text
 stages/01-react-runtime/
 ├── README.md
 ├── README.zh-CN.md
 └── code/
-    ├── runtime.py          # provider-neutral Runtime and offline example
-    ├── runtime_checks.py   # deterministic boundary tests
-    ├── openai_runtime.py   # OpenAI Responses Adapter
+    ├── runtime.py
+    ├── openai_runtime.py
+    ├── runtime_checks.py
     └── requirements.txt
 ```
 
-Complete implementations are maintained only under `code/`; snippets in the chapter explain the mechanism currently under discussion.
+Complete implementations are maintained only under `code/`; the chapter excerpts explain the mechanisms in context.

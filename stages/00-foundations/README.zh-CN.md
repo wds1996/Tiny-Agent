@@ -1,73 +1,66 @@
-# Stage 00：从一次模型调用开始，搭好 Agent 的地基
+# Stage 00：先把一次模型调用讲明白
 
 > Language: [English](README.md) | **简体中文**
 
-很多 Agent 教程一开场就端上框架、插件、记忆、工作流和多智能体，像是刚学会切菜，就被要求独立承办满汉全席。本章先把锅放稳：**一次普通的大模型调用究竟发生了什么？**
+如果你第一次学 Agent，我想先劝你做一件看起来很“慢”的事：先别急着写 Agent。
 
-我们会沿着一条连续的因果链前进：
+这听起来有点反直觉。你打开这个仓库，本来就是为了学 Agent，结果第一章却让你盯着一次普通的模型调用看半天，好像报名了游泳课，教练第一节课只让你站在池边研究水。但这一步很重要，因为后面所谓的 Tool、Runtime、Memory、Workflow，说到底都建立在同一个事实之上：**你的 Python 程序在调用一个模型服务，而模型服务只会根据当前输入生成下一段输出。**
+
+本章我们不背一串名词，而是顺着程序真正遇到的问题往前走。先让模型回答一句话；接着发现自然语言不适合直接给程序使用，于是引入 Structured Output；然后发现结构化结果仍然不能替你查询外部数据，于是再引入 Tool Calling。到最后，你会完成一次完整的 `model → tool → model` 往返。
+
+完整、可直接运行的程序只放在 [`code/`](code/) 目录里。正文中的代码块只截取正在讲的那一部分。这样读起来像教材，完整程序又有一个明确的“真源头”，不会 README 一份、`code/` 又一份，改着改着两边开始各讲各的。
+
+---
+
+## 1. 先建立一个不会害你的心智模型
+
+我们从最简单的情况开始。假设用户问：
+
+> 为什么语言模型给出的回答只是一个“提案”，而不是 Python 程序已经执行的动作？
+
+程序做的事情其实很朴素：
 
 ```text
-让模型生成文字
-        ↓
-让程序稳定地读取模型结果
-        ↓
-让模型请求一个外部工具
-        ↓
-由应用执行工具，并把结果送回模型
+用户输入
+   ↓
+Python 组织请求
+   ↓
+模型服务生成响应
+   ↓
+Python 读取响应
 ```
 
-学完本章，你不会得到一个“无所不能的 Agent”，但会得到更重要的东西：一套不会轻易混淆的边界。
+这里最值得你记住的，不是 API 名字，而是“谁做了什么”。模型负责生成输出，Python 程序负责真正的程序行为。模型可以说“邮件已经发送”，但如果你的代码里没有调用邮件系统，世界上并不会因此多出一封邮件。
 
-> **模型负责生成提案；应用程序负责验证、执行和承担后果。**
+可以把模型想成坐在玻璃房里的顾问。它能看你递进去的材料，能告诉你“建议调用天气接口”“建议发邮件”“建议把这个字段改成 42”，但真正能碰到数据库、文件系统和第三方 API 的，仍然是玻璃房外的应用程序。**模型有表达能力，不等于拥有执行权限。**
 
-模型说“邮件已发送”，不等于邮件真的发出；模型返回一段合法 JSON，也不等于里面的事实正确。它可以提出动作，但不能靠语气坚定获得系统权限。
+这条边界看起来基础，却是后面几乎所有 Agent 安全设计的起点。
 
-本章完整可执行代码只保存在 [`code/`](code/) 中。正文会按照知识点展示局部代码片段，帮助你理解每个机制；不会把整份源文件重复粘贴一遍。需要通读或运行时，请直接打开对应文件。
+### 1.1 先把环境准备好
 
----
-
-## 1. 学习目标
-
-完成本章后，你应该能够：
-
-- 解释 Python 程序、模型服务和响应对象分别负责什么；
-- 区分 `instructions`、`input` 与一次调用中的上下文；
-- 说明为什么自然语言适合给人读，却不适合作为稳定的程序接口；
-- 使用 Pydantic 定义 Structured Output（结构化输出）；
-- 区分“语法正确”“结构正确”和“事实正确”；
-- 解释 Tool schema、Tool Call、Python 处理函数和 Tool Output 的关系；
-- 说明 `call_id` 与 `previous_response_id` 分别关联什么；
-- 在执行模型提出的工具请求前，完成名称、参数和允许范围检查。
-
-本章只要求你具备基础 Python 能力：能看懂函数、字典、异常和命令行即可。
-
----
-
-## 2. 准备运行环境
-
-本章使用 Python 3.10 或更高版本、OpenAI Python SDK 与 Pydantic。请在仓库根目录执行：
+本章示例使用 Python 3.10 及以上版本。先安装依赖：
 
 ```bash
 python -m pip install -r stages/00-foundations/code/requirements.txt
 ```
 
-然后配置 API Key 与模型名称：
+然后配置 API Key 和你项目中可用的模型：
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
 export OPENAI_MODEL="your-model-id"
 ```
 
-Windows PowerShell：
+PowerShell 对应写法是：
 
 ```powershell
 $env:OPENAI_API_KEY="your-api-key"
 $env:OPENAI_MODEL="your-model-id"
 ```
 
-不要把 API Key 写进源代码或提交到 Git。示例也没有硬编码某个模型名称，因为模型目录与项目权限会变化。显式要求 `OPENAI_MODEL`，可以让配置问题在程序启动时立即出现，而不是在教程进行一半时突然上演“模型去哪儿了”。
+示例故意不把模型名称写死。教程最怕的事情之一，就是正文说得云淡风轻，读者复制代码以后发现“这个模型我根本没有权限”。把 `OPENAI_MODEL` 作为显式配置，反而更诚实。
 
-三个示例都使用相同的环境变量检查函数：
+三个示例都会先检查环境变量：
 
 ```python
 def required_env(name: str) -> str:
@@ -77,11 +70,11 @@ def required_env(name: str) -> str:
     return value.strip()
 ```
 
-这是一条很普通但很重要的工程原则：**尽量在输入边界处暴露错误。**
+这不是 AI 特有技巧，就是普通的软件工程：**尽量在边界处尽早失败。** 如果 API Key 没配好，最好一启动就告诉你，而不是让程序跑到第五层函数以后再报一个不知所云的错误。
 
 ---
 
-## 3. 第一次模型调用：把模型当作远程计算服务
+## 2. 第一次真正的模型调用
 
 运行：
 
@@ -89,7 +82,7 @@ def required_env(name: str) -> str:
 python stages/00-foundations/code/first_llm_call.py
 ```
 
-完整代码位于 [`code/first_llm_call.py`](code/first_llm_call.py)。核心调用如下：
+完整程序在 [`code/first_llm_call.py`](code/first_llm_call.py)。我们先只看最核心的调用：
 
 ```python
 response = client.responses.create(
@@ -106,140 +99,74 @@ response = client.responses.create(
 )
 ```
 
-从应用程序视角看，这次调用是一个清楚的请求—响应过程：
+第一次看到这种调用时，很多人会下意识把它理解成：
 
 ```text
-Python 构造请求
-      ↓
-模型服务根据输入生成输出
-      ↓
-SDK 返回 Response 对象
-      ↓
-Python 检查并使用结果
+输入一个字符串 → 输出一个字符串
 ```
 
-这里有两个行为主体：
+这个理解勉强能用，但很容易把后面学歪。更准确的理解是：**你向模型服务提交了一次请求，拿回了一个 Response 对象。** 文本只是这个响应对象里的一部分。
 
-- **模型服务**负责根据上下文生成输出；
-- **应用程序**负责发起请求、读取结果、执行函数和改变外部世界。
+所以示例不会直接 `print(response.output_text)` 然后宣布下课，而是先检查状态：
 
-它们不能混为一谈。模型像一位隔着玻璃办公的聪明同事：你把材料递进去，它可以给出建议；至于是否开门、是否操作真实系统，钥匙仍在程序手里。
+```python
+if response.status != "completed":
+    raise RuntimeError(f"The response did not complete: {response.status}")
 
-### 3.1 模型会生成内容，但不会自动获得外部能力
-
-一次普通文本调用不会自动：
-
-- 读取你没有提供的本地文件；
-- 查询私有数据库；
-- 获取实时天气；
-- 发送邮件；
-- 修改订单；
-- 证明它生成的事实一定正确。
-
-如果输出中出现“订单已取消”，唯一可以确认的是：响应里出现了这几个字。订单系统是否发生变化，要看应用有没有执行真实操作。
-
-### 3.2 概率生成意味着什么
-
-语言模型不是传统意义上的纯函数。同一输入重复调用，措辞和细节可能不同。由此得到两条直接结论：
-
-1. 不要让关键程序逻辑依赖某句话必须逐字出现；
-2. 程序必须读取的内容，应尽量通过结构化契约表达和验证。
-
-Agent 工程不是消灭不确定性，而是把不确定性限制在合适的位置。
-
-### 3.3 `instructions` 与 `input` 不是同一个东西
-
-可以先这样理解：
-
-```text
-instructions
-    应用希望模型遵守的行为与回答要求
-
-input
-    当前这次调用真正需要处理的任务或数据
+if not response.output_text.strip():
+    raise RuntimeError("The response completed without text output.")
 ```
 
-不要把所有来源都拼成一条巨型字符串：
+为什么这么啰嗦？因为“HTTP 请求没抛异常”“模型响应状态是 completed”“最终确实有可用文本”是三件不同的事。程序越往后走，越应该把这些边界拆开，而不是统统归类成一句“模型好像没答对”。
+
+### 2.1 `instructions` 和 `input` 为什么要分开
+
+这两个参数最容易被刚入门的同学看成“反正都是字符串”。但它们的来源不同。
+
+`instructions` 更像应用给模型的行为要求：你希望它怎样回答、遵守怎样的约束。`input` 则是这一轮真正要处理的任务或数据。
+
+如果把它们混成一大坨：
 
 ```python
 prompt = policy + user_question + documents + tool_result
 ```
 
-这种写法短期很省事，长期会失去来源边界。程序很难再回答：哪部分是应用规则？哪部分是用户输入？哪部分只是外部文档中的数据？
+一开始会觉得很省事，等项目长大以后就会发现自己失去了来源信息：哪段是应用规则？哪段是用户说的？哪段只是外部资料？
 
-本章先采用一个足够实用的定义：
+本章先给 Context（上下文）一个足够实用的定义：
 
-> **Context（上下文）是某次模型调用实际能够看到的全部输入。**
+> **某次模型调用真正能看到的全部输入，就是这一轮的 Context。**
 
-`instructions` 和 `input` 都会进入上下文，但上下文不等于长期存储，也不只是一个叫作“Prompt”的字符串。
+`instructions`、用户输入、之后的 Tool Output 都可能进入 Context。注意，这还不是“长期记忆”，也不是“数据库里有什么模型就都知道”。模型只看得到你在这一轮实际给它的东西。
 
-### 3.4 Response 不是一段裸字符串
+### 2.2 模型输出为什么不能当成事实
 
-示例先检查状态和文本：
+语言模型是生成模型。它擅长根据已有信息继续生成合理的内容，但“合理”不等于“真实”。同样一个问题多问几次，措辞甚至结论细节都可能变化。
 
-```python
-if response.status != "completed":
-    raise RuntimeError(f"The response did not complete: {response.status}")
-if not response.output_text.strip():
-    raise RuntimeError("The response completed without text output.")
-```
+这带来一个非常朴素的工程结论：凡是程序必须稳定依赖的东西，都不应该靠一句自然语言去猜。
 
-随后才读取：
+比如模型说：
 
-```python
-print(response.output_text)
-```
+> This looks important. We probably need current weather data first.
 
-`output_text` 是 SDK 提供的便捷文本视图。完整 `response` 还可能包含：
-
-```text
-Response
-├── id
-├── status
-├── model
-├── output items
-├── output_text
-└── usage
-```
-
-“请求没有抛异常”和“应用得到可用结果”并不是同一件事。显式检查可以阻止空结果继续流入后面的代码，避免它在十公里外才摔倒。
-
-### 3.5 Token 用量不是质量评分
-
-示例读取使用量：
-
-```python
-usage = response.usage
-if usage is not None:
-    print("input_tokens:", usage.input_tokens)
-    print("output_tokens:", usage.output_tokens)
-    print("total_tokens:", usage.total_tokens)
-```
-
-Token 数量有助于估算上下文规模、延迟和成本，但不能证明答案正确。输出更长，有时只是模型把同一个错误解释得更有耐心。
-
-现在我们已经能让模型生成文字。下一个问题来自普通软件工程：**如果读取结果的是程序，而不是人，怎么办？**
-
----
-
-## 4. Structured Output：让模型输出遵守数据契约
-
-假设程序需要把用户请求整理成任务卡。模型返回：
-
-```text
-This seems important. We probably need current weather data first.
-```
-
-人类可以理解，但程序很难稳定读取。你当然可以写：
+人一眼就看懂，程序却很尴尬。你当然可以写：
 
 ```python
 if "important" in answer.lower():
     priority = "high"
 ```
 
-但这相当于让程序靠猜词办案。模型把 `important` 换成 `urgent`，接口就悄悄坏了。
+然后模型下一次换成 `urgent`，你的程序就像只认识一个暗号的门卫，当场失业。
 
-程序真正希望得到的是明确对象：
+于是我们来到下一步。
+
+---
+
+## 3. Structured Output：让程序拿到“数据”，而不是猜句子
+
+Structured Output（结构化输出）解决的不是“让回答更像 JSON”，而是**让模型返回满足明确结构约束的数据**。
+
+假设程序希望拿到这样的对象：
 
 ```json
 {
@@ -250,7 +177,14 @@ if "important" in answer.lower():
 }
 ```
 
-Structured Output 的目标不是“让输出看起来像 JSON”，而是让模型输出符合**机器可验证的数据结构**。
+这个结构一旦确定，程序后面就可以写：
+
+```python
+if task.needs_external_data:
+    ...
+```
+
+而不是在一整段话里找关键词。
 
 运行：
 
@@ -258,11 +192,7 @@ Structured Output 的目标不是“让输出看起来像 JSON”，而是让模
 python stages/00-foundations/code/structured_output.py
 ```
 
-完整代码位于 [`code/structured_output.py`](code/structured_output.py)。
-
-### 4.1 先定义应用需要什么，再让模型填写
-
-本章使用 Pydantic 定义任务卡：
+完整程序在 [`code/structured_output.py`](code/structured_output.py)。其中最重要的部分其实不是模型调用，而是先把应用需要的数据定义出来：
 
 ```python
 class Priority(str, Enum):
@@ -280,29 +210,9 @@ class TaskCard(BaseModel):
     reason: str = Field(min_length=1)
 ```
 
-这份定义同时表达：
+这一步的思路很重要：不是“先让模型自由发挥，再想办法从结果里捞字段”，而是**先决定程序真正需要什么，再让模型去填这张表**。
 
-- 字段名称；
-- 字段类型；
-- 允许的枚举值；
-- 必填约束；
-- 是否允许额外字段。
-
-设计顺序很重要：
-
-```text
-先确定应用需要的数据
-        ↓
-把需求写成 schema
-        ↓
-再让模型按 schema 生成
-```
-
-反过来先让模型自由发挥，再从结果里捞字段，通常会把应用接口变成移动靶。
-
-### 4.2 SDK 将响应解析为 Pydantic 对象
-
-核心调用如下：
+随后调用时，把这个类型告诉 SDK：
 
 ```python
 response = client.responses.parse(
@@ -319,7 +229,7 @@ response = client.responses.parse(
 )
 ```
 
-然后检查解析结果：
+解析成功后，程序拿到的是 `TaskCard`：
 
 ```python
 task = response.output_parsed
@@ -327,19 +237,13 @@ if task is None:
     raise RuntimeError("The response contained no parsed TaskCard.")
 ```
 
-此时 `task` 已经是 `TaskCard`。普通代码可以直接访问 `task.priority`，不必在散文里寻找关键词。
+这时你终于可以像操作正常业务数据一样操作模型结果。
 
-### 4.3 三层“正确”必须分开
+### 3.1 结构正确和事实正确，差得还很远
 
-Structured Output 最容易制造一种错觉：既然通过了校验，结果就一定正确。实际上至少有三层：
+这是 Structured Output 最容易被误解的地方。
 
-| 层次 | 要回答的问题 | Schema 能否保证 |
-|---|---|---|
-| 语法 | JSON 能否解析？ | 可以约束 |
-| 结构 | 字段、类型和值域是否正确？ | 可以约束 |
-| 语义与事实 | 判断是否合理、事实是否真实？ | 不能单独保证 |
-
-例如下面的对象可能完全符合结构：
+假设模型返回：
 
 ```json
 {
@@ -350,54 +254,43 @@ Structured Output 最容易制造一种错觉：既然通过了校验，结果�
 }
 ```
 
-字段都合法，但对“当前天气”而言，`needs_external_data=false` 很可能是错误判断。
+从 Schema 的角度，这个对象完全可能合法：字段齐、类型对、枚举也没越界。但从任务语义看，“比较当前天气却不需要外部数据”显然值得怀疑。
 
-因此请记住：
+所以最好把三层校验分开：
 
-> **结构化输出解决“程序怎样可靠读取”，不自动解决“内容为什么可信”。**
+| 层次 | 它检查什么 | Schema 能不能单独保证 |
+|---|---|---|
+| 语法 | JSON 能不能被解析 | 可以 |
+| 结构 | 字段、类型、枚举是否合法 | 可以 |
+| 语义 / 事实 | 判断是否合理、事实是否真实 | 不可以 |
 
-Schema 像门卫，能检查表格是否填齐；它不会顺便调查填写者讲的故事是否属实。
+这张表很值得记住。Structured Output 像一个认真负责的前台，它可以检查表格有没有漏填、身份证号格式对不对；但它不会顺便替你调查“申请人说的事情到底是真是假”。
 
-### 4.4 适用范围
+因此本节真正要记住的是：
 
-Structured Output 适合：
+> **Structured Output 解决“程序怎样可靠读取模型输出”，并不自动解决“模型输出为什么值得相信”。**
 
-- 分类结果；
-- 参数提取；
-- 路由决定；
-- 表单化数据；
-- 程序后续需要读取的计划或判断。
-
-它不等于：
-
-- 外部事实来源；
-- 执行权限；
-- 数据库事务；
-- 对结论真实性的证明。
-
-“比较当前天气”恰好暴露了下一层问题：模型需要应用提供外部能力。
+接下来，天气例子正好暴露出另一个问题：如果模型不应该自己编当前天气，那它从哪里拿数据？
 
 ---
 
-## 5. Tool Calling：模型请求，应用执行
+## 4. Tool Calling：给模型一张“可以申请使用的能力清单”
 
-当用户要求查询天气、读取订单、调用计算器或修改文件时，单纯生成文字不够。应用需要向模型描述可请求的能力。
+模型没有你的数据库连接，也不会自动拥有 Python 解释器的控制权。要让它使用外部能力，应用需要把一部分能力描述给它。
 
-一个 Tool 有两个面：
+一个 Tool 可以先理解成有两面：
 
 ```text
-模型看到的接口
-├── name
-├── description
-└── parameters（JSON Schema）
+给模型看的
+    name / description / parameters
 
-应用拥有的实现
-└── Python handler
+给程序用的
+    Python handler
 ```
 
-模型通常只看到接口说明，不会直接拿到 Python 函数的控制权。
+模型看到的是“这个能力叫什么、什么时候用、参数长什么样”。真正的 Python 函数仍然在应用程序里。
 
-本章使用固定教学天气：
+本章使用固定的教学天气数据：
 
 ```python
 TEACHING_WEATHER = {
@@ -406,7 +299,7 @@ TEACHING_WEATHER = {
 }
 ```
 
-它不是实时天气。固定数据保证每次结果一致，让我们只观察 Tool Calling 的控制流程，而不是同时排查网络、认证、限流和气象变化。教学实验里少一个随机变量，就少一位临时演员抢戏。
+为什么不直接接实时天气 API？因为这一章要学的是 Tool Calling。如果同时把 OAuth、网络超时、第三方接口变化、额度限制全拉进来，你最后很可能学会的是“网络真烦”，而不是 Tool 的职责边界。固定数据让每次运行都可复现，教学上更干净。
 
 运行：
 
@@ -414,11 +307,11 @@ TEACHING_WEATHER = {
 python stages/00-foundations/code/tool_calling.py
 ```
 
-完整代码位于 [`code/tool_calling.py`](code/tool_calling.py)。
+完整程序在 [`code/tool_calling.py`](code/tool_calling.py)。
 
-### 5.1 Tool schema 是给模型看的使用说明
+### 4.1 Tool Schema 其实是在教模型“怎么向你提申请”
 
-天气 Tool 的核心定义如下：
+工具描述大致长这样：
 
 ```python
 WEATHER_TOOL = {
@@ -443,45 +336,13 @@ WEATHER_TOOL = {
 }
 ```
 
-Tool description 不是普通注释。模型会根据名称、描述和参数结构判断何时调用以及怎样填写参数。
+很多人第一次写 Tool 时，只关心参数 Schema，`description` 随手写一句 `query weather`。实际上，description 也是模型判断“什么时候该用这个工具”的依据。如果描述含糊，模型只能猜。
 
-一份清楚的说明至少应回答：
+好的 Tool 描述至少应该让模型知道：这个能力返回什么、在什么情况下使用、关键参数是什么意思。如果能力有明显限制，也应该说清楚。本章的限制就很明确：这只是东京和巴黎的**教学记录**，不是实时天气。
 
-- 工具返回什么；
-- 什么时候使用；
-- 参数表示什么；
-- 有哪些明确限制。
+### 4.2 Function Call 只代表“模型提出了调用请求”
 
-如果描述只写 `query things`，模型不是获得了自由，而是被迫猜测。
-
-### 5.2 Handler 才是真正执行的程序
-
-真正读取数据的是 Python 函数：
-
-```python
-def get_teaching_weather(city: str) -> dict[str, Any]:
-    try:
-        record = TEACHING_WEATHER[city]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported city: {city}") from exc
-    return {"city": city, **record}
-```
-
-这里必须区分三个事件：
-
-```text
-工具被描述给模型
-        ≠
-模型请求调用工具
-        ≠
-应用执行 Python 函数
-```
-
-前两个事件不会自动触发第三个。
-
-### 5.3 第一轮：模型生成调用提案
-
-示例为了稳定演示，强制模型请求指定工具：
+第一轮模型请求如下：
 
 ```python
 first = client.responses.create(
@@ -501,15 +362,19 @@ first = client.responses.create(
 )
 ```
 
-- `tools` 描述可请求的能力；
-- `tool_choice` 强制本例调用指定函数；
-- `parallel_tool_calls=False` 让本轮只保留单个调用，便于观察最小闭环。
+这里我们故意用 `tool_choice` 强制走一遍 Tool Call 流程，因为这一章要观察机制，而不是观察模型“今天愿不愿意主动调用”。`parallel_tool_calls=False` 也把轨迹保持成单线，方便第一次学习。
 
-第一轮返回 `function_call` 时，函数仍未执行。它更像一张动作申请单。
+模型返回 Function Call 以后，Python 函数还没有执行。此时发生的只是：
 
-### 5.4 模型参数仍然是外部输入
+```text
+模型：我建议调用 get_teaching_weather(city="Tokyo")
+```
 
-应用先提取并检查调用：
+仅此而已。
+
+### 4.3 为什么不能把模型给的函数名直接执行
+
+应用先检查返回的调用：
 
 ```python
 calls = [item for item in first.output if item.type == "function_call"]
@@ -521,43 +386,34 @@ if call.name != "get_teaching_weather":
     raise RuntimeError(...)
 ```
 
-随后解析和验证参数：
+这一步看起来有点死板，但非常关键。模型返回的名字，本质上仍然是外部输入。不要因为它“长得像函数名”，就把它送进 `eval()`、`exec()` 或随便从 `globals()` 里找函数。
+
+接着才是解析和验证参数：
 
 ```python
 arguments = parse_arguments(call.arguments)
 city = validate_weather_arguments(arguments)
+```
+
+然后，应用自己执行函数：
+
+```python
 result = get_teaching_weather(city)
 ```
 
-顺序不能颠倒：
+注意这个顺序：模型提出 → 程序解析 → 程序验证 → 程序执行。谁控制了这条顺序，谁才真正控制了能力边界。
 
-```text
-读取提案
-  ↓
-解析 JSON
-  ↓
-检查字段、类型和值域
-  ↓
-调用明确允许的 Python 函数
-```
+### 4.4 Provider 侧的严格 Schema，为什么还不够
 
-不要把模型返回的名称直接交给 `eval()`、`exec()`、`globals()` 或任意动态导入。模型输出是外部数据，不是自动获得执行资格的代码。
+你可能会问：工具已经 `strict=True` 了，为什么应用还要再验证一次参数？
 
-示例同时保留两层约束：
+因为“上游尽量按 Schema 生成”与“执行边界确认自己即将接受的参数”是两个位置的责任。Tool Call 以后可能来自网络响应，也可能被保存、转发、回放，甚至被别的系统构造。真正要调用 Python handler 的那一刻，应用应该对自己接收的参数负责。
 
-```text
-Provider 侧 strict schema
-    尽量约束模型生成的参数形状
+这和普通 Web 开发里“前端已经校验过表单，后端为什么还要校验”是一个道理。答案通常是：因为真正承担后果的是后端。
 
-应用侧显式验证
-    检查真正准备交给 handler 的数据
-```
+### 4.5 `call_id` 是动作和结果之间的“订单号”
 
-真正执行函数的是应用，所以应用必须对最终接受的数据负责。
-
-### 5.5 `call_id` 保存动作与结果的因果关系
-
-工具执行后，应用返回：
+工具执行完以后，结果不能随便塞回模型，而要和原来的调用对应起来：
 
 ```python
 {
@@ -567,18 +423,20 @@ Provider 侧 strict schema
 }
 ```
 
-`call_id` 表示这份结果属于哪一次请求。即使两个调用使用同一个工具名，它们仍是两个不同动作：
+`call_id` 解决的是：**这份结果属于哪一次 Tool Call？**
+
+假设同一轮里有：
 
 ```text
 call_A → get_teaching_weather(Tokyo)
 call_B → get_teaching_weather(Paris)
 ```
 
-工具名回答“调用什么”，调用编号回答“是哪一次”。丢掉 `call_id`，就像餐厅把两桌客人的点菜单都写成“牛肉面”，然后宣布关联信息不重要。
+两个工具名完全相同，只看 `name` 根本分不清结果该回给谁。`call_id` 就像订单号，菜名相同不代表是同一桌点的。
 
-### 5.6 第二轮：模型根据真实 Tool Output 回答
+### 4.6 第二次模型调用，才真正拿到了 Observation
 
-第二次请求把工具结果接到第一次响应之后：
+第二轮这样继续：
 
 ```python
 final = client.responses.create(
@@ -600,213 +458,129 @@ final = client.responses.create(
 )
 ```
 
-两个编号关联的对象不同：
+这里有两个 ID，别混：
 
-```text
-previous_response_id
-    当前模型响应接在哪次模型响应之后
+- `call_id` 关联的是 Tool Call 和它的 Tool Output；
+- `previous_response_id` 关联的是这次模型响应和上一份 Provider Response。
 
-call_id
-    当前工具结果属于哪个工具请求
-```
+这一轮模型终于看到了 Python 执行后的真实结果，于是可以根据 Observation 生成最终文字。
 
-第二轮使用 `tool_choice="none"`，要求模型不再请求工具，而是根据已经返回的结果生成文字。
-
-完整时间线如下：
+整个过程连起来就是：
 
 ```text
 用户提出任务
     ↓
-模型生成 Function Call
+模型提出 Function Call
     ↓
-应用检查名称和参数
+应用检查工具名和参数
     ↓
 应用执行 Python 函数
     ↓
 应用返回 Function Call Output
     ↓
-模型根据观察结果生成最终文字
+模型根据 Observation 回答
 ```
 
-这就是第一个完整的 `model → tool → model` 往返。
+到这里，你已经拥有了 Agent 最小循环的一半。
 
 ---
 
-## 6. 四个相似概念，职责完全不同
+## 5. 把几个容易混的词一次分清
 
-| 概念 | 它是什么 | 它不是什么 |
-|---|---|---|
-| 普通文本输出 | 模型生成的语言 | 已发生的现实动作 |
-| Structured Output | 符合数据契约的模型结果 | 事实真实性证明 |
-| Tool Call | 模型提出的结构化动作请求 | Python 函数已经执行 |
-| Tool Output | 应用执行后返回的观察结果 | 模型自己的猜测 |
+学到这里，Structured Output 和 Tool Calling 都长得“结构化”，很容易糊成一团。最简单的区分方式是问：**这个结构最终拿来做什么？**
 
-可以用办事流程类比：
+Structured Output 的目标是“让程序读取模型的判断结果”；Tool Call 的目标是“让模型请求程序执行一个能力”；Tool Output 则是“程序执行以后，把结果作为 Observation 送回模型”。
 
-```text
-Structured Output  像填写规范的表格
-Tool Call           像提交动作申请
-Tool Execution      像工作人员真正办理
-Tool Output         像办理结果回执
-```
+可以把它们想成公司里的几个东西：Structured Output 像一张填好的表格，Tool Call 像一张申请单，真正的 Tool Execution 是工作人员去办事，Tool Output 则是办完之后拿回来的回执。
 
-表格填得再工整，也不会自己跑去盖章。
+一张申请单写得再漂亮，也不会自己跑去仓库搬货。
 
 ---
 
-## 7. 什么时候开始需要 Runtime
+## 6. 为什么 Stage 00 到这里就该停了
 
-本章最后的代码仍是固定脚本：
+现在的 `tool_calling.py` 仍然是固定脚本：
 
 ```text
-第一次模型调用
-→ 执行一次工具
-→ 第二次模型调用
+模型第一次调用
+→ 工具执行一次
+→ 模型第二次调用
 → 结束
 ```
 
-如果任务变成：
+如果用户要求：
 
-```text
-查询东京教学天气
-→ 把摄氏度换算成华氏度
-→ 根据两个结果回答
-```
+> 先读取东京的教学天气，再把摄氏度换算成华氏度。
 
-程序可能需要两个 Tool Call。继续手写 `first`、`second`、`third`，很快会得到一份按辈分命名的控制流。
+模型可能需要先调用天气工具，再调用温度换算工具，最后才回答。你当然可以继续加 `second`、`third`、`fourth`，但很快会发现程序在提前假设“到底会有几轮”。
 
-真正需要抽象的是：
+这时真正需要的抽象才出现：
 
 ```python
-while 运行尚未结束:
-    让模型决定下一步
-    如果是 Tool Call:
-        应用执行并记录结果
-    否则:
-        返回最终答案
+while run_not_finished:
+    turn = ask_model_for_next_step()
+
+    if turn_requests_tool:
+        execute_and_record_observation()
+    else:
+        return_final_answer()
 ```
 
-下一章会构建这层 Runtime。本章在这里停下，不提前把后续所有术语塞给读者。此刻只需要牢牢记住：**模型调用、工具请求、工具执行和结果回传是四个独立步骤。**
+这个循环就是下一章要写的 Runtime。
+
+注意学习顺序：不是因为“Agent 教程都应该有 Runtime”所以我们先造一个 Runtime，而是因为**固定的两次调用已经开始不够用了**，所以 Runtime 这个抽象自然出现。好的工程抽象通常都是被问题逼出来的，不是为了凑目录层级。
 
 ---
 
-## 8. 常见误区
+## 7. 现在最常见的几个误区
 
-### 误区一：“模型知道函数名，所以它能调用函数”
+如果你能把下面这些误区讲清楚，说明 Stage 00 已经掌握得差不多了。
 
-模型只能生成名称和参数。应用必须拥有实现、允许该能力、验证输入并显式调用。
+**“模型知道工具名，就等于它能执行工具。”** 不对。模型只能生成一个调用请求，真正执行需要应用找到允许的 handler。
 
-### 误区二：“strict schema 已经验证过，应用不用再检查”
+**“Structured Output 是合法 JSON，所以内容一定靠谱。”** 不对。结构正确与事实正确是两层问题。
 
-Provider 侧约束帮助生成规范数据；应用侧验证保护真正的执行边界。它们位于不同位置。
+**“Tool Call 返回了，说明动作成功了。”** 仍然不对。Tool Call 只是请求；成功或失败要等 Python handler 真正执行之后才知道。
 
-### 误区三：“JSON 能解析，所以内容可信”
+**“模型说它已经做了，就是做了。”** 这条尤其危险。你永远应该看程序执行轨迹，而不是看模型措辞有多肯定。
 
-JSON 只能证明语法和结构。事实正确性需要真实数据来源或业务规则。
-
-### 误区四：“返回 Tool Call，说明工具已经成功或失败”
-
-Tool Call 只表示模型请求执行。成功与失败要等应用实际运行 handler 后才能知道。
-
-### 误区五：“模型语气很确定，所以一定有依据”
-
-语气是生成风格，不是证据等级。应检查数据来源和执行轨迹，而不是句号有多坚定。
-
-### 误区六：“把所有历史都传进去，模型就会更聪明”
-
-模型根据本轮可见上下文生成结果。更多文本不一定更相关，也不自动更可靠。本章只建立上下文边界，不展开复杂的上下文选择策略。
+这些听起来像常识，但真正的 Agent 系统出事故，往往就是把这些边界悄悄混在了一起。
 
 ---
 
-## 9. 失败应该在哪一层被发现
+## 8. 动手做几个小实验
 
-| 失败 | 首先负责处理的边界 |
-|---|---|
-| 环境变量缺失 | 应用启动边界 |
-| Provider 响应未完成 | API 调用代码 |
-| 最终文本为空 | 输出检查边界 |
-| Structured Output 无法解析 | 结构化输出边界 |
-| Tool 参数不是合法 JSON | 参数解析边界 |
-| Tool 名称未知 | 工具路由边界 |
-| 字段、类型或值域错误 | 应用验证边界 |
-| Python handler 抛异常 | 工具执行边界 |
+这里的练习不要求你背定义，建议直接复制 `code/` 下的程序做实验。
 
-把错误放回真正所属的层，调试才不会只剩一句万能诊断：“Agent 好像不太聪明。”
+先试着给 `TaskCard` 增加一个 `confidence: float`，限制在 0 到 1。然后问自己：模型返回 `0.99`，到底说明了什么？答案是：它说明模型给出了一个很高的自评数值，不等于这个判断被外部证据证明了。
+
+再把 Tool Calling 的城市从东京改成巴黎，观察 `Paris` 是怎样从用户请求进入 Function Call 参数，经过 Python 参数校验，再进入 Tool Output 的。你会发现 Tool Calling 不是“模型神奇地调用了函数”，而是一条非常具体的数据流。
+
+最后，试着在纸上画两个相同工具的调用，把 `call_id` 擦掉。一般几十秒后，你就会理解为什么“这个字段看着多余”往往是因为我们只看了单调用的最简单情况。
 
 ---
 
-## 10. 动手练习
+## 9. 本章结束前，自己回答这几个问题
 
-### 练习一：证明自然语言接口很脆弱
+不用背术语，沿着程序执行顺序回答就行：为什么 `response.output_text` 不是整个 Response？`instructions` 和 `input` 的来源有什么不同？Structured Output 到底保证了哪一层正确性？Function Call 在哪一行代码之后才真正变成 Python 执行？`call_id` 和 `previous_response_id` 分别解决什么关联问题？为什么教学示例宁愿用固定天气，也不急着接真实天气 API？
 
-让模型分别使用 `important`、`urgent`、`high priority` 表达优先级，再尝试用字符串规则解析。记录需要多少补丁才能覆盖。
-
-### 练习二：给任务卡增加置信度
-
-在 `TaskCard` 中加入 0 到 1 的 `confidence` 字段。验证范围约束后回答：`confidence=0.99` 能证明结论真实吗？
-
-### 练习三：制造结构正确但语义错误的对象
-
-让请求明确需要当前数据，却引导模型输出 `needs_external_data=false`。观察 schema 为什么仍可能接受它。
-
-### 练习四：查询巴黎教学天气
-
-只修改用户输入，不改 handler。追踪 `Paris` 如何经过 Tool Call 参数、应用验证、Python 函数和 Tool Output。
-
-### 练习五：破坏 `call_id`
-
-在纸上画两个同名工具调用，再删掉调用编号。尝试判断每份结果属于哪次请求。
-
-### 练习六：让参数验证失败
-
-分别尝试：
-
-```json
-{}
-{"city": 42}
-{"city": "Atlantis"}
-{"city": "Tokyo", "debug": true}
-```
-
-说明每种输入应在哪一步被拒绝。
-
-### 练习七：区分措辞与执行
-
-让模型生成“工具已经执行成功”，但不要运行 handler。检查程序状态，说明为什么这句话不构成执行证据。
+如果这些问题你都能顺着代码讲明白，就可以进入下一章。
 
 ---
 
-## 11. 本章自检
+## 10. 本章代码
 
-尝试不用背定义，直接回答：
-
-1. 为什么 `response.output_text` 不是完整 Response？
-2. `instructions` 与 `input` 的职责有什么差别？
-3. Structured Output 能保证哪两层正确，不能保证哪一层？
-4. Tool schema 与 Python handler 分别给谁使用？
-5. Tool Call 在什么时刻才真正变成 Python 执行？
-6. 为什么 Tool 参数需要在应用侧再次验证？
-7. `call_id` 与 `previous_response_id` 各自关联什么？
-8. 为什么固定教学数据比实时天气更适合本章？
-9. 固定两轮脚本为什么还不是通用 Agent Runtime？
-
-能够沿着数据流回答这些问题，就已经搭好了继续学习的地基。
-
----
-
-## 12. 本章代码目录
+完整可执行代码只保存在这里：
 
 ```text
 stages/00-foundations/
-├── README.zh-CN.md
 ├── README.md
+├── README.zh-CN.md
 └── code/
-    ├── first_llm_call.py      # 第一次 Responses API 调用
-    ├── structured_output.py   # Pydantic 结构化输出
-    ├── tool_calling.py        # 完整 model → tool → model 往返
+    ├── first_llm_call.py
+    ├── structured_output.py
+    ├── tool_calling.py
     └── requirements.txt
 ```
-
-完整实现只在 `code/` 中维护；正文中的代码块只用于解释当前知识点。
 
 ➡️ [Stage 01：把 Tool Loop 变成 Agent Runtime](../01-react-runtime/README.zh-CN.md)
