@@ -27,7 +27,9 @@ This document answers one question:
 | bounded replanning | 02 |
 | explicit state machines | 03 |
 | graph orchestration | 03 |
-| streaming/checkpoint/interrupt | 03, 06 |
+| state reducers / partial updates | 03 |
+| graph execution updates / streaming | 03 |
+| checkpoint / interrupt / resume | 06 |
 
 ## Layer 3 — Knowledge and context
 

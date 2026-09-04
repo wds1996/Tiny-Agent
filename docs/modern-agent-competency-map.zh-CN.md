@@ -29,7 +29,9 @@
 | bounded replanning | 02 |
 | 显式状态机 | 03 |
 | graph orchestration | 03 |
-| streaming / checkpoint / interrupt | 03, 06 |
+| State reducer / partial update | 03 |
+| graph execution updates / streaming | 03 |
+| checkpoint / interrupt / resume | 06 |
 
 ## Layer 3 — 知识与上下文
 

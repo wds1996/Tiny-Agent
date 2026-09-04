@@ -187,7 +187,7 @@ Selected extras:
 
 ```bash
 python -m pip install -e ".[openai]"
-python -m pip install -e ".[dev,stage03]"   # LangGraph / LangChain
+python -m pip install -e ".[dev,stage03]"   # LangGraph
 python -m pip install -e ".[dev,stage04]"   # FAISS / Qdrant / LangChain retrieval
 python -m pip install -e ".[dev,stage05]"   # MCP v2
 python -m pip install -e ".[dev,stage06]"   # SQLite/Postgres checkpointing

@@ -9,7 +9,7 @@ Tiny-Agent 只有在先展示某个抽象背后的机制之后，才引入框架
 | 00 | messages、schemas、ToolCall 心智模型 | OpenAI Responses / 当前模型 API |
 | 01 | AgentRuntime / ToolRegistry | provider adapters；高层 Agent SDK 对比 |
 | 02 | routers / planners / replanners | Structured Outputs；LangGraph workflow patterns |
-| 03 | TinyStateGraph | LangGraph StateGraph；部分 LangChain 组件 |
+| 03 | State / Node / Edge / Reducer / MiniStateGraph | LangGraph StateGraph |
 | 04 | embeddings / cosine / Retriever / RAG | FAISS、Qdrant、LangChain Retriever |
 | 05 | MCPToolBridge | MCP 2026-07-28 Python SDK v2 |
 | 06 | memory policy / approval primitives | LangGraph Checkpointer / Store / SQLite / Postgres |
@@ -77,7 +77,8 @@ Agent harness
 
 - MCP 教学目标：协议 `2026-07-28`，Python SDK v2。
 - A2A 教学目标：协议 1.0，以及仓库测试当前覆盖的 Python SDK 版本线。
-- LangGraph / LangChain：`pyproject.toml` 中固定并测试的稳定 1.x 版本线。
+- LangGraph：`pyproject.toml` 中固定并测试的稳定 1.x 版本线。
+- LangChain：在真正需要其组件或集成的 Stage 单独引入，而不是作为 Stage 03 的前置依赖。
 - OpenAI provider 示例：OpenAI Python 2.x 与当前 GPT-5.6 family guidance。
 - Agent Skills：agentskills.io 的开放 `SKILL.md` specification。
 

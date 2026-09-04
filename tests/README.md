@@ -143,15 +143,15 @@ A later safety regression for these workflows is documented under **Cross-stage 
 
 ## Stage 03 — Explicit state and LangGraph
 
-Read with [Stage 03](../stages/03-stateful-orchestration/README.md), [explicit state](../stages/03-stateful-orchestration/theory/01-why-explicit-state.md), [state machines](../stages/03-stateful-orchestration/theory/02-state-machines-for-agents.md), and [LangGraph core concepts](../stages/03-stateful-orchestration/theory/03-langgraph-core-concepts.md).
+Read with the integrated [Stage 03 chapter](../stages/03-stateful-orchestration/README.md). State, partial updates, nodes, edges, reducers, cycle budgets, and translating a ReAct loop into a graph are taught as one continuous chapter.
 
 | Test file | Category | What it verifies | Why it matters |
 |---|---|---|---|
-| [`test_state_graph.py`](test_state_graph.py) | Core | Handwritten `TinyStateGraph`: fixed/conditional edges, unknown-route rejection, cycle step budgets, topology validation, and node update contracts. | Lets you understand graph semantics without attributing them to framework magic. |
-| [`test_langgraph_runtime.py`](test_langgraph_runtime.py) | Framework | Rebuilds the ReAct loop as a LangGraph graph, preserves an application-owned model-step budget, and surfaces Tool failure as an observation at this teaching stage. | Demonstrates that switching from `while` loop to graph changes orchestration representation, not Tool authority. |
-| [`test_stage03_frameworks.py`](test_stage03_frameworks.py) | Framework | LangGraph streaming updates, checkpoint-backed `interrupt()` / `Command(resume=...)`, `thread_id`, and LangChain Tool/message compatibility. | Verifies the exact framework concepts introduced after the handwritten mechanism. |
+| [`test_state_graph.py`](test_state_graph.py) | Core | Handwritten `TinyStateGraph`: fixed/conditional edges, unknown-route rejection, cycle step budgets, topology validation, and node update contracts. | Protects first-principles graph semantics before framework APIs enter the picture. |
+| [`test_langgraph_runtime.py`](test_langgraph_runtime.py) | Framework | Rebuilds the ReAct loop as a LangGraph graph while keeping an application-owned model-step budget and application-owned Tool execution. | Shows that replacing a `while` loop with a graph changes orchestration representation, not model authority. |
+| [`test_stage03_frameworks.py`](test_stage03_frameworks.py) | Framework | LangGraph default overwrite behavior, `Annotated` reducers, conditional edges, and node updates through `stream_mode="updates"`. | Verifies the exact State / Reducer / Edge semantics this chapter depends on instead of merely checking that LangGraph imports. |
 
-Install with `.[dev,stage03]` for the framework tests.
+Install with `.[dev,stage03]` for the framework tests. Checkpoint, interrupt, and resume tests belong to Stage 06.
 
 ## Stage 04 — Retrieval, RAG, vector backends, and embeddings
 

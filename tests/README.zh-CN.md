@@ -143,15 +143,15 @@ pytest -q tests/test_stage13_integrations.py
 
 ## Stage 03 — Explicit State 与 LangGraph
 
-对应课程：[Stage 03 中文教程](../stages/03-stateful-orchestration/README.zh-CN.md)，重点配合 [为什么需要显式 State](../stages/03-stateful-orchestration/theory/01-why-explicit-state.zh-CN.md)、[Agent 状态机](../stages/03-stateful-orchestration/theory/02-state-machines-for-agents.zh-CN.md)、[LangGraph Core Concepts](../stages/03-stateful-orchestration/theory/03-langgraph-core-concepts.zh-CN.md)。
+对应课程为整合后的 [Stage 03 中文教程](../stages/03-stateful-orchestration/README.zh-CN.md)。State、Partial Update、Node、Edge、Reducer、Cycle Budget，以及把 ReAct Loop 映射为 Graph 的过程，都在主章节中连续讲解。
 
 | 测试文件 | 类型 | 实际验证什么 | 为什么值得读 |
 |---|---|---|---|
-| [`test_state_graph.py`](test_state_graph.py) | Core | 手写 `TinyStateGraph` 的 fixed/conditional edge、未知 route 拒绝、cycle step budget、graph topology validation、node update contract。 | 让你先理解 graph 本质，不把所有行为都误认为“LangGraph 框架魔法”。 |
-| [`test_langgraph_runtime.py`](test_langgraph_runtime.py) | Framework | 用 LangGraph 重建 ReAct loop，仍保留 application-owned model-step budget，并在本阶段把 Tool failure 作为 observation 暴露给模型。 | 从 `while` loop 换成 graph 改变的是 orchestration 表达，不是 Tool execution authority。 |
-| [`test_stage03_frameworks.py`](test_stage03_frameworks.py) | Framework | LangGraph streaming update、带 checkpointer 的 `interrupt()` / `Command(resume=...)`、`thread_id`，以及 LangChain Tool/message 与既有概念的对应关系。 | 验证“手写机制之后”本 Stage 真正引入的框架能力。 |
+| [`test_state_graph.py`](test_state_graph.py) | Core | 手写 `TinyStateGraph` 的 fixed/conditional edge、未知 route 拒绝、cycle step budget、graph topology validation、node update contract。 | 先保护 Graph 的第一性原理语义，再讨论框架 API。 |
+| [`test_langgraph_runtime.py`](test_langgraph_runtime.py) | Framework | 用 LangGraph 重建 ReAct loop，仍保留 application-owned model-step budget，并把 Tool execution 留在应用拥有的 Tool Node。 | 证明从 `while` loop 换成 Graph 改变的是编排表示，不是模型权限。 |
+| [`test_stage03_frameworks.py`](test_stage03_frameworks.py) | Framework | LangGraph 默认覆盖语义、`Annotated` Reducer 累积、Conditional Edge，以及 `stream_mode="updates"` 的节点更新。 | 直接验证本章依赖的 LangGraph State / Reducer / Edge 语义，而不是只检查框架能否 import。 |
 
-Framework tests 使用 `.[dev,stage03]`。
+Framework tests 使用 `.[dev,stage03]`。Checkpoint、Interrupt 与 Resume 的测试集中在 Stage 06。
 
 ## Stage 04 — Retrieval、RAG、Vector Backend 与 Embedding
 

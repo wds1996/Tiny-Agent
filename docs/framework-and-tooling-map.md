@@ -7,7 +7,7 @@ Tiny-Agent uses frameworks only after exposing the mechanism they abstract.
 | 00 | messages, schemas, ToolCall mental model | OpenAI Responses / current model APIs |
 | 01 | AgentRuntime / ToolRegistry | provider adapters; high-level Agent SDK comparison |
 | 02 | routers / planners / replanners | Structured Outputs; LangGraph workflow patterns |
-| 03 | TinyStateGraph | LangGraph StateGraph; selected LangChain components |
+| 03 | State / Node / Edge / Reducer / MiniStateGraph | LangGraph StateGraph |
 | 04 | embeddings / cosine / Retriever / RAG | FAISS, Qdrant, LangChain Retriever |
 | 05 | MCPToolBridge | MCP 2026-07-28 Python SDK v2 |
 | 06 | memory policy / approval primitives | LangGraph Checkpointer / Store / SQLite / Postgres |
@@ -75,7 +75,8 @@ Do not interpret this as a checklist requiring every box. A read-only classifica
 
 - MCP teaching target: protocol `2026-07-28`, Python SDK v2.
 - A2A teaching target: protocol 1.0, current Python SDK line exercised by the repository tests.
-- LangGraph/LangChain target: stable 1.x lines pinned in `pyproject.toml`.
+- LangGraph target: stable 1.x line pinned in `pyproject.toml`.
+- LangChain is introduced in stages that actually need its components or integrations rather than as a Stage 03 prerequisite.
 - OpenAI provider examples: OpenAI Python 2.x and current GPT-5.6 family guidance.
 - Agent Skills: open `SKILL.md` specification at agentskills.io.
 

@@ -1,75 +1,89 @@
-from typing import TypedDict
+from operator import add
+from typing import Annotated, Literal
 
-from langchain.messages import HumanMessage, ToolMessage
-from langchain.tools import tool
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Command, interrupt
+from typing_extensions import TypedDict
 
 
-def test_langgraph_stream_exposes_node_updates():
+def test_langgraph_default_reducer_overwrites_latest_value():
     class State(TypedDict, total=False):
         value: int
 
-    def increment(state: State):
-        return {"value": state["value"] + 1}
+    def first(state: State):
+        return {"value": 1}
+
+    def second(state: State):
+        return {"value": 2}
 
     builder = StateGraph(State)
-    builder.add_node("increment", increment)
-    builder.add_edge(START, "increment")
-    builder.add_edge("increment", END)
+    builder.add_node("first", first)
+    builder.add_node("second", second)
+    builder.add_edge(START, "first")
+    builder.add_edge("first", "second")
+    builder.add_edge("second", END)
+
+    result = builder.compile().invoke({})
+
+    assert result["value"] == 2
+
+
+def test_langgraph_custom_reducer_accumulates_partial_updates():
+    class State(TypedDict, total=False):
+        events: Annotated[list[str], add]
+
+    def first(state: State):
+        return {"events": ["one"]}
+
+    def second(state: State):
+        return {"events": ["two"]}
+
+    builder = StateGraph(State)
+    builder.add_node("first", first)
+    builder.add_node("second", second)
+    builder.add_edge(START, "first")
+    builder.add_edge("first", "second")
+    builder.add_edge("second", END)
+
+    result = builder.compile().invoke({"events": []})
+
+    assert result["events"] == ["one", "two"]
+
+
+def test_langgraph_conditional_edge_and_stream_updates():
+    class State(TypedDict, total=False):
+        value: int
+        route: str
+        answer: str
+
+    def classify(state: State):
+        return {"route": "large" if state["value"] >= 10 else "small"}
+
+    def choose(state: State) -> Literal["large", "small"]:
+        return "large" if state["route"] == "large" else "small"
+
+    def handle_large(state: State):
+        return {"answer": "large"}
+
+    def handle_small(state: State):
+        return {"answer": "small"}
+
+    builder = StateGraph(State)
+    builder.add_node("classify", classify)
+    builder.add_node("large", handle_large)
+    builder.add_node("small", handle_small)
+    builder.add_edge(START, "classify")
+    builder.add_conditional_edges(
+        "classify",
+        choose,
+        {"large": "large", "small": "small"},
+    )
+    builder.add_edge("large", END)
+    builder.add_edge("small", END)
     graph = builder.compile()
 
-    updates = list(graph.stream({"value": 1}, stream_mode="updates"))
+    updates = list(graph.stream({"value": 12}, stream_mode="updates"))
+    result = graph.invoke({"value": 12})
 
-    assert updates
-    assert any("increment" in update for update in updates)
-    assert graph.invoke({"value": 1})["value"] == 2
-
-
-def test_langgraph_interrupt_can_resume_same_thread():
-    class State(TypedDict, total=False):
-        action: str
-        approved: bool
-        status: str
-
-    def approval(state: State):
-        decision = interrupt({"action": state["action"]})
-        return {"approved": bool(decision)}
-
-    def finish(state: State):
-        return {"status": "approved" if state["approved"] else "rejected"}
-
-    builder = StateGraph(State)
-    builder.add_node("approval", approval)
-    builder.add_node("finish", finish)
-    builder.add_edge(START, "approval")
-    builder.add_edge("approval", "finish")
-    builder.add_edge("finish", END)
-    graph = builder.compile(checkpointer=InMemorySaver())
-
-    config = {"configurable": {"thread_id": "test-approval"}}
-    paused = graph.invoke({"action": "deploy"}, config=config)
-
-    assert "__interrupt__" in paused
-    assert paused["__interrupt__"][0].value == {"action": "deploy"}
-
-    resumed = graph.invoke(Command(resume=False), config=config)
-
-    assert resumed["approved"] is False
-    assert resumed["status"] == "rejected"
-
-
-def test_langchain_tool_and_messages_preserve_familiar_tool_call_concepts():
-    @tool
-    def multiply(a: int, b: int) -> int:
-        """Multiply two integers."""
-        return a * b
-
-    human = HumanMessage(content="What is 6 * 7?")
-    tool_result = ToolMessage(content="42", tool_call_id="call_1")
-
-    assert human.content == "What is 6 * 7?"
-    assert tool_result.tool_call_id == "call_1"
-    assert multiply.name == "multiply"
-    assert multiply.invoke({"a": 6, "b": 7}) == 42
+    assert result["answer"] == "large"
+    assert any("classify" in update for update in updates)
+    assert any("large" in update for update in updates)
