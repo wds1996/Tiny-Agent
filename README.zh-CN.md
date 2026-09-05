@@ -1,315 +1,154 @@
-<p align="center">
-  <img src="assets/agent_readme.png" alt="Tiny-Agent —— 从第一性原理学习现代 AI Agent" width="100%" />
-</p>
+# Tiny-Agent：从一次模型调用，到真正的 Agent 系统
 
-<h1 align="center">Tiny-Agent</h1>
+> Language: [English](README.md) | **简体中文**
 
-<p align="center">
-  🌐 语言 / Language：<strong>中文</strong> | <a href="README.md"><strong>English</strong></a>
-</p>
+很多 Agent 教程从安装框架开始，然后很快写出 `create_agent()`。代码能跑，但当 Agent 第一次重复调用 Tool、把检索结果当成事实、在审批前产生副作用，或者因为 Context 越塞越长开始行为异常时，往往很难回答：这一层到底是谁负责？
 
-**一条以机制为先、面向生产工程的现代 AI Agent 学习路线：从一次 ToolCall 出发，逐步学习上下文工程、MCP、记忆、安全、评估、多 Agent 互操作、受控工作区、可恢复的长时程 harness，最终完成一个完整的研究型 Agent capstone。**
+Tiny-Agent 走另一条路。
 
-Tiny-Agent 面向那些不希望把 Agent 学成“一堆框架装饰器”的学习者。
+这是一门从零开始的 Agent 工程课程。我们先把模型调用、Structured Output、Tool Calling、Runtime、Workflow、State、Retrieval 这些基础机制一层层搭起来，再进入 MCP、Memory、Context Engineering、Skills、Safety、Evaluation、Multi-Agent、Sandbox、Production 与 Long-Horizon。
 
-整个仓库反复遵循同一条学习顺序：
-
-```text
-为什么需要这个抽象？
-        ↓
-先用普通 Python 手写机制
-        ↓
-测试边界条件
-        ↓
-再映射到当前框架 / 协议
-        ↓
-明确这个抽象没有解决什么
-```
-
-## 核心工程原则
-
-1. **模型输出只是提案，不是权限。**
-2. **使用能够解决任务的最小动态架构。**
-3. **state、context、checkpoint、memory、evidence 与 artifact 属于不同作用域。**
-4. **发现能力不等于获得授权。**
-5. **审批不等于授权。**
-6. **失败可以重试，不代表操作可以安全地重复执行。**
-7. **检索到或远程获得的内容是不可信数据，不是控制策略。**
-8. **Graph 是编排机制，不会自动变成 Agent。**
-9. **Agent 越多并不自动越好。**
-10. **子进程不是安全沙箱。**
-11. **大上下文窗口只是容量，不代表应该把所有内容都塞给模型。**
-12. **Skill 教程序，Tool 暴露能力，memory 保存经过选择的信息。**
-13. **Durable execution 要把进度外部化，而不是依赖一次模型会话或单个进程。**
-14. **最终文本正确，也可能来自失败或不安全的 Agent 轨迹。**
-15. **框架和协议负责 plumbing；应用负责语义与策略。**
+框架会出现，但不会比问题更早出现。最终目标也不是记住一套 2026 年流行 API，而是面对一个新的 Agent 系统时，能够自己判断：哪些决定真的需要模型，哪些控制逻辑应该留在普通代码里，模型能提出什么又真正有权做什么，以及系统怎样停止、恢复、审批、评估和上线。
 
 ---
 
-# 课程体系
+## 课程地图
 
-Tiny-Agent 采用一条连续的整数 Stage 路线。每一章只解决一组彼此紧密相关的问题，并为下一章准备必要的概念。
+课程使用连续的 `00–15` Stage。每一章只解决前一章自然暴露出来的新问题。
 
-| Stage | 能力 | 核心问题 |
+| Stage | 主题 | 这一章真正要回答的问题 |
 |---|---|---|
-| [00](stages/00-foundations/README.zh-CN.md) | 模型调用 / Structured Output / Tool Calling | 模型究竟产生了什么？哪些责任仍属于应用程序？ |
-| [01](stages/01-react-runtime/README.zh-CN.md) | ReAct 风格 Agent Runtime | 一次 ToolCall 如何变成有边界的 decide-act-observe 循环？ |
-| [02](stages/02-workflows-routing-planning/README.zh-CN.md) | Workflow / Routing / Planning | 哪些控制决策应该保持确定性，哪些才值得交给模型判断？ |
-| [03](stages/03-stateful-orchestration/README.zh-CN.md) | 显式 State 与编排 | 什么时候需要把状态和状态转移明确表示出来？ |
-| [04](stages/04-agentic-rag/README.zh-CN.md) | Retrieval 与 Agentic RAG | Agent 如何获得并判断外部证据？ |
-| [05](stages/05-mcp/README.zh-CN.md) | MCP | 如何通过标准协议边界暴露外部能力与上下文？ |
-| [06](stages/06-memory-persistence-hitl/README.zh-CN.md) | Memory / Persistence / HITL | 哪些信息需要跨轮次或进程保存？执行如何暂停和恢复？ |
-| [07](stages/07-context-engineering/README.zh-CN.md) | Context Engineering | 当前这一轮模型究竟应该看到什么？ |
-| [08](stages/08-agent-skills/README.zh-CN.md) | Agent Skills | 可复用的程序性知识如何被发现并按需加载？ |
-| [09](stages/09-reliability-safety/README.zh-CN.md) | Reliability / Safety / Governance | 如何验证、限制、授权、重试以及拒绝执行？ |
-| [10](stages/10-evaluation-observability/README.zh-CN.md) | Observability 与 Evaluation | 到底发生了什么？结果是否优秀？新版本是否回归？ |
-| [11](stages/11-multi-agent/README.zh-CN.md) | Multi-Agent / A2A | 什么时候 delegation 或 handoff 才能产生可测量价值？ |
-| [12](stages/12-agent-workspace-sandbox/README.zh-CN.md) | Workspace 与 Sandbox Compute | Agent 在哪里读写文件、运行命令，又不直接获得宿主机权限？ |
-| [13](stages/13-production-deployment/README.zh-CN.md) | Production Service / Durable Jobs | 当真实用户和其他系统开始依赖 Agent 服务后，会发生什么变化？ |
-| [14](stages/14-long-horizon-harness/README.zh-CN.md) | Long-horizon Harness | 任务如何跨会话、worker 与 sandbox 丢失继续推进？ |
-| [15](stages/15-capstone-enterprise-agent/README.zh-CN.md) | OpenScholar Capstone | 这些机制能否组合成一个证据驱动的完整 Agent 系统？ |
+| [00](stages/00-foundations/README.zh-CN.md) | Foundations | 模型调用怎样从“返回一段文字”变成程序可用的接口？ |
+| [01](stages/01-react-runtime/README.zh-CN.md) | ReAct Runtime | Tool Call 怎样形成一个有边界、会停止的 Agent Loop？ |
+| [02](stages/02-workflows-routing-planning/README.zh-CN.md) | Workflow / Routing / Planning | 哪些控制权该留给代码，哪些判断值得交给模型？ |
+| [03](stages/03-stateful-orchestration/README.zh-CN.md) | Stateful Orchestration | 流程复杂以后，怎样把 State 与状态转移摊到桌面上？ |
+| [04](stages/04-agentic-rag/README.zh-CN.md) | Retrieval / Agentic RAG | Agent 怎样获取外部 Evidence，并知道什么时候证据不够？ |
+| [05](stages/05-mcp/README.zh-CN.md) | MCP | 外部 Tool、Resource、Prompt 怎样跨标准协议边界接入？ |
+| [06](stages/06-memory-persistence-hitl/README.zh-CN.md) | Memory / Persistence / HITL | 进程消失以后怎样继续？什么值得长期记住？什么时候必须等人？ |
+| [07](stages/07-context-engineering/README.zh-CN.md) | Context Engineering | 已经保存了这么多信息，这一轮模型到底应该看到什么？ |
+| [08](stages/08-agent-skills/README.zh-CN.md) | Agent Skills | 可复用 Procedure 怎样被发现，并只在需要时加载？ |
+| [09](stages/09-reliability-safety/README.zh-CN.md) | Reliability / Safety | Agent 真能行动以后，怎样限制权限、重试、循环、错误与预算？ |
+| [10](stages/10-evaluation-observability/README.zh-CN.md) | Evaluation / Observability | 怎样知道 Agent 为什么这样做，以及改版到底有没有变好？ |
+| [11](stages/11-multi-agent/README.zh-CN.md) | Multi-Agent | 什么时候真的需要第二个 Agent，而不是多画几个方框？ |
+| [12](stages/12-agent-workspace-sandbox/README.zh-CN.md) | Workspace / Sandbox | Agent 能读写文件、运行代码以后，执行边界在哪里？ |
+| [13](stages/13-production-deployment/README.zh-CN.md) | Production Service | 一个本机 Demo 怎样变成有身份、队列、Backpressure 和 Durable Run 的服务？ |
+| [14](stages/14-long-horizon-harness/README.zh-CN.md) | Long-Horizon Harness | Worker 消失以后，长任务怎样靠 Ledger、Lease 和 Artifact 换班继续？ |
+| [15](stages/15-capstone-enterprise-agent/README.zh-CN.md) | Capstone | 面对真实业务，怎样只选择真正需要的 Agent 机制？ |
 
-详细能力覆盖：**[现代 Agent 能力地图](docs/modern-agent-competency-map.zh-CN.md)**  
-框架与协议映射：**[框架与工具地图](docs/framework-and-tooling-map.zh-CN.md)**
+建议严格按顺序学习。课程里很多边界是前面一层层建立的，直接跳到后面往往只能看到“怎么写”，看不到“为什么现在才需要它”。
 
 ---
 
-# 能力阶梯
+## 每一章怎么学
+
+标准 Stage 结构只有三部分：
 
 ```text
-模型调用
-  ↓
-Structured Output / Tool Calling
-  ↓
-Agent Runtime
-  ↓
-Workflow / Router / Planner
-  ↓
-显式 State 与编排
-  ↓
-检索与外部证据
-  ↓
-MCP 能力边界
-  ↓
-Memory / Persistence / HITL
-  ↓
-Context Engineering
-  ↓
-Agent Skills
-  ↓
-可靠性 / 权限 / Budget
-  ↓
-可观测性 / 评估 / 回归
-  ↓
-Multi-Agent / A2A
-  ↓
-受治理的 Workspace / Sandbox Compute
-  ↓
-生产身份 / Jobs / 基础设施
-  ↓
-可恢复的 Long-horizon Harness
-  ↓
-OpenScholar Capstone
+stages/XX-topic/
+├── README.md
+├── README.zh-CN.md
+└── code/
 ```
 
-这个仓库**并不认为图越往下就一定越高级、越适合你的任务**。只使用任务真正需要的复杂度。
+README 是完整课程正文。正文里的代码块只展示当前正在讲的局部机制；完整可执行程序放在本章 `code/`。
 
----
-
-# 哪些机制是从零实现的？
-
-`src/tiny_agent/` 中提供可复用实现：
+推荐学习节奏：
 
 ```text
-runtime.py                 ReAct 风格循环
-workflows.py               routing / planning / replanning
-state_graph.py             手写 graph 机制
-retrieval.py               chunking / embeddings / cosine / top-k
-rag.py                     Basic + Agentic RAG
-mcp_bridge.py              MCP Tool 归一化
-memory_policy.py           受治理的 memory candidate
-approval.py                approve / edit / reject
-context_engineering.py     context budget / selection / compaction
-skills.py                  SKILL.md catalog + progressive activation
-reliability.py             failures / retries / budgets / loop detection
-governance.py              principals / permissions / exact approval binding
-guarded_runtime.py         组合式执行策略
-observability.py           本地 traces / spans
-evaluation.py              datasets / graders / regression gates
-multi_agent.py             delegation / handoff / fan-out / context projection
-workspace.py               workspace confinement + Docker sandbox baseline
-jobs.py                    durable local run queue + leases
-service_identity.py        trusted identity / tenant binding
-production.py              bounded service execution + readiness
-harness.py                 durable task ledger + long-horizon handoffs
-capstone/                  OpenScholar domain + orchestration + eval
-integrations/              OpenAI / FastAPI / MCP / A2A / OTel / DB adapters
+读一段讲解
+    ↓
+看当前局部代码
+    ↓
+解释它解决了什么问题
+    ↓
+运行本章完整 Demo
+    ↓
+运行 checks.py / runtime_checks.py
+    ↓
+故意改坏一个不变量
+    ↓
+解释为什么检查失败
 ```
 
-只有在底层机制已经可见之后，课程才引入框架集成。
+不要只运行 Happy Path。Agent 工程里，真正值得学习的地方经常藏在“错误输入应该怎样被拒绝”“不该发生的副作用是否真的没有发生”这些边界里。
 
 ---
 
-# 必须分清的现代 Agent 概念
+## 运行代码
 
-```text
-Structured Output != Tool Calling
-Tool Calling != Tool execution
-Tool != Skill
-Skill != Memory
-MCP != A2A
-Retriever != Vector Store
-RAG != Agent
-State != Context
-Checkpoint != Long-term Memory
-Graph != Agent
-Delegation != Handoff
-Discovery != Authorization
-Approval != Authorization
-Timeout != Hard termination
-Subprocess != Sandbox
-Service run != Agent checkpoint != long-horizon task ledger
-```
-
-如果这些边界足够清楚，大多数框架 API 都会容易理解得多。
-
----
-
-# 安装
-
-核心机制尽量保持轻依赖：
+课程以 Python 3.10+ 为基线。大量后半程示例只使用标准库，可以直接运行：
 
 ```bash
-python -m pip install -e ".[dev]"
+python stages/06-memory-persistence-hitl/code/demo.py
+python stages/06-memory-persistence-hitl/code/checks.py
 ```
 
-按阶段安装可选依赖：
+有外部依赖的章节，在自己的 `code/requirements.txt` 中声明依赖。例如：
 
 ```bash
-python -m pip install -e ".[openai]"
-python -m pip install -e ".[dev,stage03]"   # LangGraph
-python -m pip install -e ".[dev,stage04]"   # FAISS / Qdrant / RAG integrations
-python -m pip install -e ".[dev,stage05]"   # MCP v2
-python -m pip install -e ".[dev,stage06]"   # SQLite/Postgres checkpointing
-python -m pip install -e ".[dev,stage08]"  # Agent Skills YAML parsing
-python -m pip install -e ".[dev,stage09]"   # jsonschema / Pydantic / Tenacity
-python -m pip install -e ".[dev,stage10]"   # LangSmith / OpenTelemetry
-python -m pip install -e ".[dev,stage11]"   # OpenAI Agents SDK / A2A
-python -m pip install -e ".[dev,stage13]"   # FastAPI / Postgres / Redis / A2A server
-python -m pip install -e ".[dev,stage15]"   # 完整 OpenScholar integrations
+python -m pip install -r stages/05-mcp/code/requirements.txt
+python stages/05-mcp/code/in_memory_client.py
+python stages/05-mcp/code/checks.py
 ```
 
-Stage 07、09A 与 10A 的手写机制主要依赖标准库与 Tiny-Agent core。只有实际运行 Stage 12 的容器 sandbox 示例时，Docker 才是外部运行时要求。
+课程不要求在仓库根目录安装一个“大而全”的 Agent 环境。学习某一章时，只安装这一章真正需要的依赖。
+
+Stage 00、01 等章节包含真实模型 Provider 的教学 Adapter；对应环境变量和运行方式写在章节正文。课程检查尽量使用 Deterministic Model Double、Fake Client 或离线数据，因为 Runtime 是否越权、是否无限循环、是否重复副作用，本来就不该依赖一次随机在线模型调用来证明。
 
 ---
 
-# Agent 机制验证
+## 为什么先讲机制，再讲框架
 
-`tests/` 目录属于 Agent 学习内容的一部分：它用于展示课程里讲到的 runtime semantics 应该如何用确定性方式验证，**不再承担与 Agent 学习无关的仓库维护检查**。
+一个抽象只有在你知道它替你做了什么以后，才真正有价值。
 
-当前验证内容包括：
+Stage 03 先从 State / Node / Edge / Reducer 推到 Graph，再映射 LangGraph；Stage 04 先从 Chunk / Embedding / Similarity / Top-K 推到向量后端；Stage 05 先分清 Function Calling 和外部协议边界，再进入 MCP。
 
-- runtime / Tool 边界条件；
-- Structured Output / provider adapters；
-- planning / replanning budgets；
-- 手写与 LangGraph state semantics；
-- FAISS / Qdrant retrieval；
-- MCP v2 server / client / transport；
-- durable SQLite / Postgres checkpoint 与 HITL；
-- validation / retry / permission / approval / injection 边界；
-- tracing / evaluation / regression gates；
-- multi-Agent ownership、context isolation、handoff loops、A2A objects；
-- FastAPI / Postgres / Redis / A2A service integration；
-- context budget / compaction；
-- Agent Skill discovery / activation；
-- workspace 路径约束与 Docker command hardening；
-- durable job leases 与 long-horizon resume；
-- OpenScholar evidence / citation / semantic support，以及经过身份验证的 bounded serving。
-
-这些 Agent 机制与集成验证直接通过 `pytest` 运行；仓库维护自动化不作为学习内容提交到课程树中。
+这不是反框架。恰恰相反，它会让框架更容易学：看到一个高层 API 时，你不需要死记参数，而是知道它正在替你承担哪一层责任。
 
 ---
 
-# OpenScholar 最终 Capstone
+## 一条贯穿全课的原则：Proposal 不等于 Authority
 
-Stage 15 刻意不是“再做一个框架 Demo”。它组合了：
+如果只记住 Tiny-Agent 的一句话，可以记这句。
+
+模型可以提出 Tool Call、Route、Plan、Memory Candidate、Refund Action 或 Delegation；Retriever 可以返回高相关内容；Skill 可以建议使用某个 Tool；另一个 Agent 也可以请求协作。
+
+这些都不自动获得执行权。
+
+应用拥有的 Validation、Policy、Ownership、Approval、Authorization 与 Execution Boundary 必须继续存在。
+
+Agent 工程的很多事故，本质上都是把“建议”错当成了“授权”。
+
+---
+
+## 仓库结构
+
+重构后的仓库保持课程本身需要的最小结构：
 
 ```text
-bounded planning
-+ local full-text RAG
-+ scholarly metadata discovery
-+ explicit evidence trust classes
-+ evidence abstention
-+ reviewer/writer coordination
-+ governed memory
-+ HITL export
-+ deterministic + optional semantic citation evaluation
-+ traces/metrics
-+ MCP / A2A / HTTP boundaries
-+ real semantic embedding/Qdrant production path
-+ trusted service identity
-+ BoundedAgentService
+Tiny-Agent/
+├── README.md
+├── README.zh-CN.md
+├── CONTRIBUTING.md
+├── CONTRIBUTING.zh-CN.md
+├── LICENSE
+└── stages/
+    ├── 00-foundations/
+    ├── 01-react-runtime/
+    ├── ...
+    └── 15-capstone-enterprise-agent/
 ```
 
-默认离线路径保持可复现且不依赖 API key；生产基础设施则通过相同的领域边界注入。
-
-仓库不会假装一个 demo API key、本地 SQLite、普通 Docker 或单个向量数据库就自动满足所有企业级 IAM、合规或多租户威胁模型。目标是教清楚并测试正确的**语义与组合边界**。
+每一章都拥有自己的完整教学实现和可执行检查。没有第二套全局 `src/` 或 `tests/` 需要学生与章节代码来回对照。
 
 ---
 
-# 2026 参考锚点
+## 适合谁
 
-Tiny-Agent 跟踪当前概念与 API，而不是把旧教程冻结成永久答案：
+只要会基础 Python 就可以开始：函数、类、`dict` / `list`、异常、基本 JSON 和命令行运行 Python 已经足够。`async/await`、SQLite、Subprocess、Graph、Service 等知识会在课程真正需要它们时再进入。
 
-- OpenAI model/API docs — https://platform.openai.com/docs/
-- OpenAI Agents SDK 2026 harness/sandbox direction — https://openai.com/index/the-next-evolution-of-the-agents-sdk/
-- LangGraph/LangChain docs — https://docs.langchain.com/
-- MCP 2026-07-28 — https://blog.modelcontextprotocol.io/posts/2026-07-28/
-- Agent Skills open specification — https://agentskills.io/specification
-- A2A specification — https://a2a-protocol.org/latest/specification/
-- Anthropic context engineering — https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
-- Anthropic long-running harness guidance — https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
-- OWASP GenAI Security — https://genai.owasp.org/
-- OpenTelemetry — https://opentelemetry.io/
+学完以后，目标不应该只是“我会用某个 Agent Framework”，而是拿到一个新的业务需求时，能先把模型决策、Tool 权限、State Scope、Durability、Memory Policy、Context Selection、Evidence、Retry、Idempotency、Approval、Authorization、Execution Isolation、Trace、Eval、Service Identity 和 Worker Recovery 的边界说清楚。
 
-版本相关的框架代码由 `tests/` 中的确定性测试与集成测试覆盖；若外部教程与当前官方文档或仓库依赖范围冲突，应优先相信当前官方文档。
+当这些问题能在选框架之前回答，框架才真正变成工具。
 
----
-
-# 仓库理念
-
-Tiny-Agent 是学习仓库，但“教学”不是传播危险架构习惯的理由。
-
-教学实现刻意保持小而可检查，并明确写出限制；生产示例再补上缺失机制，而不是事后把一个小 Demo 包装成“本来就企业级”。
-
----
-
-# 🙏 致谢
-
----
-
-# License
-
-Tiny-Agent 基于 [MIT License](LICENSE) 开源。
-
----
-
-# ⭐ 支持 Tiny-Agent
-
-如果 Tiny-Agent 对你理解或构建现代 AI Agent 有帮助，欢迎给项目一个 Star。它既是对项目最直接的支持，也能让更多学习者发现这套课程。
-
-<p align="center">
-  <a href="https://github.com/wds1996/Tiny-Agent"><strong>⭐ 如果这个项目对你有帮助，请给 Tiny-Agent 一个 Star！</strong></a>
-</p>
-
----
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=wds1996%2FTiny-Agent&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=wds1996/Tiny-Agent&type=date&theme=dark&legend=top-left&sealed_token=XS_WU0y8HydmsHz6LTueLxesinCg4gXRd-EpaRl6ATjiKesmm8eBUKFxeGsBdOVkvKn10SYjq0sZ1aD4SgzAIARbUcbD2g22nYQYpId-Pi95XI6qasNgGn6je9vJJTGhq3BJ9BlSQx1HfSqyII_bkFQNT6M3IEC-MoUe82x53EE2DIRiF4eoFQo-5yK_" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=wds1996/Tiny-Agent&type=date&legend=top-left&sealed_token=XS_WU0y8HydmsHz6LTueLxesinCg4gXRd-EpaRl6ATjiKesmm8eBUKFxeGsBdOVkvKn10SYjq0sZ1aD4SgzAIARbUcbD2g22nYQYpId-Pi95XI6qasNgGn6je9vJJTGhq3BJ9BlSQx1HfSqyII_bkFQNT6M3IEC-MoUe82x53EE2DIRiF4eoFQo-5yK_" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=wds1996/Tiny-Agent&type=date&legend=top-left&sealed_token=XS_WU0y8HydmsHz6LTueLxesinCg4gXRd-EpaRl6ATjiKesmm8eBUKFxeGsBdOVkvKn10SYjq0sZ1aD4SgzAIARbUcbD2g22nYQYpId-Pi95XI6qasNgGn6je9vJJTGhq3BJ9BlSQx1HfSqyII_bkFQNT6M3IEC-MoUe82x53EE2DIRiF4eoFQo-5yK_" />
- </picture>
-</a>
+从 [Stage 00](stages/00-foundations/README.zh-CN.md) 开始即可。

@@ -673,7 +673,7 @@ Once the mechanism is visible, LangGraph becomes easier to read.
 Install the Stage 03 dependency:
 
 ```bash
-python -m pip install -e ".[stage03]"
+python -m pip install -r stages/03-stateful-orchestration/code/requirements.txt
 ```
 
 First define a state schema:
@@ -1410,7 +1410,7 @@ python stages/03-stateful-orchestration/code/state_graph.py
 Install LangGraph:
 
 ```bash
-python -m pip install -e ".[stage03]"
+python -m pip install -r stages/03-stateful-orchestration/code/requirements.txt
 ```
 
 Run the same workflow using LangGraph:

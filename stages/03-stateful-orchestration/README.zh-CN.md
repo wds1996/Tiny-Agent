@@ -703,7 +703,7 @@ Graph Compile 的价值之一，就是把一部分运行期惊喜提前变成构
 安装本章依赖：
 
 ```bash
-python -m pip install -e ".[stage03]"
+python -m pip install -r stages/03-stateful-orchestration/code/requirements.txt
 ```
 
 在 LangGraph 中，我们先定义 State Schema：
@@ -1502,7 +1502,7 @@ python stages/03-stateful-orchestration/code/state_graph.py
 安装 LangGraph：
 
 ```bash
-python -m pip install -e ".[stage03]"
+python -m pip install -r stages/03-stateful-orchestration/code/requirements.txt
 ```
 
 再运行同一个 Workflow 的 LangGraph 版本：

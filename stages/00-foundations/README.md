@@ -8,8 +8,6 @@ You opened the repository to learn Agents, and the first chapter asks you to sta
 
 We will follow one continuous story. First, Python asks a model for text. Then we notice that prose is awkward for software to consume, so we introduce Structured Output. Then we notice that a perfectly structured answer still cannot fetch live or private data, so we introduce Tool Calling. By the end, you will have a complete `model → tool → model` round trip.
 
-The complete runnable programs live only in [`code/`](code/). This chapter shows small excerpts at the moment each idea matters. That keeps the prose readable and gives the repository one authoritative copy of each executable example.
-
 ---
 
 ## 1. Start with a mental model that will survive the rest of the course

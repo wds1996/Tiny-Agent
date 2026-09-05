@@ -12,8 +12,6 @@ So this chapter is not really about adding another Tool. It is about a deeper pr
 
 That loop is the heart of an Agent Runtime.
 
-Complete runnable programs still live only in [`code/`](code/). The prose uses focused excerpts so we can reason about one mechanism at a time without maintaining a second copy of the implementation in Markdown.
-
 ---
 
 ## 1. Where the fixed script becomes clumsy

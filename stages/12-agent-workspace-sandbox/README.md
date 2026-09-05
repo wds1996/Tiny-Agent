@@ -1,96 +1,245 @@
-# Stage 12 — Sandboxed Agent Workspaces & Computer Environments
+# Stage 12: Give the Agent a Workbench, Not the Keys to the Whole Computer — Workspace and Sandbox Boundaries
 
-Many modern Agents no longer work only through narrow API Tools. They inspect files, run commands, edit code, create artifacts, install dependencies, and maintain a working directory across many steps.
+> Language: **English** | [简体中文](README.zh-CN.md)
 
-That changes the architecture:
+Stage 11 gave Agents task boundaries. Real work soon needs files, artifacts, tests, and scripts.
 
-```text
-Agent harness
-    |
-    | proposals / tool requests
-    v
-execution policy
-    |
-    v
-sandbox / compute environment
-    |
-    +--> filesystem
-    +--> shell/processes
-    +--> packages
-    +--> artifacts
-```
+That raises a question we deliberately postponed:
 
-The central lesson is:
+> **If an Agent can manipulate files and run programs, how much of the machine can it touch?**
 
-> A workspace is application state. A subprocess is a process boundary. A container is a stronger isolation boundary. None of those names should be casually upgraded to “perfect sandbox.”
+Stage 12 builds a Workspace and a bounded subprocess runner to make the important boundaries visible.
 
-## Why this stage appears after Safety and Multi-Agent
+One statement must remain explicit:
 
-Before giving a model a computer-like environment you should already understand:
+> **The standard-library runner in this chapter is not a security sandbox.**
 
-- least privilege;
-- approval vs authorization;
-- timeouts and retry safety;
-- prompt injection;
-- multi-Agent context/authority boundaries.
+It teaches the pieces a real sandbox must control.
 
-Otherwise “give the Agent shell access” is not an architecture; it is a blast-radius experiment.
+---
 
-## Learning objectives
+## 1. Why a Workspace exists
 
-After this stage you should be able to:
+Longer Agent tasks produce input files, scratch files, generated code, test output, and final artifacts.
 
-1. distinguish harness, workspace, process, container, VM, and sandbox;
-2. confine Agent file reads/writes to an application-owned root;
-3. make durable artifacts explicit instead of hiding them in model context;
-4. explain why `subprocess` is not a security sandbox;
-5. run a command without `shell=True` and without string interpolation;
-6. apply network, capability, PID, CPU, memory, user, and filesystem restrictions to a container baseline;
-7. keep application credentials outside model-generated execution environments;
-8. explain egress policy and data-exfiltration risk;
-9. separate disposable compute from durable harness/run state;
-10. evaluate/snapshot workspace outputs before promoting them.
+If everything lands in the service process's current directory, ownership and cleanup become ambiguous.
 
-## Learning order
+A Workspace turns one run's files into an explicit boundary.
 
-1. `theory/01-harness-workspace-compute-and-sandbox.md`
-2. `theory/02-files-artifacts-and-workspace-policy.md`
-3. `code/workspace_demo.py`
-4. `theory/03-container-isolation-and-threat-model.md`
-5. `code/docker_sandbox_demo.py`
-6. `theory/04-credentials-network-snapshots-and-recovery.md`
-7. `src/tiny_agent/workspace.py`
-8. `tests/test_workspace.py`
-9. `exercises/review-questions.md`
+---
 
-## Current industry direction
+## 2. Start with one root per run
 
-OpenAI's April 2026 Agents SDK update explicitly separates a model-native harness from controlled sandbox compute and adds filesystem/shell-oriented workspaces for long-horizon tasks. The broader lesson is provider-independent: capable Agents need an execution environment, but orchestration credentials/policy should remain outside that environment.
-
-Reference: https://openai.com/index/the-next-evolution-of-the-agents-sdk/
-
-## Tiny-Agent baseline
-
-`AgentWorkspace` confines filesystem paths using resolved-root checks.
-
-`DockerSandboxRunner` builds a default-deny-ish container command with:
+The teaching layout looks like:
 
 ```text
-network none
-read-only root filesystem
-writable mounted workspace
-cap-drop ALL
-no-new-privileges
-PID limit
-memory limit
-CPU limit
-non-root user
-tmpfs /tmp
-no shell interpolation
+run-001/
+├── input.txt
+├── work/
+│   └── check.py
+└── artifacts/
+    └── result.txt
 ```
 
-That is materially safer than executing arbitrary model text in the host process. It is still not a claim that ordinary Docker configuration is sufficient for every hostile multi-tenant workload.
+A production Workspace may map to remote storage or a managed sandbox. The abstraction still matters: the Agent works inside its Workspace, not against arbitrary host paths.
 
-## Milestone
+---
 
-You are done when you can explain exactly where model-generated code runs, which files it can touch, which network destinations it can reach, which credentials it can see, what survives container loss, and which deterministic component can still deny execution.
+## 3. Path traversal is a small string with sharp teeth
+
+Allowing `../../secret.txt` would make the Workspace root meaningless.
+
+The implementation resolves the canonical target and verifies that it stays under the root. Absolute paths are rejected as well.
+
+---
+
+## 4. Symlinks are why string checks are not enough
+
+Blocking the literal substring `..` does not stop a symlink inside the Workspace from pointing elsewhere.
+
+Resolve the real path first, then enforce containment. Filesystem policy should reason about canonical targets.
+
+---
+
+## 5. Work files and Artifacts serve different purposes
+
+Scratch code, downloaded data, and debug output are not necessarily user-facing deliverables.
+
+Separating `work/` and `artifacts/` makes lifecycle and export policy clearer. Stage 14 will build on this idea when work survives individual compute sessions.
+
+---
+
+## 6. Only now do we add a Command Runner
+
+The runner accepts an argument list:
+
+```python
+runner.run(
+    [python, "work/check.py"],
+    timeout_seconds=2,
+)
+```
+
+and uses `shell=False`.
+
+Removing a shell parsing layer reduces one class of injection. It does not make arbitrary commands safe by itself.
+
+---
+
+## 7. Executable allowlists bound the capability surface
+
+The runner is constructed with an executable allowlist.
+
+A program being installed on the machine does not mean the Agent is allowed to run it. This is the Stage 09 permission idea applied to compute capabilities.
+
+Allowing Python is still powerful, so this remains only one layer.
+
+---
+
+## 8. Working directory should be explicit
+
+The subprocess always starts with:
+
+```python
+cwd=workspace.root
+```
+
+Relative paths become deterministic and naturally map to the current run.
+
+---
+
+## 9. Do not inherit every environment variable by default
+
+The parent service may contain database URLs, API keys, cloud credentials, and tokens.
+
+Passing the entire environment to generated code silently expands its authority.
+
+The teaching runner starts from a small environment and adds only explicitly provided values.
+
+Credentials should be capabilities, not ambient decoration.
+
+---
+
+## 10. Process timeout is stronger than thread timeout, but not perfect isolation
+
+`subprocess.run(..., timeout=...)` can terminate the direct child after timeout.
+
+That is a clearer boundary than simply stopping a wait on a worker thread.
+
+Complex process trees and external side effects still require stronger lifecycle management.
+
+---
+
+## 11. Output needs a budget too
+
+A subprocess can print megabytes.
+
+Feeding all of stdout back into model context creates another unbounded data path.
+
+The runner truncates output after `max_output_chars`.
+
+Anything that enters context, logs, or persistence deserves a limit.
+
+---
+
+## 12. This is not a security sandbox
+
+The wrapper controls paths it exposes, executable names, CWD, environment, timeout, and output.
+
+But allowed Python code can still use the operating system capabilities available to the process.
+
+A stronger sandbox may require separate users, namespaces, containers or VMs, mount policy, network controls, syscall restrictions, resource limits, and credential isolation.
+
+Do not call a subprocess wrapper a sandbox merely because it has a timeout.
+
+---
+
+## 13. Containers are tools, not automatic security proofs
+
+Containers can provide useful filesystem, process, resource, and network boundaries.
+
+Their effective isolation depends on configuration, mounts, Linux capabilities, runtime, and credentials.
+
+“Runs in a container” is not enough information to evaluate the security boundary.
+
+---
+
+## 14. Network access should be explicit policy
+
+Some tasks need the network. Many do not.
+
+A real sandbox can disable networking or restrict destinations.
+
+The standard-library runner cannot reliably enforce OS-level network isolation, so this chapter does not invent a fake `network=False` flag.
+
+Unimplemented isolation should not be represented as a decorative option.
+
+---
+
+## 15. Skill scripts finally have an execution location
+
+Stage 08 deliberately refused to run arbitrary Skill scripts.
+
+Now the chain can be explicit:
+
+```text
+Skill procedure
+    ↓
+Host policy
+    ↓
+Workspace
+    ↓
+Runner / Sandbox
+    ↓
+Artifact
+```
+
+The Skill still does not own execution authority.
+
+---
+
+## 16. Workspace is not durable state
+
+A Workspace may disappear with compute.
+
+A checkpoint should survive compute loss.
+
+Artifacts worth retaining should be exported to durable storage.
+
+These semantics can share infrastructure, but they should remain distinct.
+
+---
+
+## 17. Cleanup is part of the lifecycle
+
+A complete Workspace lifecycle is:
+
+```text
+create
+use
+export artifacts
+cleanup
+```
+
+Temporary downloads, caches, generated code, and logs otherwise accumulate until disk space becomes the monitoring system.
+
+---
+
+## 18. Run the chapter
+
+```bash
+python stages/12-agent-workspace-sandbox/code/demo.py
+python stages/12-agent-workspace-sandbox/code/checks.py
+```
+
+The checks cover path confinement, absolute paths, executable allowlists, CWD, timeout, output truncation, and environment minimization.
+
+---
+
+## 19. Why production service design comes next
+
+The Agent now has durable state, external capabilities, memory, guardrails, evaluation, team coordination, and a workspace.
+
+Deployment introduces ordinary but unavoidable systems questions: concurrent users, request/run/thread/tenant identity, long jobs, backpressure, restarts, readiness, and durable status.
+
+Stage 13 turns the Agent program into a service.

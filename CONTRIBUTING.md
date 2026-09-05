@@ -1,271 +1,239 @@
-# Contributing to Tiny-Agent
+# Contributing
 
-**English** | [简体中文](CONTRIBUTING.zh-CN.md)
+> Language: **English** | [简体中文](CONTRIBUTING.zh-CN.md)
 
-Tiny-Agent is both a learning project and an evolving Agent runtime. Contributions should preserve both goals.
+Tiny-Agent is a sequential Agent-engineering course, not a collection of independent technical notes. A technically correct contribution can still be a poor course contribution if it appears in the wrong Stage, reads like an API catalog, depends on concepts that have not been taught yet, or duplicates the same implementation in several places.
 
-## 1. Repository model
+---
 
-Tiny-Agent has two complementary layers:
+## 1. Write like a teacher, not a glossary
+
+A lesson should usually move through cause and effect: what the previous Stage can already do, what new problem appears, where the obvious solution starts to fail, why a new concept becomes necessary, how a local code snippet exposes the mechanism, how the complete example behaves, and what remaining limitation motivates the next Stage.
+
+Lists and tables are useful for comparison and review. They should not carry the main explanation. Avoid long runs of one-sentence paragraphs and repeated “definition + five bullets” sections.
+
+Humor and analogy are welcome when they improve the mental model. They should never replace the technical explanation.
+
+---
+
+## 2. Stages use continuous integers
+
+The curriculum is numbered:
 
 ```text
-stages/          stable educational snapshots
-src/tiny_agent/  latest evolving integrated runtime
+00
+01
+02
+...
+15
 ```
 
-A completed learning stage should remain readable even after the main runtime becomes more sophisticated.
+Do not add `06A`, `09B`, or similar side chapters. If a new topic truly needs a Stage, reconsider the full dependency order and adjust the integer sequence deliberately.
 
-The repository also keeps:
+Stage numbers represent learning order.
 
-```text
-tests/           executable specifications for Agent mechanisms
-README*.md       public learning entry points
-docs/            cross-stage learning maps
-```
+---
 
-Repository-maintenance metadata should stay minimal. Do not add unrelated CI, templates, badges, generated files, or tooling that does not directly support the learning project unless the change is explicitly needed.
+## 3. Teach only what the current Stage has earned
 
-## 2. Stage directory convention
+Do not backfill future answers into earlier chapters.
 
-Use capability-based names, not dates or personal study schedules.
+A Stage may end by motivating the next problem, but it should not teach the next Stage in advance. Before rewriting a chapter, re-read the preceding Stages and confirm what the learner already knows, why the new problem follows naturally, and which terms have already been defined.
 
-Preferred:
+The course should feel like one long class rather than fifteen unrelated “today we discuss X” posts.
 
-```text
-stages/04-agentic-rag/
-```
+---
 
-Avoid:
+## 4. The Stage README is the lesson
+
+The standard structure is:
 
 ```text
-day11/
-week2/
-my-rag-notes/
-```
-
-Whenever applicable, a stage should contain:
-
-```text
-stage-name/
+stages/XX-topic/
 ├── README.md
 ├── README.zh-CN.md
-├── theory/
-├── code/
-└── exercises/
+└── code/
 ```
 
-### `README.md` / `README.zh-CN.md`
+Do not recreate fragmented `theory/`, `exercises/`, or link-index directories.
 
-Must explain:
+If one chapter genuinely needs multiple Markdown files, they should read as consecutive parts of one lesson with a direct continuation from one file to the next.
 
-- why the stage exists;
-- prerequisites;
-- learning objectives;
-- recommended reading/coding order;
-- expected milestone;
-- links to all important files in the stage.
+---
 
-### `theory/`
+## 5. Keep repository-maintenance commentary out of tutorial prose
 
-Detailed Markdown explanations should live here.
+Tutorials should not contain statements such as:
 
-Prefer several focused chapters over one extremely long catch-all file.
+> “The full code is placed here to avoid README drift.”
 
-A theory chapter should normally include:
+> “This refactor removed theory files.”
 
-- motivation;
-- mental model;
-- architecture/flow when relevant;
-- common misconceptions;
-- engineering implications;
-- key takeaways;
-- review questions;
-- references when external material is used.
+> “Based on feedback, the chapter was reorganized.”
 
-### `code/`
+Those are repository-maintenance concerns. They belong in contribution documentation or commit history, not in the lesson itself.
 
-Contains stage-specific implementation snapshots.
+---
 
-Educational code should favor clarity over maximum abstraction. If the latest `src/tiny_agent/` implementation has evolved beyond what a beginner needs for the current stage, keep a simpler standalone snapshot under the stage.
+## 6. Complete teaching programs belong in the Stage's `code/`
 
-Every runnable example should state how to run it.
+Do not maintain a second global implementation tree that students must reconcile with chapter examples.
 
-### `exercises/`
+README snippets should show only the mechanism being taught. Show the reducer when discussing state merging, the approval record when discussing HITL, and the budget check when discussing bounded execution. Keep the complete file under `code/`.
 
-Use this directory for:
+---
 
-- coding exercises;
-- debugging tasks;
-- design questions;
-- interview-style questions;
-- extension challenges.
+## 7. Chinese and English should both read naturally
 
-## 3. Theory-only stages
+The two language versions must preserve the same technical boundaries but do not need sentence-by-sentence translation.
 
-A stage does not need executable code to deserve a directory.
+Established terms such as Tool Call, Runtime, State, Reducer, Context, Memory, MCP, Skill, Trace, and Lease may remain in English where useful. Avoid unnecessary mixed-language noun chains.
 
-If a capability is primarily conceptual, keep:
+---
+
+## 8. Mechanism first, framework second
+
+The preferred sequence is:
 
 ```text
-stage-name/
-├── README.md
-├── README.zh-CN.md
-└── theory/
+concrete problem
+    ↓
+minimal inspectable mechanism
+    ↓
+deterministic checks
+    ↓
+framework / protocol mapping
 ```
 
-Do not force meaningless code into a conceptual chapter just to satisfy a template.
+A framework quickstart is not a substitute for explaining the abstraction it implements. Framework APIs change quickly; mechanisms usually live longer.
 
-## 4. Updating the latest runtime
+---
 
-If a stage introduces a capability that belongs in the reusable Tiny-Agent runtime, update `src/tiny_agent/` as well.
+## 9. Do not overclaim teaching implementations
 
-Examples:
+A teaching hash embedding is not a neural semantic embedding. A bounded subprocess wrapper is not a security sandbox. Local idempotency is not distributed exactly-once execution. A cooperative deadline does not forcibly terminate arbitrary code.
+
+Words such as Production, Secure, Durable, Idempotent, and Sandboxed are claims. Use them only for the boundary the code actually establishes and checks.
+
+---
+
+## 10. Keep proposal separate from authority
+
+This invariant appears throughout the curriculum:
 
 ```text
-Stage snapshot                  Latest runtime
---------------                  --------------
-minimal ToolRegistry      ->    src/tiny_agent/tool.py
-minimal Agent loop        ->    src/tiny_agent/runtime.py
-provider adapter          ->    src/tiny_agent/models/
-RAG mechanism             ->    src/tiny_agent/retrieval.py + rag.py
-memory/HITL policy        ->    src/tiny_agent/memory_policy.py + approval.py
-safety/governance         ->    src/tiny_agent/reliability.py + governance.py
-multi-Agent mechanism     ->    src/tiny_agent/multi_agent.py
-long-horizon harness      ->    src/tiny_agent/harness.py
+Tool Call != execution authority
+Route != dispatcher
+Plan != executor
+Memory Candidate != durable write permission
+Retrieved Result != sufficient evidence
+Skill declaration != Tool permission
+Delegation != authorization
+Approval != authorization
 ```
 
-The stage snapshot should teach the concept. The latest runtime should integrate it cleanly with everything implemented so far.
+Model output may propose. Application-owned validation, policy, authorization, and execution still decide.
 
-## 5. Do not hide mechanisms too early
+---
 
-Tiny-Agent intentionally teaches first principles before high-level frameworks.
+## 11. Prefer deterministic teaching and checks
 
-When introducing a framework such as LangGraph, show:
+When the mechanism itself does not require a live model or service, prefer deterministic model doubles, fake provider clients, local data, temporary SQLite databases, temporary directories, and in-process protocol transports.
 
-1. the underlying problem;
-2. the handwritten version or earlier Tiny-Agent implementation;
-3. what abstraction the framework adds;
-4. what complexity or tradeoff the framework introduces.
+Use live systems to evaluate integration or model quality, not to prove deterministic runtime invariants.
 
-Avoid educational examples whose entire logic is effectively:
+---
 
-```python
-agent = create_agent(...)
-agent.run(...)
+## 12. Every Stage needs executable boundary checks
+
+`code/checks.py` is the preferred name, although earlier well-named check files such as `runtime_checks.py` may remain.
+
+Checks should test invariants, not merely imports. Examples include rejecting invalid arguments before handlers, stopping loops, ensuring rejection causes no side effect, abstaining on missing evidence, preserving required context, blocking path traversal, or reclaiming only expired leases.
+
+The happy path is only the minimum.
+
+---
+
+## 13. Self-review before committing
+
+Teaching continuity: Does the chapter follow naturally from the previous one? Does every new abstraction solve a concrete problem? Are future concepts avoided? Does the ending motivate the next Stage?
+
+Voice: Are there too many one-sentence paragraphs? Is the explanation driven by lists instead of reasoning? Did repository-maintenance commentary leak into the lesson? Are analogies useful rather than decorative?
+
+Technical correctness: Are concept boundaries precise? Does the chapter overclaim security, reliability, or production guarantees? Did model output accidentally gain application authority? Are scopes for retries, memory, context, identity, and durability explicit?
+
+Code: Do snippets match the runnable implementation? Does the Stage code run? Are failure paths checked? Are network or credential requirements explicit?
+
+Repository: Are both language versions updated? Are Markdown fences balanced? Do relative links resolve? Are caches, databases, logs, and build outputs absent?
+
+---
+
+## 14. Running checks
+
+For standard-library Stages:
+
+```bash
+python stages/XX-topic/code/demo.py
+python stages/XX-topic/code/checks.py
 ```
 
-without explaining what happens underneath.
+For a Stage with dependencies:
 
-## 6. Keep model and runtime responsibilities separate
+```bash
+python -m pip install -r stages/XX-topic/code/requirements.txt
+python stages/XX-topic/code/demo.py
+python stages/XX-topic/code/checks.py
+```
 
-A core project principle is:
+A full syntax pass is also useful:
 
-> LLMs propose actions; runtimes execute and govern actions.
+```bash
+python -m compileall -q stages
+```
 
-Do not give a model unrestricted authority over local functions, files, shells, databases, credentials, or external side effects.
+Remove generated `__pycache__` and `.pyc` files afterward.
 
-Execution policy belongs in deterministic runtime code.
+Dependencies belong to the Stage that needs them under `code/requirements.txt`; do not rebuild one global “all Agent libraries” dependency layer at the repository root.
 
-## 7. Testing expectations
+---
 
-Treat tests as executable learning material, not only as regression machinery.
+## 15. Fast-changing protocols and APIs
 
-Before changing a mechanism, read [tests/README.md](tests/README.md) to understand which tests correspond to which stages.
+MCP, A2A, model-provider SDKs, and similar surfaces change quickly. Verify version-specific claims against current official documentation rather than old tutorials.
 
-Prefer deterministic unit tests for runtime behavior.
+Version-sensitive examples should have executable coverage. Do not claim support for an integration that has not actually been verified.
 
-Use fake/scripted models when testing:
+---
 
-- loop transitions;
-- tool execution;
-- stopping conditions;
-- error handling;
-- state updates;
-- permission logic.
+## 16. Keep generated files and credentials out of commits
 
-Use real models only in separate integration/evaluation tests where model quality is actually being measured.
-
-Do not make every unit test depend on network access, API keys, or stochastic model behavior.
-
-If you add a new meaningful `test_*.py` file, update both:
-
-- `tests/README.md`;
-- `tests/README.zh-CN.md`.
-
-Explain what the test protects, which Stage it belongs to, and what a failure usually means.
-
-## 8. Bilingual documentation requirements
-
-Tiny-Agent maintains an English and Simplified Chinese learning track.
-
-For learner-facing Markdown:
+Check for:
 
 ```text
-README.md                 <-> README.zh-CN.md
-chapter.md                <-> chapter.zh-CN.md
-review-questions.md       <-> review-questions.zh-CN.md
+__pycache__/
+*.pyc
+*.db
+*.sqlite
+*.log
+.env
+.venv/
+build/
+dist/
+*.egg-info/
 ```
 
-When adding or materially changing learner-facing documentation:
+Never commit real credentials.
 
-1. update both language versions in the same contribution;
-2. preserve the same technical meaning, architecture boundaries, warnings, examples, and exercises;
-3. do not translate code identifiers, API names, commands, or file paths unless the path itself has a Chinese Markdown counterpart;
-4. in Chinese documentation, internal course links should point to `.zh-CN.md` whenever that counterpart exists;
-5. keep the explicit language switch pointing to the other language;
-6. do not reduce the Chinese version into a summary of a more complete English source.
+---
 
-Translation should be natural rather than literal, but technical correctness has priority over stylistic localization.
+## 17. Three final reviewer questions
 
-## 9. Documentation links
+Before accepting a teaching contribution, ask:
 
-When adding a new important file:
+> **Why would a first-time learner naturally need this concept here?**
 
-- link it from that stage's `README.md` and `README.zh-CN.md` where applicable;
-- update the root README pair if it changes the public learning path;
-- keep English pages inside the English learning path and Chinese pages inside the Chinese learning path;
-- avoid dead placeholder links.
+> **After the lesson, can the learner explain both what the mechanism solves and what it does not solve?**
 
-## 10. Pull requests
+> **If every framework name were hidden, would a clear engineering mechanism still remain?**
 
-Keep pull requests focused on one capability or one coherent maintenance goal.
-
-Good examples:
-
-```text
-feat: add provider-neutral OpenAI adapter
-feat: introduce planner-executor stage
-feat: add tool-call trajectory evaluator
-docs: explain MCP trust boundaries
-test: cover Agent step-limit behavior
-```
-
-A PR should explain:
-
-- what learners gain;
-- what runtime behavior changes;
-- what files are educational snapshots vs integrated implementation;
-- how the change is tested;
-- whether both language tracks were updated when documentation changed.
-
-## 11. Writing style
-
-Aim for explanations that are:
-
-- technically precise;
-- beginner-readable;
-- engineering-oriented;
-- explicit about tradeoffs;
-- free of unnecessary framework marketing.
-
-Prefer concrete diagrams, small examples, and clear responsibility boundaries.
-
-Humor is welcome when it improves memory or clarity, but it must not distort the technical point.
-
-## 12. Long-term goal
-
-A successful contribution should make it easier for another learner to answer three questions:
-
-1. **How does this Agent capability work?**
-2. **Why would a real engineering team design it this way?**
-3. **How can I verify that the implementation still preserves those semantics?**
+If all three answers are clear, the contribution is usually aligned with Tiny-Agent's course standard.

@@ -1,481 +1,421 @@
-# Stage 10 — Observability、Tracing 与 Evaluation
+# Stage 10：别只看最后一句答得像不像——Evaluation 与 Observability
 
-> Language: [English](README.md) | 简体中文
+> Language: [English](README.md) | **简体中文**
 
-> 一个 demo 回答的是：**“它能不能成功一次？”**  Stage 10 要回答的是：**“刚才到底发生了什么？做得有多好？新版本有没有退化？”**
+Stage 09 给 Agent 装上了护栏：Validation、Permission、Budget、Retry、Deadline、Safe Error 都有了明确位置。
 
-Stage 09 给 Tiny-Agent 增加了 deterministic execution control。Stage 10 则把这些行为变成**可以观察、可以度量、可以比较**的工程对象。
+这时团队里很容易出现一个熟悉场景。工程师 A 说：“我刚优化了 Agent，效果好多了。”工程师 B 问：“怎么证明？”A 打开聊天窗口，问了三个问题，三个都答得不错，然后会议结束。
 
-本阶段故意不从某个 hosted tracing dashboard 开始。我们先自己构建最小 local trace model 与 evaluation harness，再把这些机制映射到 OpenTelemetry 和 LangSmith。
+这不是 Evaluation。这叫“挑了三个顺眼的例子给大家看”。
 
----
+Agent 比普通函数更难测，因为它的质量不只在最后一句话里。两个 Agent 可能得到同一个答案，其中一个只查了一次正确资料，另一个却先调错三个 Tool、绕了八步、花了五倍 token，最后靠运气碰到正确结果。
 
-## 为什么需要这一阶段？
+如果只比较 Final Answer，它们看起来一样好。
 
-Agent 比普通 request/response function 更难评估，因为 final answer 只是整个行为的一部分。
+Stage 10 就解决这个问题：
 
-一个 Agent 可能：
+> **既要看结果，也要看过程；既要能解释一次 Run 发生了什么，也要能用固定数据集判断系统改动到底是进步还是回归。**
 
-- 最终答案正确，但用了错误 Tool；
-- Tool 选对了，但 arguments 错了；
-- 最终结果正确，却多做了 5 次无意义 retry；
-- 给出了有用答案，但过程中碰了 forbidden capability；
-- answer quality 不变，latency/cost 却显著上涨；
-- 精心挑选的 demo 全通过，真实 production long tail 却不断失败。
-
-所以本阶段首先区分三个问题：
-
-```text
-Logging
-    -> 发出了哪些文本/事件记录？
-
-Tracing
-    -> 这次执行发生了什么？这些操作之间是什么因果结构？
-
-Evaluation
-    -> 按明确 criterion 判断，这个行为到底好不好？
-```
-
-Trace 是 evidence；Evaluator 是 judge；Dashboard 只是 view。三者谁也不会自动等于另外两个。
+前者是 Observability，后者是 Evaluation。它们关系很近，但不是一回事。
 
 ---
 
-## 核心心智模型
+## 1. Log、Trace、Metric 先别混在一起
+
+最普通的 Log：
 
 ```text
-Agent execution
-      |
-      +--> spans / trace ----------------------+
-      |                                        |
-      +--> final output                        |
-      +--> Tool trajectory                     |
-      +--> failures / retries                  |
-      +--> latency / tokens / cost             |
-                                               v
-                                      RunArtifact
-                                               |
-                          +--------------------+-------------------+
-                          |                    |                   |
-                          v                    v                   v
-                    deterministic          LLM judge        human feedback
-                       graders
-                          |                    |                   |
-                          +--------------------+-------------------+
-                                               |
-                                               v
-                                       EvaluationReport
-                                               |
-                                      RegressionGate
-                                               |
-                                      CI / release decision
+2026-09-04 lookup_order success
 ```
 
-Tiny-Agent 一贯原则仍然成立：
+能告诉我们“发生了一件事”。
 
-> **模型可以提出 proposal；application code 负责观察行为、评估行为，并决定 release gate。**
+Metric 更像聚合数字：
+
+```text
+tool_success_rate = 98.4%
+p95_latency = 820 ms
+average_tool_calls = 2.3
+```
+
+Trace 则试图回答：**这一次请求完整经历了什么？**
+
+```text
+run-42
+├── context.build
+├── model.turn
+├── tool.lookup_order
+├── retrieval.search_policy
+├── model.turn
+└── final
+```
+
+三者不是互相替代。Log 适合离散事件，Metric 适合看整体趋势，Trace 适合还原一次 Run 的因果链。
+
+Agent 特别需要 Trace，因为它往往不是一次函数调用，而是一条轨迹。
 
 ---
 
-## 学习目标
+## 2. Span 是 Trace 里的“这一小段发生了什么”
 
-完成 Stage 10 后，你应该能够解释并实现：
+我们先写一个很小的 Span：
 
-1. logging、tracing、metrics、evaluation 的区别；
-2. trace / span / parent-child relationship；
-3. privacy-aware Agent input/output capture；
-4. 在不改变 Tool governance semantics 的前提下 trace Tool execution；
-5. 把 evaluation dataset 理解成 executable behavioral specification；
-6. final-response evaluation；
-7. single-step Tool selection 与 argument evaluation；
-8. full-trajectory evaluation；
-9. 为什么 exact trajectory matching 对 flexible Agent 往往太严格；
-10. deterministic grader vs LLM-as-judge；
-11. judge calibration 与 variance；
-12. offline evaluation vs online evaluation；
-13. quality / latency / token / cost metrics；
-14. metric coverage，以及 missing score 怎样掩盖 crash；
-15. CI regression gate；
-16. OpenTelemetry 作为 vendor-neutral telemetry infrastructure；
-17. 当前 OpenTelemetry GenAI semantic convention 的版本/演进风险；
-18. LangSmith trace、dataset、experiment、online evaluation；
-19. 为什么 trace 不等于 audit log；
-20. sampling、retention、PII、secret 与 high-cardinality production concern。
+```python
+@dataclass(frozen=True, slots=True)
+class Span:
+    name: str
+    duration_ms: float
+    attributes: Mapping[str, Any]
+    status: str
+```
+
+然后用：
+
+```python
+with tracer.span("tool.lookup_order", tool="lookup_order"):
+    ...
+```
+
+记录某一步。
+
+一个 Agent Run 里常见的 Span 可能包括：
+
+```text
+context.build
+model.generate
+retrieval.search
+tool.execute
+policy.authorize
+memory.read
+skill.activate
+```
+
+你会发现，前面每一章建立的机制，现在都开始有了一个可观察的位置。这就是课程为什么把 Observability 放到这里，而不是 Stage 01 就先教某个监控 SDK：你得先有值得观察的系统。
 
 ---
 
-## Stage Boundary
+## 3. Trace 不是“把所有内容全部存下来”
 
-Stage 10 构建的是 **evaluation + observability foundation**，并不声称已经解决：
+很多团队第一次加 Trace，会想：“太好了，以后所有 Prompt、Tool Result、Memory 都完整记录，排查一定方便。”
 
-- production-scale telemetry storage；
-- enterprise audit/compliance retention；
-- Stage 13 所有 distributed service 的完整 tracing；
-- 完美自动 task-success grading；
-- fully calibrated LLM judge；
-- model quality change 的 causal attribution；
-- A/B experimentation platform；
-- enterprise-scale adversarial red-team evaluation；
-- 完整 SLO/alerting operations。
+确实方便，也可能顺便把用户隐私、Access Token、内部文档和敏感 Tool 参数保存得整整齐齐。
 
-本阶段先让这些更大系统背后的抽象变得清楚。
+Observability 本身也是数据系统，它同样需要最小化、权限和保留策略。
+
+所以本章的 `CapturePolicy` 默认：
+
+```python
+capture_content=False
+```
+
+字符串不直接保存，而只记录长度和摘要 Hash。
+
+如果某个受控环境明确需要抓取内容，可以显式打开：
+
+```python
+CapturePolicy(
+    capture_content=True,
+    max_text_chars=120,
+)
+```
+
+并且仍然限制长度。
+
+默认不抓全文，意味着“调试方便”不能自动压过“数据边界”。
 
 ---
 
-# 推荐学习顺序
+## 4. 为什么 Hash 也有用？
 
-## 1. 为什么 Agent Evaluation 不同？
-
-阅读：
-
-- [`theory/01-why-agent-evaluation-is-hard.zh-CN.md`](theory/01-why-agent-evaluation-is-hard.zh-CN.md)
-
-运行：
-
-```bash
-python stages/10-evaluation-observability/code/eval_dataset.py
-```
-
-核心：
+假设两个 Run 都出现：
 
 ```text
-final answer quality != execution quality
+prompt_sha256 = 3fe0a8c2762d
 ```
 
-## 2. 从 First Principles 构建 Trace
+你虽然不知道 Prompt 原文，却能知道它们处理的是同一份内容。同样，如果某个 Context Item 每次都发生变化，Hash 也会变化。
 
-阅读：
+Hash 不是隐私的万能解决方案，尤其对低熵数据仍可能被猜测。但它展示了一个重要思想：
 
-- [`theory/02-tracing-and-observability.zh-CN.md`](theory/02-tracing-and-observability.zh-CN.md)
+> **Observability 可以记录结构和关联，而不必默认记录全部原文。**
 
-运行：
+---
 
-```bash
-python stages/10-evaluation-observability/code/trace_model.py
-python stages/10-evaluation-observability/code/local_tracer.py
-python stages/10-evaluation-observability/code/traced_guarded_tool.py
-```
+## 5. Status 也应该属于 Span
+
+本章的 Tracer 会记录 `status = ok` 或 `status = error`。
+
+如果 `with tracer.span(...)` 内部抛异常，Span 记录 Error，然后异常继续向上抛。
+
+为什么不吞掉？因为 Tracing 是旁观者。
+
+> **Observability 不应该悄悄改变被观察系统的语义。**
+
+这条原则后面做任何 Instrumentation 都很重要。
+
+---
+
+## 6. Evaluation 为什么不能只看 Final Answer？
+
+来看一个退款案例，期望 Agent 的轨迹是：
 
 ```text
-Trace = one end-to-end execution
-Span  = one timed operation inside that execution
+lookup_order
+search_policy
+final answer
 ```
 
-Local tracer 用 `ContextVar` 维护 parent-child context，并把完成的 span 放进 in-memory sink。
+Agent A 正常执行。
 
-Raw input/output capture 默认关闭。Observability 绝不能为了 dashboard 好看，就把 Stage 09 的 secret-redaction 原则全部倒回去。
+Agent B 却先 `search_weather`，然后重复 `lookup_order`，最后才找到政策。
 
-## 3. 评估 Tool 与 Trajectory
+最终答案完全一样。如果只打 Answer Accuracy，A 和 B 都 Pass，你就会错过 B 明显更差的 Trajectory。
 
-阅读：
+所以本章的 Eval Case 同时定义：
 
-- [`theory/03-tool-and-trajectory-evaluation.zh-CN.md`](theory/03-tool-and-trajectory-evaluation.zh-CN.md)
-
-运行：
-
-```bash
-python stages/10-evaluation-observability/code/tool_call_evaluator.py
-python stages/10-evaluation-observability/code/trajectory_evaluator.py
+```python
+EvalCase(
+    question=...,
+    expected_answer_contains=("30 days",),
+    expected_tools=("lookup_order", "search_policy"),
+)
 ```
 
-分别评估：
+然后分别评分：
 
 ```text
-Tool selection
-Tool arguments
-Required trajectory steps
-Forbidden actions
-Tool-call budget
+answer_ok
+tool_trajectory_ok
+abstention_ok
+```
+
+最后才组合成 Pass。
+
+---
+
+## 7. Component Eval 比“全系统一个总分”更容易修 Bug
+
+Stage 04 已经学过 Retrieval 的 `Recall@K`。这是因为 Retrieval 本身就有独立质量。如果 Ground Truth Evidence 根本没被 Retriever 找到，Generator 再聪明也没材料。
+
+所以 Agent Eval 应该尽量拆层：
+
+```text
+Router
+    -> route accuracy
+
+Retriever
+    -> Recall@K / MRR
+
+Tool layer
+    -> success / argument correctness
+
+Context Builder
+    -> required-context retention / omission
+
+Agent trajectory
+    -> tool sequence / step budget / unnecessary actions
+
 Final answer
+    -> correctness / groundedness / abstention
 ```
 
-因为：
-
-```text
-right Tool + wrong arguments
-```
-
-和：
-
-```text
-wrong Tool + valid arguments
-```
-
-是完全不同的工程问题。一个统一 `agent_quality=0.63` 会把诊断信息抹掉。
-
-## 4. 构建 Offline Evaluation Dataset
-
-阅读：
-
-- [`theory/04-offline-online-and-datasets.zh-CN.md`](theory/04-offline-online-and-datasets.zh-CN.md)
-
-一个 Agent eval example 不只记录 input/output，还可以包含 expected Tool、reference arguments、required trajectory、forbidden Tool、budget 与 metadata。
-
-## 5. 理解 LLM-as-Judge
-
-阅读：
-
-- [`theory/05-graders-and-llm-as-judge.zh-CN.md`](theory/05-graders-and-llm-as-judge.zh-CN.md)
-
-运行：
-
-```bash
-python stages/10-evaluation-observability/code/llm_judge_boundary.py
-```
-
-经验法则：
-
-```text
-普通代码能稳定判断吗？
-    yes -> 用代码
-    no  -> 再考虑 human 或 LLM judge
-```
-
-除非你的预算已经产生了感情，否则没有必要请一个 stochastic LLM 来判断 `2 + 2 == 4`。
-
-## 6. 把 Metric 变成 Regression Gate
-
-阅读：
-
-- [`theory/06-quality-cost-latency-and-regression.zh-CN.md`](theory/06-quality-cost-latency-and-regression.zh-CN.md)
-
-运行：
-
-```bash
-python stages/10-evaluation-observability/code/regression_gate.py
-python stages/10-evaluation-observability/code/end_to_end_eval.py
-```
-
-例如：
-
-```text
-execution_success >= 1.00
-exact_match       >= 0.95
-tool_f1           >= 0.95
-trajectory_policy == 1.00
-latency_p95       <= threshold
-cost_per_task     <= threshold
-```
-
-Tiny-Agent 还检查 **metric coverage**：如果一半 run 直接 crash，不能只用幸存的一半算出“完美平均分”。
-
-## 7. 映射到 OpenTelemetry 与 LangSmith
-
-阅读：
-
-- [`theory/07-opentelemetry-langsmith-and-production.zh-CN.md`](theory/07-opentelemetry-langsmith-and-production.zh-CN.md)
-
-运行：
-
-```bash
-python stages/10-evaluation-observability/code/opentelemetry_tracing.py
-python stages/10-evaluation-observability/code/langsmith_traceable.py
-```
-
-```text
-OpenTelemetry
-    -> vendor-neutral telemetry APIs/context/processors/exporters,
-       traces/metrics/logs + evolving GenAI semantic conventions
-
-LangSmith
-    -> LLM/Agent-oriented tracing UI, datasets, experiments,
-       evaluators, feedback, online/offline evaluation workflows
-```
-
-它们都不会替代你先学会的 evaluation design。
+当总分下降时，Component Eval 能告诉你从哪里开始找。否则你只能对着 Final Answer 猜：“是不是 Prompt 又不够有灵性？”
 
 ---
 
-# Reusable Tiny-Agent API
+## 8. Deterministic Eval 应该尽可能先上
 
-## Local tracing
+能用确定规则判断的东西，不必第一时间请另一个 LLM 当裁判。
+
+例如：应该调用 `lookup_order` 吗？Tool 参数对不对？有没有超出 Budget？Evidence 不足时是否 Abstain？相关文档是否进入 Top-K？这些都有确定答案。
+
+确定性 Evaluator 的优点很朴素：便宜、稳定、可重复、失败容易解释。
+
+LLM Judge 不是没用。它适合那些确实难写成简单规则的问题，例如语义完整性、写作质量或开放式支持度。但要知道 Judge 也是模型，也有自己的误差、成本和版本漂移。
+
+不要用一个不稳定评分器去掩盖本来可以精确判断的问题。
+
+---
+
+## 9. Eval Dataset 是产品行为的“考试卷”
+
+随手问几个问题，不叫 Dataset。
+
+一个最小 Eval Dataset 应该保存稳定 Case：
 
 ```python
-from tiny_agent import InMemorySpanSink, LocalTracer
-
-sink = InMemorySpanSink()
-tracer = LocalTracer(sink)
-
-with tracer.span("invoke_agent", kind="agent"):
-    with tracer.span("execute_tool search", kind="tool") as span:
-        span.set_attribute("tool.name", "search")
-```
-
-## Privacy-aware capture
-
-```python
-from tiny_agent import TraceCapturePolicy
-
-policy = TraceCapturePolicy(
-    capture_inputs=True,
-    capture_outputs=True,
-    max_text_chars=256,
+EvalCase(
+    id="refund-within-window",
+    question="...",
+    expected_answer_contains=("30 days",),
+    expected_tools=("lookup_order", "search_policy"),
 )
 ```
 
-即使 capture 被打开，`password`、`token`、`api_key`、`authorization` 等 key 仍会被 redact。
+Case 最好来自真实失败模式、关键业务路径和边界条件，而不是只收集“模型最容易答对的示范题”。
 
-这是 teaching safeguard，不是完整 DLP system。
+随着系统迭代，过去修过的 Bug 应该进入 Dataset。这样它们不会每隔三个月换个发型重新回来。
 
-## 观察 Stage 09 Guarded Executor
+---
+
+## 10. Abstention 也是正确行为
+
+Stage 04 已经建立了一个重要能力：Evidence 不足时 Abstain。
+
+所以 Eval 也要表达：
 
 ```python
-observed = ObservedGuardedToolExecutor(
-    guarded_executor,
-    tracer,
+should_abstain=True
+```
+
+如果一个问题没有足够证据，Agent 自信地编了一段漂亮答案，不能因为“句子通顺”给高分。
+
+在很多场景里，正确地说不知道，比错误地装懂更有价值。
+
+---
+
+## 11. Unnecessary Tool Rate 是一个很实用的小指标
+
+假设 Greeting Case 只问 `hello`，期望 Tool 是空元组，但 Agent 先调了 `lookup_order`，最后还是说 `Hello.`。
+
+Answer 没错，行为却很奇怪。
+
+所以本章统计：
+
+```text
+unnecessary_tool_rate
+```
+
+它能抓出一种常见退化：模型变得“什么问题都想先调点东西显得很忙”。Agent 很容易出现这种数字化职场表演，Eval 应该能识别。
+
+---
+
+## 12. Latency 和 Cost 也是质量
+
+如果新版 Agent Accuracy 从 92% 提到 93%，但 Tool Call 从 2 次变 9 次、Latency 从 1.2 秒变 8.4 秒、Cost 翻六倍，这不能自动叫“升级”。
+
+质量至少是一个多目标问题：
+
+```text
+correctness
+groundedness
+latency
+cost
+reliability
+user experience
+```
+
+不同产品权重不同，因此 Regression Gate 也不应该只有 `pass_rate >= 0.9`，还可能限制 P95 Latency、平均 Tool Call 和 Abstention 行为。
+
+---
+
+## 13. Offline Eval 和 Online Signal 不是同一件事
+
+Offline Eval 使用固定 Dataset、固定期望，在开发和 CI 中反复运行，优点是可重复。
+
+Online Signal 来自真实生产请求、真实用户分布、真实延迟与失败，优点是现实。
+
+只做 Offline，Dataset 可能和真实流量脱节；只看 Online，又很难做受控对比，而且错误已经发生在用户身上。
+
+两者要配合。
+
+---
+
+## 14. Trace 怎么帮助 Eval？
+
+假设一个 Case 失败了：期望答案包含 “30 days”，实际却说 “policy unclear”。
+
+Trace 可能告诉你：
+
+```text
+retrieval.search
+    -> 找到了 refund-policy
+
+context.build
+    -> refund-policy 被 omission
+
+model.generate
+    -> 根本没看到政策
+```
+
+于是 Bug 不在 Retriever，也不一定在 Model，而在 Context Selection。
+
+这就是两者的组合价值：
+
+```text
+Eval
+    -> 告诉你哪里退化
+
+Trace
+    -> 帮你解释为什么退化
+```
+
+---
+
+## 15. Trace 也应该记录 Policy Decision
+
+Stage 09 有 Authorization。如果 Tool 没执行，你需要区分：模型没提、Validation 失败、Permission Denied、Approval Reject，还是 Tool 真正执行后失败。
+
+只记录 `tool failed` 会把完全不同的问题揉成一团。
+
+所以好的 Trace 应该沿责任边界放 Span，而不是只围着网络请求打点。
+
+---
+
+## 16. Eval 不应该反过来控制被测 Agent
+
+Evaluator 的职责是观察和评分。
+
+不要让它为了“判断模型是否会调 Tool”而偷偷帮模型调一次 Tool；也不要让 Judge 自动修答案以后再评分。
+
+否则你测的是 `Agent + Evaluator` 的联合系统，不是 Agent 本身。
+
+测试工具也要保持边界。
+
+---
+
+## 17. 一个最小 Regression Report
+
+本章 Evaluator 输出：
+
+```python
+EvalReport(
+    scores=...,
+    pass_rate=...,
+    unnecessary_tool_rate=...,
+    average_latency_ms=...,
 )
 ```
 
-这个 adapter 只负责 observe，不会替代 validation、permission、approval binding、budget、retry、timeout。
+这个 Report 很小，但已经比“我试了几个问题感觉不错”强很多。
 
-## Evaluation dataset
-
-```python
-example = EvalExample(
-    id="case-001",
-    inputs={"question": "..."},
-    reference_output="...",
-    expected_tools=("search",),
-)
-```
-
-## Evaluation suite
-
-```python
-suite = EvaluationSuite([
-    ExactMatchEvaluator(),
-    ToolSelectionEvaluator(),
-    TrajectoryEvaluator(),
-])
-
-report = suite.run(dataset, target)
-```
-
-## Regression gate
-
-```python
-gate = RegressionGate([
-    MetricGateRule("execution_success", absolute_limit=1.0),
-    MetricGateRule("trajectory_policy_ok", absolute_limit=1.0),
-])
-```
+以后完全可以继续增加 Retrieval Recall、Tool Failure Rate、Token Usage、Cost、Policy Denial Rate 和 Context Omission Rate。先把 Eval Loop 建起来，再逐渐增加指标。
 
 ---
 
-# 不要把所有 Metric 压成一个分数
-
-| Dimension | Example metric | 作用 |
-|---|---|---|
-| execution | `execution_success` | target 是否 crash |
-| answer | `exact_match` / correctness judge | 最终结果是否正确/有用 |
-| Tool choice | precision / recall / F1 | capability 选择是否合适 |
-| Tool arguments | argument accuracy | Tool 输入是否正确 |
-| trajectory | sequence recall | required steps 是否出现 |
-| safety | `trajectory_policy_ok` | forbidden Tool/budget 是否被遵守 |
-| reliability | failure/retry rate | transient problem 是否过多 |
-| latency | mean/p50/p95 | 用户等待多久 |
-| usage | tokens | 消耗多少 model capacity |
-| economics | cost/task | 改进是否值得成本 |
-
-Composite score 可以辅助排序，但 component score 必须可见。
-
-否则可能出现：
-
-```text
-quality improved +2%
-safety regressed -100%
-weighted average: looks fine 😬
-```
-
-安全退化不能靠“文案更好看”抵消。
-
----
-
-# Offline vs Online Evaluation
-
-## Offline
-
-用于 release 前：regression、prompt/model comparison、Tool/RAG/policy change、reproducible benchmark、incident backtest。
-
-## Online
-
-利用 production trace 观察真实分布、drift、rare failure、feedback、latency/cost，并把有价值 failure 转回新的 offline regression case。
-
-不要把每一条 production trace 都无脑送给昂贵 LLM judge。
-
----
-
-# OpenTelemetry 2026 注意事项
-
-OpenTelemetry 在 2026 年 3 月宣布 deprecate **Span Events API**。新的 event-like instrumentation 应朝与当前 span 关联的 log-based event 方向迁移。
-
-所以本阶段使用：
-
-```text
-span hierarchy for operations
-+ logs for event-like records when needed
-```
-
-而不新增 `span.add_event(...)`。
-
-GenAI semantic conventions 也仍在快速演化，attribute name 应被当作 versioned convention，而不是永恒法律。
-
----
-
-# LangSmith 注意事项
-
-当前 LangSmith 概念：
-
-```text
-Trace       -> 查看一次执行
-Dataset     -> evaluation examples 集合
-Experiment  -> target × dataset + evaluator scores
-Online eval -> 对选中的 production run/thread 进行评价
-```
-
-Tiny-Agent 先构建 local model，再引入平台，是为了让平台术语不再抽象。
-
-Runnable example 用 `tracing_context(enabled=False)`，因此 CI 不需要 API key 或 network upload。
-
----
-
-# 安装
+## 18. 运行完整代码
 
 ```bash
-python -m pip install -e ".[dev]"
+python stages/10-evaluation-observability/code/demo.py
+python stages/10-evaluation-observability/code/checks.py
 ```
 
-Stage 10 integrations：
+Demo 先产生两个 Span，再跑三个固定 Eval Case。
 
-```bash
-python -m pip install -e ".[dev,stage10]"
-```
+检查覆盖默认不抓原始 Prompt、显式 Capture 仍有长度上限、Span 正确记录 OK / Error、Answer 与 Tool Trajectory 分开评分、Abstention、Unnecessary Tool Rate 和 Retrieval Recall@K。
 
 ---
 
-# Exercises
+## 19. 为什么下一章才讨论 Multi-Agent？
 
-完成：
+我们已经能比较一个 Agent 的结果、轨迹、成本和失败。现在才有资格问：
 
-- [`exercises/review-questions.zh-CN.md`](exercises/review-questions.zh-CN.md)
+> **把一个 Agent 拆成多个 Agent，真的更好吗？**
 
----
+如果没有 Eval，Multi-Agent 很容易变成架构表演：一个 Agent 拆成五个 Agent，图变复杂了，大家觉得很高级，但 Accuracy 有没有提高、Latency 是否翻倍、Context 在 Agent 之间丢了什么，没人知道。
 
-# Milestone
+所以下一章 Stage 11 会先从一个非常克制的问题开始：
 
-你应该能够构建并解释：
+> **什么时候真的需要第二个 Agent？**
 
-```text
-Agent run
-  -> privacy-aware trace
-  -> RunArtifact
-  -> final/Tool/trajectory evaluators
-  -> multi-dimensional report
-  -> regression gate
-  -> OpenTelemetry/LangSmith integration
-```
-
-更重要的是回答：
-
-> **如果 Agent 最终答案正确，但它通过浪费资源、不安全或未授权的 trajectory 得到这个答案，这次执行应该通过 evaluation 吗？**
-
-Tiny-Agent 的答案是：**不应该。**
+然后再讲 Delegation、Handoff、Context Projection 和 Team Runtime。

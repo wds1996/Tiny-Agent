@@ -1,64 +1,236 @@
-# Stage 14 — Long-Horizon Agent Harnesses
+# Stage 14: A Two-Hour Task Cannot Depend on One `while True` — Long-Horizon Agent Harnesses
 
-A short Agent loop assumes the task fits inside one process lifetime and a manageable context. Long-horizon work breaks those assumptions.
+> Language: **English** | [简体中文](README.zh-CN.md)
 
-Hours- or days-long tasks need a harness that can make incremental progress across:
+Stage 13 separated HTTP requests from durable Runs.
 
-- model context windows;
-- process restarts;
-- sandbox expiration;
-- human pauses;
-- transient failures;
-- multiple worker sessions.
+Now let a task run for two hours. A worker dies after eighty-seven minutes and leaves `status = running`. A new worker assumes someone is still working. No one is.
 
-The central lesson is:
+Long-horizon work therefore needs more than a larger `max_steps`.
 
-> Long-horizon reliability comes from externalized progress, artifacts, task state, evaluation, and resumable execution — not from asking the model to “remember everything.”
+> **Task progress must outlive a worker, a process, a model context, and sometimes the current workspace.**
 
-## Learning objectives
+Stage 14 builds a durable task ledger, bounded work units, leases, heartbeats, durable outputs, and a bounded repair loop.
 
-After this stage you should be able to:
+---
 
-1. explain why one giant prompt/session is a poor long-horizon architecture;
-2. maintain a durable task ledger outside model context;
-3. split initializer/planner work from incremental worker sessions;
-4. record progress notes and artifacts for the next session;
-5. build compact handoff summaries instead of replaying full transcripts;
-6. resume with a new runtime object/process;
-7. use evaluators/tests as feedback rather than “looks done” model confidence;
-8. distinguish retry from repair/replanning;
-9. separate durable harness state from disposable sandbox compute;
-10. reason about leases, cancellation, side effects, and job ownership.
+## 1. Long-running is not the same as durable long-horizon
 
-## Learning order
+A loop can run for hours as long as its process survives.
 
-1. `theory/01-why-long-horizon-agents-fail.md`
-2. `theory/02-task-ledgers-and-shift-handoffs.md`
-3. `code/long_horizon_demo.py`
-4. `code/resume_demo.py`
-5. `theory/03-context-compaction-artifacts-and-skills.md`
-6. `theory/04-evaluator-repair-and-session-boundaries.md`
-7. `theory/05-durable-harness-vs-disposable-compute.md`
-8. `src/tiny_agent/harness.py`
-9. `src/tiny_agent/jobs.py`
-10. `tests/test_harness.py`, `tests/test_jobs.py`
-11. `exercises/review-questions.md`
+Durable long-horizon execution must survive worker restart, deployment, machine loss, approval waits, rate limits, workspace loss, and context compaction.
 
-## Current references
+If every interruption restarts from zero, the task is merely long-running.
 
-- Anthropic, *Effective harnesses for long-running agents* — https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
-- Anthropic, *Harness design for long-running application development* — https://www.anthropic.com/engineering/harness-design-long-running-apps
-- OpenAI, *The next evolution of the Agents SDK* — https://openai.com/index/the-next-evolution-of-the-agents-sdk/
-- MCP 2026-07-28 Tasks extension overview — https://blog.modelcontextprotocol.io/posts/2026-07-28/
+---
 
-## Tiny-Agent implementation
+## 2. The Task Ledger is external execution truth
 
-`TaskLedger` stores objective, task status, attempts, notes, and artifact paths as a human-readable JSON file under the governed workspace. Writes are atomic file replacements.
+The ledger records:
 
-`LongHorizonHarness` executes one pending task at a time, persists the transition before and after worker execution, and generates a compact handoff summary for the next worker/session.
+```text
+task_id
+status
+step_index
+total_steps
+lease_owner
+lease_until
+progress
+repair_count
+```
 
-`SQLiteRunQueue` from Stage 13 provides a separate service-level durable job/lease example.
+It answers where the task actually is—not where a model summary says it is or where one worker's memory believes it is.
 
-## Milestone
+---
 
-Start a multi-task run, complete only one step, destroy the runtime object, construct a new runtime from the same workspace, and continue without replaying hidden model history.
+## 3. Split large work into bounded units
+
+Instead of one worker owning 0% through 100%, represent a task as steps.
+
+The teaching harness executes exactly one step in `work_once()`:
+
+```python
+task = ledger.claim(...)
+output = step(progress)
+ledger.record_step_output(...)
+ledger.advance(...)
+```
+
+Frequent durable boundaries improve recovery granularity.
+
+---
+
+## 4. Re-queueing between steps creates clean handoff points
+
+One worker can complete step 0, persist progress, and release ownership. Another worker can execute step 1.
+
+A production system may batch several units, but continuation should not require the original worker.
+
+---
+
+## 5. A Lease makes running ownership expire
+
+A worker claims a task with:
+
+```text
+lease_owner = worker-a
+lease_until = ...
+```
+
+Another worker cannot steal an unexpired lease.
+
+If the owner disappears and the lease expires, the task can be reclaimed.
+
+`running` is no longer permanent ownership.
+
+---
+
+## 6. A Lease is not just a lock
+
+The defining property is ownership plus expiry.
+
+The system can recover even when the old owner disappears.
+
+Real distributed systems may also require fencing tokens and careful clock/database semantics. This chapter focuses on the core idea first.
+
+---
+
+## 7. Heartbeats extend ownership
+
+Long work units can renew their lease.
+
+Only the current owner may heartbeat the task. Otherwise workers could keep each other's leases alive without owning the work.
+
+---
+
+## 8. Recovery can replay a side effect
+
+A worker may complete an external action and crash before recording success. After lease expiry, another worker may rerun the same step.
+
+This is the same invariant from Stages 06 and 09:
+
+```text
+recovery != exactly once
+```
+
+Long-horizon work units should therefore be idempotent, use stable idempotency keys, verify completion, or have compensation strategies where necessary.
+
+---
+
+## 9. Step outputs should be durable too
+
+The chapter stores output by `(task_id, step_index)`.
+
+Later workers no longer depend on an earlier worker's memory, and operators can inspect what each step actually produced.
+
+---
+
+## 10. Progress should not live only in model context
+
+Model context supports the current decision.
+
+The ledger stores durable progress.
+
+Artifacts store large intermediate and final outputs.
+
+```text
+Ledger   -> where am I?
+Artifact -> what did I produce?
+Context  -> what do I need to see now?
+```
+
+Do not ask a model summary to perform all three jobs.
+
+---
+
+## 11. Artifacts externalize long work
+
+Reports, datasets, repositories, test output, and drafts may be too large or too durable for model context.
+
+The workspace from Stage 12 is the active workbench. Long-horizon artifacts should survive the current compute session when the application needs them.
+
+---
+
+## 12. Repair can restart a bounded portion of the task
+
+A verification step may discover that an earlier draft needs repair.
+
+The teaching evaluator can return:
+
+```python
+{
+    "needs_repair": True,
+    "restart_step": 0,
+}
+```
+
+The task is re-queued from the chosen step rather than silently looping forever.
+
+---
+
+## 13. Repair has a budget
+
+`repair_count` and `max_repairs` stop a draft/verify cycle from becoming permanent autonomous work.
+
+Long horizon means durable, not unlimited.
+
+---
+
+## 14. Evaluator does not automatically mean another Agent
+
+Evaluation may be deterministic tests, schemas, static checks, a human, or an LLM judge.
+
+Do not add an evaluator Agent merely because the architecture diagram has room.
+
+Use the simplest evaluator that can reliably judge the invariant.
+
+---
+
+## 15. New workers need compute rehydration
+
+When a new worker takes over, the old temporary directory may be gone.
+
+A real harness needs enough durable information to reconstruct source, inputs, dependencies, artifacts, and task progress.
+
+Stage 12 provided the workbench. Stage 14 decides what a replacement workbench must recover.
+
+---
+
+## 16. Session handoff should be built from durable state
+
+A summary saying “we were working on...” can be useful context, but it should not be the only recovery record.
+
+Prefer durable task ID, step, structured progress, step outputs, artifact references, and repair history, then build continuation context from that data.
+
+---
+
+## 17. Long horizon does not grant unlimited autonomy
+
+A task that may last days still needs work-unit deadlines, task budgets, cost limits, repair limits, permission scope, and approval points.
+
+Duration is not permission.
+
+---
+
+## 18. Run the chapter
+
+```bash
+python stages/14-long-horizon-harness/code/demo.py
+python stages/14-long-horizon-harness/code/checks.py
+```
+
+The demo performs draft, verify, one bounded repair, and finalize.
+
+The checks cover lease expiry, lease ownership, heartbeats, durable step outputs, one-step work units, repair budgets, restart progress, and completed-task behavior.
+
+---
+
+## 19. The Capstone can finally choose from the whole toolbox
+
+We now have mechanisms for model contracts, Tool loops, workflows, state, retrieval, protocols, memory, context, Skills, guardrails, evaluation, teams, workspaces, services, and long-horizon execution.
+
+The final chapter should not turn all of them on.
+
+A mature system selects only the mechanisms its domain needs.
+
+Stage 15 builds a support Agent and deliberately practices that restraint.

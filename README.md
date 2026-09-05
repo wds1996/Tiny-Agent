@@ -1,325 +1,154 @@
-<p align="center">
-  <img src="assets/agent_readme.png" alt="Tiny-Agent — Learn Modern AI Agents from First Principles" width="100%" />
-</p>
+# Tiny-Agent: From One Model Call to an Engineered Agent System
 
-<h1 align="center">Tiny-Agent</h1>
+> Language: **English** | [简体中文](README.zh-CN.md)
 
-<p align="center">
-  🌐 Language / 语言：<a href="README.zh-CN.md"><strong>中文</strong></a> | <strong>English</strong>
-</p>
+Many Agent tutorials start by installing a framework and calling `create_agent()`. The demo works. The harder questions arrive later: Why did the model repeat a Tool? Why did retrieval become “truth”? Who owns the side effect? What survives a restart? Why did context become unstable?
 
-**A mechanism-first, production-minded learning path for modern AI Agent systems — from one ToolCall to context engineering, MCP, memory, safety, evaluation, multi-Agent interoperability, sandboxed workspaces, durable long-horizon harnesses, and a complete research Agent capstone.**
+Tiny-Agent takes a mechanism-first path.
 
-Tiny-Agent is designed for people who do not want to learn Agents as a collection of framework decorators.
+This is a zero-to-Agent engineering course. It begins with model calls, Structured Output, Tool Calling, runtimes, workflows, state, and retrieval. Only after those foundations exist do MCP, memory, context engineering, Skills, safety, evaluation, Multi-Agent coordination, sandboxing, production services, and long-horizon execution appear.
 
-The repository repeatedly follows this order:
-
-```text
-Why does this abstraction exist?
-        ↓
-Build the mechanism in ordinary Python
-        ↓
-Test the edge cases
-        ↓
-Map it to current frameworks/protocols
-        ↓
-State what the abstraction does NOT solve
-```
-
-## Core engineering principles
-
-1. **Model output is a proposal, not authority.**
-2. **Use the least dynamic architecture that solves the task well.**
-3. **State, context, checkpoint, memory, evidence, and artifacts are different scopes.**
-4. **Discovery is not authorization.**
-5. **Approval is not authorization.**
-6. **Retryable failure is not the same as retry-safe operation.**
-7. **Retrieved/remote content is untrusted data, not control policy.**
-8. **A graph is orchestration, not automatically an Agent.**
-9. **More Agents are not automatically better.**
-10. **A subprocess is not a security sandbox.**
-11. **A large context window is capacity, not a reason to send everything.**
-12. **Skills teach procedures; Tools expose capabilities; memory retains selected information.**
-13. **Durable execution externalizes progress instead of depending on one model session/process.**
-14. **Correct final text can still come from a failed/unsafe Agent trajectory.**
-15. **Frameworks/protocols own plumbing; the application owns meaning and policy.**
+Frameworks are welcome, but they do not arrive before the problem they solve. The goal is not to memorize one generation of APIs. It is to be able to design a new Agent system and explain which decisions need a model, which control flow should remain ordinary code, what the model may propose, what the application may execute, and how the system stops, recovers, gets approval, and proves quality.
 
 ---
 
-# Curriculum
+## Course map
 
-Tiny-Agent uses one continuous integer sequence. Each Stage should answer one main engineering question and prepare the vocabulary needed by the next Stage.
+The curriculum uses continuous integer Stages from `00` to `15`.
 
-| Stage | Capability | Main question |
+| Stage | Topic | Main question |
 |---|---|---|
-| [00](stages/00-foundations/) | Model calls / Structured Output / Tool Calling | What does the model actually produce, and what remains application responsibility? |
-| [01](stages/01-react-runtime/) | ReAct-style Agent Runtime | How does Tool use become a bounded decide-act-observe loop? |
-| [02](stages/02-workflows-routing-planning/) | Workflow / Routing / Planning | Which control decisions should stay deterministic, and which benefit from model judgment? |
-| [03](stages/03-stateful-orchestration/) | Explicit state & orchestration | When do state transitions need to become explicit? |
-| [04](stages/04-agentic-rag/) | Retrieval & Agentic RAG | How does an Agent obtain and judge external evidence? |
-| [05](stages/05-mcp/) | MCP | How are external capabilities and context exposed across a standard protocol boundary? |
-| [06](stages/06-memory-persistence-hitl/) | Memory / persistence / HITL | What should survive a turn or process, and how can execution pause and resume? |
-| [07](stages/07-context-engineering/) | Context Engineering | What should the model see on this exact turn? |
-| [08](stages/08-agent-skills/) | Agent Skills | How can reusable procedural knowledge be discovered and loaded on demand? |
-| [09](stages/09-reliability-safety/) | Reliability / safety / governance | How do we validate, bound, authorize, retry, and refuse execution? |
-| [10](stages/10-evaluation-observability/) | Observability & evaluation | What happened, was it good, and did a new version regress? |
-| [11](stages/11-multi-agent/) | Multi-Agent / A2A | When does delegation or handoff create measurable value? |
-| [12](stages/12-agent-workspace-sandbox/) | Workspace & sandbox compute | Where can an Agent inspect files and run commands without receiving the host machine? |
-| [13](stages/13-production-deployment/) | Production service & durable jobs | What changes when real users and other systems depend on the Agent service? |
-| [14](stages/14-long-horizon-harness/) | Long-horizon harness | How does work continue across sessions, workers, and sandbox loss? |
-| [15](stages/15-capstone-enterprise-agent/) | OpenScholar capstone | Can the relevant mechanisms compose into one evidence-grounded Agent system? |
+| [00](stages/00-foundations/README.md) | Foundations | How does a model call become a program-facing interface rather than arbitrary prose? |
+| [01](stages/01-react-runtime/README.md) | ReAct Runtime | How does a Tool Call become a bounded Agent loop? |
+| [02](stages/02-workflows-routing-planning/README.md) | Workflow / Routing / Planning | Which control decisions belong in code and which deserve model judgment? |
+| [03](stages/03-stateful-orchestration/README.md) | Stateful Orchestration | How do we make complex execution state and transitions explicit? |
+| [04](stages/04-agentic-rag/README.md) | Retrieval / Agentic RAG | How does an Agent obtain evidence and stop when evidence is insufficient? |
+| [05](stages/05-mcp/README.md) | MCP | How are external Tools, Resources, and Prompts exposed across a standard protocol boundary? |
+| [06](stages/06-memory-persistence-hitl/README.md) | Memory / Persistence / HITL | How does work survive process loss, what deserves retention, and where must a human decide? |
+| [07](stages/07-context-engineering/README.md) | Context Engineering | Of everything we can retain, what should this model turn actually see? |
+| [08](stages/08-agent-skills/README.md) | Agent Skills | How can reusable procedures be discovered and loaded only when needed? |
+| [09](stages/09-reliability-safety/README.md) | Reliability / Safety | How do permissions, validation, retries, loops, deadlines, and budgets constrain real actions? |
+| [10](stages/10-evaluation-observability/README.md) | Evaluation / Observability | How do we explain a trajectory and prove that a change improved the system? |
+| [11](stages/11-multi-agent/README.md) | Multi-Agent | When is a second Agent actually justified? |
+| [12](stages/12-agent-workspace-sandbox/README.md) | Workspace / Sandbox | What boundaries matter once an Agent can manipulate files and run code? |
+| [13](stages/13-production-deployment/README.md) | Production Service | How does a local program become an identity-aware, backpressured, durable service? |
+| [14](stages/14-long-horizon-harness/README.md) | Long-Horizon Harness | How can long work survive worker loss through ledgers, leases, and artifacts? |
+| [15](stages/15-capstone-enterprise-agent/README.md) | Capstone | How do we select only the mechanisms a real domain actually needs? |
 
-Detailed competency coverage: **[Modern Agent Competency Map](docs/modern-agent-competency-map.md)**  
-Framework/protocol mapping: **[Framework & Tooling Map](docs/framework-and-tooling-map.md)**
+The intended path is sequential because later boundaries are built from earlier ones.
 
 ---
 
-# Capability ladder
+## How to study each Stage
+
+Each Stage is self-contained:
 
 ```text
-model call
-  ↓
-Structured Output / Tool Calling
-  ↓
-Agent Runtime
-  ↓
-Workflow / Router / Planner
-  ↓
-explicit state & orchestration
-  ↓
-retrieval and external evidence
-  ↓
-MCP capability boundary
-  ↓
-memory / persistence / HITL
-  ↓
-context engineering
-  ↓
-Agent Skills
-  ↓
-reliability / permissions / budgets
-  ↓
-observability / evaluation / regression
-  ↓
-multi-Agent / A2A
-  ↓
-governed workspace / sandbox compute
-  ↓
-production identity / jobs / infrastructure
-  ↓
-long-horizon resumable harness
-  ↓
-OpenScholar capstone
+stages/<stage>/
+├── README.md
+├── README.zh-CN.md
+└── code/
 ```
 
-The project deliberately does **not** say the bottom of this diagram is always better. Use only the complexity your task needs.
+The README is the lesson. Code blocks inside the lesson show only the mechanism currently under discussion. The complete runnable program lives under that Stage's `code/` directory.
 
----
-
-# What is implemented from first principles?
-
-Reusable code under `src/tiny_agent/` includes:
+A useful learning loop is:
 
 ```text
-runtime.py                 ReAct-style loop
-workflows.py               routing / planning / replanning
-state_graph.py             handwritten graph mechanism
-retrieval.py               chunking / embeddings / cosine / top-k
-rag.py                     Basic + Agentic RAG
-mcp_bridge.py              MCP Tool normalization
-memory_policy.py           governed memory candidates
-approval.py                approve/edit/reject
-context_engineering.py     context budget / selection / compaction
-skills.py                  SKILL.md catalog + progressive activation
-reliability.py             failures / retries / budgets / loop detection
-governance.py              principals / permissions / exact approval binding
-guarded_runtime.py         composed execution policy
-observability.py           local traces/spans
-evaluation.py              datasets / graders / regression gates
-multi_agent.py             delegation / handoff / fan-out / context projection
-workspace.py               workspace confinement + Docker sandbox baseline
-jobs.py                    durable local run queue + leases
-service_identity.py        trusted identity/tenant binding
-production.py              bounded service execution + readiness
-harness.py                 durable task ledger + long-horizon handoffs
-capstone/                  OpenScholar domain + orchestration + eval
-integrations/              OpenAI / FastAPI / MCP / A2A / OTel / DB adapters
+read one section
+    ↓
+inspect the local snippet
+    ↓
+explain the problem it solves
+    ↓
+run the complete demo
+    ↓
+run checks.py / runtime_checks.py
+    ↓
+break one invariant deliberately
+    ↓
+explain the failure
 ```
 
-Framework integrations are introduced only after their underlying mechanism is visible.
+Do not study only the happy path. Rejected inputs and bounded failures often teach the architecture more clearly.
 
 ---
 
-# Modern Agent distinctions you should know
+## Running the code
 
-```text
-Structured Output != Tool Calling
-Tool Calling != Tool execution
-Tool != Skill
-Skill != Memory
-MCP != A2A
-Retriever != Vector Store
-RAG != Agent
-State != Context
-Checkpoint != Long-term Memory
-Graph != Agent
-Delegation != Handoff
-Discovery != Authorization
-Approval != Authorization
-Timeout != Hard termination
-Subprocess != Sandbox
-Service run != Agent checkpoint != long-horizon task ledger
-```
+Python 3.10+ is the baseline.
 
-If those distinctions are precise, most framework APIs become much easier to reason about.
-
----
-
-# Installation
-
-Core mechanisms are dependency-light:
+Many later Stages use only the standard library:
 
 ```bash
-python -m pip install -e ".[dev]"
+python stages/06-memory-persistence-hitl/code/demo.py
+python stages/06-memory-persistence-hitl/code/checks.py
 ```
 
-Selected extras:
+Stages with external dependencies declare them locally in `code/requirements.txt`:
 
 ```bash
-python -m pip install -e ".[openai]"
-python -m pip install -e ".[dev,stage03]"   # LangGraph
-python -m pip install -e ".[dev,stage04]"   # FAISS / Qdrant / RAG integrations
-python -m pip install -e ".[dev,stage05]"   # MCP v2
-python -m pip install -e ".[dev,stage06]"   # SQLite/Postgres checkpointing
-python -m pip install -e ".[dev,stage08]"  # Agent Skills YAML parsing
-python -m pip install -e ".[dev,stage09]"   # jsonschema / Pydantic / Tenacity
-python -m pip install -e ".[dev,stage10]"   # LangSmith / OpenTelemetry
-python -m pip install -e ".[dev,stage11]"   # OpenAI Agents SDK / A2A
-python -m pip install -e ".[dev,stage13]"   # FastAPI / Postgres / Redis / A2A server
-python -m pip install -e ".[dev,stage15]"   # complete OpenScholar integrations
+python -m pip install -r stages/05-mcp/code/requirements.txt
+python stages/05-mcp/code/in_memory_client.py
+python stages/05-mcp/code/checks.py
 ```
 
-Stages 06A, 09A, and 10A use the standard library plus Tiny-Agent core for their handwritten mechanisms. Docker is an external runtime requirement only for actually executing the Stage 12 container sandbox example.
+The repository does not require one global “install every Agent dependency” environment. Install what the Stage you are studying actually needs.
+
+Early stages include real provider adapters and explain their environment variables in the chapter. The course checks prefer deterministic model doubles, fake clients, or offline data whenever the invariant itself does not require a live model. A runtime should not need a lucky online generation to prove that it rejects unauthorized Tools, stops a loop, or avoids duplicate side effects.
 
 ---
 
-# Agent mechanism verification
+## Why mechanisms come before frameworks
 
-The `tests/` directory is part of the Agent learning material: it shows how the runtime semantics taught in the course are verified deterministically. It is **not** a place for unrelated repository-maintenance checks.
+An abstraction becomes much easier to use when you know what it hides.
 
-The verification suite covers:
+Stage 03 derives State, Node, Edge, and Reducer semantics before mapping them to LangGraph. Stage 04 derives chunking, vector representation, similarity, and Top-K retrieval before using vector backends. Stage 05 separates Function Calling from external protocol interoperability before introducing MCP.
 
-- runtime/tool edge cases;
-- Structured Output/provider adapters;
-- planning/replanning budgets;
-- handwritten/LangGraph state semantics;
-- FAISS/Qdrant retrieval;
-- MCP v2 server/client/transport paths;
-- durable SQLite/Postgres checkpoint and HITL;
-- validation/retry/permission/approval/injection boundaries;
-- tracing/evaluation/regression gates;
-- multi-Agent ownership, context isolation, handoff loops, A2A objects;
-- FastAPI/Postgres/Redis/A2A service integration;
-- context-budget/compaction behavior;
-- Agent Skill discovery/activation;
-- workspace path confinement and Docker command hardening;
-- durable job leases and long-horizon resume;
-- OpenScholar evidence/citation/semantic-support and authenticated bounded serving.
-
-Run these Agent mechanism and integration checks directly with `pytest`; repository-maintenance automation is intentionally kept outside the learning tree.
+This is not anti-framework. It is how frameworks stop feeling magical.
 
 ---
 
-# OpenScholar final capstone
+## One principle repeated throughout the course
 
-Stage 15 is intentionally not “one more framework demo.”
+If you remember one invariant, remember:
 
-It combines:
+> **Proposal is not authority.**
+
+The model may propose a Tool Call, Route, Plan, Memory Candidate, refund action, or delegation. Retrieved content may be relevant. A Skill may recommend using a capability. Another Agent may ask for work.
+
+None of those facts automatically grants execution authority. Application-owned validation, policy, ownership, approval, authorization, and execution boundaries remain explicit.
+
+---
+
+## Repository structure
+
+The repository intentionally stays course-shaped:
 
 ```text
-bounded planning
-+ local full-text RAG
-+ scholarly metadata discovery
-+ explicit evidence trust classes
-+ evidence abstention
-+ reviewer/writer coordination
-+ governed memory
-+ HITL export
-+ deterministic + optional semantic citation evaluation
-+ traces/metrics
-+ MCP / A2A / HTTP boundaries
-+ real semantic embedding/Qdrant production path
-+ trusted service identity
-+ BoundedAgentService
+Tiny-Agent/
+├── README.md
+├── README.zh-CN.md
+├── CONTRIBUTING.md
+├── CONTRIBUTING.zh-CN.md
+├── LICENSE
+└── stages/
+    ├── 00-foundations/
+    ├── 01-react-runtime/
+    ├── ...
+    └── 15-capstone-enterprise-agent/
 ```
 
-The offline default remains reproducible and API-key free. Production infrastructure is injected behind the same domain boundaries.
-
-The repository does not pretend that a demo API key, local SQLite, ordinary Docker, or one vector database automatically satisfies every enterprise IAM/compliance/multi-tenant threat model. The goal is to teach and test the correct **semantics and composition points**.
+Each Stage owns its complete teaching implementation and executable checks. There is no second global implementation or test tree that students must reconcile with chapter code.
 
 ---
 
-# 2026 reference anchors
+## Prerequisites and outcome
 
-Tiny-Agent tracks current concepts/APIs rather than freezing old tutorials:
+Basic Python is enough to begin: functions, classes, `dict` / `list`, exceptions, basic JSON, and running Python from a terminal. Async programming, SQLite, subprocesses, graph orchestration, and service concepts are introduced when the course reaches a problem that needs them.
 
-- OpenAI model/API docs — https://platform.openai.com/docs/
-- OpenAI Agents SDK 2026 harness/sandbox direction — https://openai.com/index/the-next-evolution-of-the-agents-sdk/
-- LangGraph/LangChain docs — https://docs.langchain.com/
-- MCP 2026-07-28 — https://blog.modelcontextprotocol.io/posts/2026-07-28/
-- Agent Skills open specification — https://agentskills.io/specification
-- A2A specification — https://a2a-protocol.org/latest/specification/
-- Anthropic context engineering — https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
-- Anthropic long-running harness guidance — https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
-- OWASP GenAI Security — https://genai.owasp.org/
-- OpenTelemetry — https://opentelemetry.io/
+Finishing the course should mean more than “I can use an Agent framework.” Before choosing a framework for a new system, you should be able to reason about model decisions, structured contracts, Tool authority, state scope, durability, memory policy, context selection, evidence, retries, idempotency, approval, authorization, execution isolation, tracing, evaluation, service identity, and worker recovery.
 
-Version-specific framework code is covered by deterministic and integration tests in `tests/`; if an external tutorial conflicts with current official docs or the repository's dependency range, prefer the current official docs.
+When those boundaries are clear, frameworks become implementation choices rather than architecture substitutes.
 
----
-
-# Repository philosophy
-
-Tiny-Agent is a learning repository, but “learning” is not an excuse for architecture that teaches dangerous habits.
-
-Teaching implementations are intentionally small and inspectable, while limitations are named explicitly. Production examples then add the missing mechanisms rather than retroactively pretending the small example was enterprise-ready all along.
-
----
-
-# 🙏 Acknowledgements
-
----
-
-# License
-
-Tiny-Agent is released under the [MIT License](LICENSE).
-
----
-
-# ⭐ Support Tiny-Agent
-
-If Tiny-Agent helps you understand or build modern AI Agents, a GitHub Star is one of the simplest ways to support the project and help more learners discover it.
-
-<p align="center">
-  <a href="https://github.com/wds1996/Tiny-Agent"><strong>⭐ If Tiny-Agent helps you, please consider giving it a Star!</strong></a>
-</p>
-
----
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=wds1996%2FTiny-Agent&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=wds1996/Tiny-Agent&type=date&theme=dark&legend=top-left&sealed_token=XS_WU0y8HydmsHz6LTueLxesinCg4gXRd-EpaRl6ATjiKesmm8eBUKFxeGsBdOVkvKn10SYjq0sZ1aD4SgzAIARbUcbD2g22nYQYpId-Pi95XI6qasNgGn6je9vJJTGhq3BJ9BlSQx1HfSqyII_bkFQNT6M3IEC-MoUe82x53EE2DIRiF4eoFQo-5yK_" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=wds1996/Tiny-Agent&type=date&legend=top-left&sealed_token=XS_WU0y8HydmsHz6LTueLxesinCg4gXRd-EpaRl6ATjiKesmm8eBUKFxeGsBdOVkvKn10SYjq0sZ1aD4SgzAIARbUcbD2g22nYQYpId-Pi95XI6qasNgGn6je9vJJTGhq3BJ9BlSQx1HfSqyII_bkFQNT6M3IEC-MoUe82x53EE2DIRiF4eoFQo-5yK_" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=wds1996/Tiny-Agent&type=date&legend=top-left&sealed_token=XS_WU0y8HydmsHz6LTueLxesinCg4gXRd-EpaRl6ATjiKesmm8eBUKFxeGsBdOVkvKn10SYjq0sZ1aD4SgzAIARbUcbD2g22nYQYpId-Pi95XI6qasNgGn6je9vJJTGhq3BJ9BlSQx1HfSqyII_bkFQNT6M3IEC-MoUe82x53EE2DIRiF4eoFQo-5yK_" />
- </picture>
-</a>
-
-<!-- <p align="center">
-  <a href="https://www.star-history.com/wds1996/Tiny-Agent">
-    <img src="https://api.star-history.com/badge?repo=wds1996/Tiny-Agent&type=rank" alt="Tiny-Agent Star History Rank" />
-  </a>
-</p> -->
-
-<p align="center">Track Tiny-Agent's growth on Star History.</p>
+Start with [Stage 00](stages/00-foundations/README.md).
