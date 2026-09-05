@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/agent_readme.png" alt="Tiny-Agent —— 从第一性原理学习现代 AI Agent" width="100%" />
+</p>
+
 # Tiny-Agent：从一次模型调用，到真正的 Agent 系统
 
 > Language: [English](README.md) | **简体中文**
@@ -8,7 +12,7 @@ Tiny-Agent 走另一条路。
 
 这是一门从零开始的 Agent 工程课程。我们先把模型调用、Structured Output、Tool Calling、Runtime、Workflow、State、Retrieval 这些基础机制一层层搭起来，再进入 MCP、Memory、Context Engineering、Skills、Safety、Evaluation、Multi-Agent、Sandbox、Production 与 Long-Horizon。
 
-框架会出现，但不会比问题更早出现。最终目标也不是记住一套 2026 年流行 API，而是面对一个新的 Agent 系统时，能够自己判断：哪些决定真的需要模型，哪些控制逻辑应该留在普通代码里，模型能提出什么又真正有权做什么，以及系统怎样停止、恢复、审批、评估和上线。
+框架会出现，但不会毓�{�题更早出现。最终目标也不是记住一套 2026 年流行 API，而是面对一个新的 Agent 系统时，能够自己判断：哪些决定真的需要模型，哪些控制逻辑应该留在普通代码里，模型能提出什么又真正有权做什么，以及系统怎样停止、恢复、审批、评估和上线。
 
 ---
 
@@ -152,3 +156,17 @@ Tiny-Agent/
 当这些问题能在选框架之前回答，框架才真正变成工具。
 
 从 [Stage 00](stages/00-foundations/README.zh-CN.md) 开始即可。
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=wds1996%2FTiny-Agent&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=wds1996/Tiny-Agent&type=date&theme=dark&legend=top-left&sealed_token=XS_WU0y8HydmsHz6LTueLxesinCg4gXRd-EpaRl6ATjiKesmm8eBUKFxeGsBdOVkvKn10SYjq0sZ1aD4SgzAIARbUcbD2g22nYQYpId-Pi95XI6qasNgGn6je9vJJTGhq3BJ9BlSQx1HfSqyII_bkFQNT6M3IEC-MoUe82x53EE2DIRiF4eoFQo-5yK_" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=wds1996/Tiny-Agent&type=date&legend=top-left&sealed_token=XS_WU0y8HydmsHz6LTueLxesinCg4gXRd-EpaRl6ATjiKesmm8eBUKFxeGsBdOVkvKn10SYjq0sZ1aD4SgzAIARbUcbD2g22nYQYpId-Pi95XI6qasNgGn6je9vJJTGhq3BJ9BlSQx1HfSqyII_bkFQNT6M3IEC-MoUe82x53EE2DIRiF4eoFQo-5yK_" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=wds1996/Tiny-Agent&type=date&legend=top-left&sealed_token=XS_WU0y8HydmsHz6LTueLxesinCg4gXRd-EpaRl6ATjiKesmm8eBUKFxeGsBdOVkvKn10SYjq0sZ1aD4SgzAIARbUcbD2g22nYQYpId-Pi95XI6qasNgGn6je9vJJTGhq3BJ9BlSQx1HfSqyII_bkFQNT6M3IEC-MoUe82x53EE2DIRiF4eoFQo-5yK_" />
+ </picture>
+</a>
+
+<p align="center">在 Star History 上查看 Tiny-Agent 的成长。</p>
