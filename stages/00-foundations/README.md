@@ -38,6 +38,10 @@ That boundary—generation versus execution—is the foundation for almost every
 
 ### 1.1 Prepare the environment
 
+<p align="center">
+  <img src="../../assets/environment.png" alt="Development Environment" width="100%" />
+</p>
+
 The examples use Python 3.10 or later. Install the chapter dependencies from the repository root:
 
 ```bash
