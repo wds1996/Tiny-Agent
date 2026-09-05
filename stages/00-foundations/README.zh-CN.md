@@ -8,6 +8,10 @@
 
 本章我们不背一串名词，而是顺着程序真正遇到的问题往前走。先让模型回答一句话；接着发现自然语言不适合直接给程序使用，于是引入 Structured Output；然后发现结构化结果仍然不能替你查询外部数据，于是再引入 Tool Calling。到最后，你会完成一次完整的 `model → tool → model` 往返。
 
+<p align="center">
+  <img src="../../assets/stage00-00.png" alt="Agent 简易流程示例" width="70%" />
+</p>
+
 ---
 
 ## 1. 先建立一个不会害你的心智模型
@@ -42,9 +46,6 @@ Python 读取响应
 
 ### 1.1 先把环境准备好
 
-<p align="center">
-  <img src="../../assets/environment.png" alt="开发环境准备" width="100%" />
-</p>
 
 本章示例使用 Python 3.10 及以上版本。先安装依赖：
 
