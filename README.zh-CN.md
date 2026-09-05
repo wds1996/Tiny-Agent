@@ -12,7 +12,7 @@ Tiny-Agent 走另一条路。
 
 这是一门从零开始的 Agent 工程课程。我们先把模型调用、Structured Output、Tool Calling、Runtime、Workflow、State、Retrieval 这些基础机制一层层搭起来，再进入 MCP、Memory、Context Engineering、Skills、Safety、Evaluation、Multi-Agent、Sandbox、Production 与 Long-Horizon。
 
-框架会出现，但不会毓�{�题更早出现。最终目标也不是记住一套 2026 年流行 API，而是面对一个新的 Agent 系统时，能够自己判断：哪些决定真的需要模型，哪些控制逻辑应该留在普通代码里，模型能提出什么又真正有权做什么，以及系统怎样停止、恢复、审批、评估和上线。
+框架会出现，但不会比问题更早出现。最终目标也不是记住一套 2026 年流行 API，而是面对一个新的 Agent 系统时，能够自己判断：哪些决定真的需要模型，哪些控制逻辑应该留在普通代码里，模型能提出什么又真正有权做什么，以及系统怎样停止、恢复、审批、评估和上线。
 
 ---
 
