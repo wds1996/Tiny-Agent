@@ -8,6 +8,10 @@ You opened the repository to learn Agents, and the first chapter asks you to sta
 
 We will follow one continuous story. First, Python asks a model for text. Then we notice that prose is awkward for software to consume, so we introduce Structured Output. Then we notice that a perfectly structured answer still cannot fetch live or private data, so we introduce Tool Calling. By the end, you will have a complete `model → tool → model` round trip.
 
+<p align="center">
+  <img src="../../assets/stage00-00.png" alt="Agent loop" width="100%" />
+</p>
+
 ---
 
 ## 1. Start with a mental model that will survive the rest of the course
@@ -39,14 +43,10 @@ That boundary—generation versus execution—is the foundation for almost every
 Visually, the boundary looks like this:
 
 <p align="center">
-  <img src="../../assets/stage00-01.svg" alt="Generation versus execution ownership boundary" width="100%" />
+  <img src="../../assets/en/stage00-01.svg" alt="Generation versus execution ownership boundary" width="60%" />
 </p>
 
 ### 1.1 Prepare the environment
-
-<p align="center">
-  <img src="../../assets/environment.png" alt="Development Environment" width="100%" />
-</p>
 
 The examples use Python 3.10 or later. Install the chapter dependencies from the repository root:
 
@@ -485,7 +485,7 @@ model answers from the Observation
 Putting `call_id` and `previous_response_id` back onto the same timeline makes the relationships easier to see:
 
 <p align="center">
-  <img src="../../assets/stage00-02.svg" alt="Tool Calling flow from request to Observation" width="100%" />
+  <img src="../../assets/en/stage00-02.svg" alt="Tool Calling flow from request to Observation" width="60%" />
 </p>
 
 That is the first complete Tool round trip.
