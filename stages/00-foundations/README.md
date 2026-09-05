@@ -43,7 +43,7 @@ That boundary—generation versus execution—is the foundation for almost every
 Visually, the boundary looks like this:
 
 <p align="center">
-  <img src="../../assets/en/stage00-01.svg" alt="Generation versus execution ownership boundary" width="60%" />
+  <img src="../../assets/en/stage00-01.png" alt="Generation versus execution ownership boundary" width="60%" />
 </p>
 
 ### 1.1 Prepare the environment
@@ -485,7 +485,7 @@ model answers from the Observation
 Putting `call_id` and `previous_response_id` back onto the same timeline makes the relationships easier to see:
 
 <p align="center">
-  <img src="../../assets/en/stage00-02.svg" alt="Tool Calling flow from request to Observation" width="60%" />
+  <img src="../../assets/en/stage00-02.png" alt="Tool Calling flow from request to Observation" width="60%" />
 </p>
 
 That is the first complete Tool round trip.
