@@ -9,7 +9,7 @@
 本章我们不背一串名词，而是顺着程序真正遇到的问题往前走。先让模型回答一句话；接着发现自然语言不适合直接给程序使用，于是引入 Structured Output；然后发现结构化结果仍然不能替你查询外部数据，于是再引入 Tool Calling。到最后，你会完成一次完整的 `model → tool → model` 往返。
 
 <p align="center">
-  <img src="../../assets/stage00-00.png" alt="Agent 简易流程示例" width="90%" />
+  <img src="../../assets/stage00-00.png" alt="Agent 简易流程示例" width="100%" />
 </p>
 
 ---
