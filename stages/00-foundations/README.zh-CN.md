@@ -34,6 +34,12 @@ Python 读取响应
 
 这条边界看起来基础，却是后面几乎所有 Agent 安全设计的起点。
 
+把这条边界画出来，大致就是下面这样：
+
+<p align="center">
+  <img src="../../assets/stage00-01.svg" alt="模型生成与程序执行的权限边界" width="100%" />
+</p>
+
 ### 1.1 先把环境准备好
 
 <p align="center">
@@ -482,6 +488,12 @@ final = client.responses.create(
     ↓
 模型根据 Observation 回答
 ```
+
+如果把 `call_id` 和 `previous_response_id` 也放回这条时间线里，关系会更直观：
+
+<p align="center">
+  <img src="../../assets/stage00-02.svg" alt="Tool Calling 从请求到 Observation 的完整流程" width="100%" />
+</p>
 
 到这里，你已经拥有了 Agent 最小循环的一半。
 
