@@ -36,6 +36,10 @@ Python 读取响应
 
 ### 1.1 先把环境准备好
 
+<p align="center">
+  <img src="assets/environment.png" alt="开发环境准备" width="100%" />
+</p>
+
 本章示例使用 Python 3.10 及以上版本。先安装依赖：
 
 ```bash
