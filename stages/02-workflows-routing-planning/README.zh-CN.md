@@ -12,6 +12,10 @@
 
 这会带出三个非常常用的控制模式：Workflow、Routing 和 Planning。它们并不是三个孤零零的名词，而是同一个问题的三种答案：**我们到底把多少控制权交给模型？**
 
+<p align="center">
+  <img src="../../assets/stage02-01.png" alt="Workflow、Routing 与 Planning" width="100%" />
+</p>
+
 ---
 
 ## 1. 先纠正一个常见误区：Agent 不是“把 if/else 删掉”
