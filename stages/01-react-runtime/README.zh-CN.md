@@ -54,7 +54,12 @@ model: final answer
 
 你会发现，程序真正知道的不是“总共有三轮”，而是一个重复规则：**每一轮先让模型决定下一步；如果它要调用工具，执行完再继续；如果它给出最终答案，就结束。**
 
-先把这个想法写成伪代码：
+把固定脚本和 Runtime Loop 并排看，这个变化会更直观：
+<p align="center">
+  <img src="../../assets/stage01-01.png" alt="固定脚本 vs Runtime Loop" width="60%" />
+</p>
+
+再把右侧的循环压缩成伪代码：
 
 ```python
 for step in range(max_steps):
@@ -103,6 +108,10 @@ turn = model.generate(messages, available_tools)
 > **Model 提议下一步，Runtime 管理下一步，Tool 实现下一步。**
 
 Runtime 像舞台监督，不负责演戏，却决定什么时候开场、哪个道具能上台、什么时候必须收工。模型像演员，可以根据现场情况做选择，但演员不能因为台词里写了“现在炸掉舞台”就真的获得炸药权限。
+
+<p align="center">
+  <img src="../../assets/stage01-02.png" alt="Runtime / Model / Tools 职责分工" width="60%" />
+</p>
 
 ### 2.1 什么时候反而不该用 Agent
 
@@ -320,7 +329,13 @@ python stages/01-react-runtime/code/runtime.py
 [3] FINAL   Tokyo's deterministic teaching record is 18.0°C (64.4°F), cloudy.
 ```
 
-先别急着看所有类，我们沿着 `AgentRuntime.run()` 走一遍。
+先别急着看所有类。把刚才的执行轨迹展开，一次 Runtime run 的控制流如下：
+
+<p align="center">
+  <img src="../../assets/stage01-03.png" alt="Runtime Loop 执行流程" width="60%" />
+</p>
+
+接下来我们再沿着 AgentRuntime.run()，把图里的每一步和代码对应起来。
 
 ### 6.1 Runtime 先创建自己的运行记录
 
