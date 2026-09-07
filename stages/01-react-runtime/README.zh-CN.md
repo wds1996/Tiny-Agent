@@ -694,3 +694,7 @@ stages/01-react-runtime/
 ```
 
 完整实现只维护在 `code/` 中；正文中的代码片段用于解释具体机制。
+
+---
+
+➡️ [Stage 02：别让模型什么都决定——Workflow、Routing 与 Planning](../02-workflows-routing-planning/README.zh-CN.md)
