@@ -44,6 +44,15 @@ Stage 03 就解决这个问题。
 
 ---
 
+### 阅读与运行路线
+
+本章默认你已理解 Stage 00 的模型调用和工具边界、Stage 01 的“决策 → 执行 → 观察”循环，以及 Stage 02 的有限路由和执行预算。需要会读 Python 字典、函数和类；不要求事先使用过 LangGraph。
+
+先读第 1–12 节，用纯 Python 理解状态合并和转移；再读第 13–19 节，对照相同流程学习 LangGraph；第 20–29 节用于回顾设计边界。第 30 节集中给出运行命令。`langgraph_scripted_agent.py` 是离线对照示例；完整的真实模型对照示例是 `langgraph_deepseek_agent.py`，才需要 DeepSeek Key。
+
+所有命令均在 `Tiny-Agent` 仓库根目录执行。章节中的机制片段不都能独立运行；完整可运行程序位于 `code/`，下面会标明片段依赖的定义。
+
+
 ## 1. 先别急着画图，先找出那些藏起来的 State
 
 我们先把刚才那段审核流程稍微展开一点。
@@ -464,7 +473,7 @@ def append_events(left, right):
 ```python
 reducer = self._reducers.get(key)
 
-if reducer is None:
+if reducer is None or key not in state:
     state[key] = right
 else:
     state[key] = reducer(state[key], right)
@@ -700,9 +709,13 @@ Graph Compile 的价值之一，就是把一部分运行期惊喜提前变成构
 
 ---
 
-## 13. 现在换成 LangGraph
+## 13. 认识 LangGraph，再映射相同的机制
 
-手写一遍机制以后，再看 LangGraph 会轻松很多。
+[LangGraph](https://langchain-ai.github.io/langgraph/) 是 LangChain 团队提供的有状态 Agent 与工作流编排框架。它把 State、Node、Edge、条件路由和循环这些概念变成可执行的图，适合需要多步骤、可恢复或可观察执行过程的程序。
+
+如果你还没有接触过 LangGraph，先阅读官方的 [概览](https://langchain-ai.github.io/langgraph/) 和 [Workflows and agents 教程](https://langchain-ai.github.io/langgraph/tutorials/workflows/)。它们会系统介绍框架 API、常见工作流模式和更完整的生产能力。
+
+本教程不额外重复 LangGraph 的框架教学。前 01，02 节已经用纯 Python 拆开了图运行时的核心机制；从这一节开始，我们只用 LangGraph 把同一套 State、Node、Edge 和路由逻辑重新表达出来，重点是理解 Agent 的状态与控制流如何映射到框架代码。
 
 安装本章依赖：
 
@@ -755,6 +768,8 @@ def classify(state: SupportState) -> dict:
 
     if "refund" in request or "charged" in request:
         category = "billing"
+    elif "password" in request or "login" in request:
+        category = "technical"
     else:
         category = "general"
 
@@ -771,11 +786,15 @@ def classify(state: SupportState) -> dict:
 然后注册：
 
 ```python
+from langgraph.graph import END, START, StateGraph
+
 builder = StateGraph(SupportState)
 
 builder.add_node("classify", classify)
 builder.add_node("draft", draft)
 builder.add_node("review", review)
+builder.add_node("revise", revise)
+builder.add_node("finish", finish)
 ```
 
 这点非常重要。
@@ -844,25 +863,42 @@ graph = builder.compile()
 
 ---
 
+### 把前面的片段连起来运行
+
+第 14–15 节的 `draft`、`review`、`revise`、`finish` 和 `route_after_review` 来自 `langgraph_workflow.py`。只复制注册语句会缺少这些定义。先在该文件所在目录尝试这个完整入口：
+
+```python
+from langgraph_workflow import build_graph, initial_state
+
+graph = build_graph()
+result = graph.invoke(initial_state(), config={"recursion_limit": 20})
+print(result["answer"])
+assert result["revisions"] == 1
+assert len(result["events"]) == 6
+```
+
+`TypedDict` 描述字典有哪些字段；`total=False` 允许初始时省略由后续节点产生的字段，并不自动填默认值或做运行时验证。`Annotated[list[str], add]` 在类型之外附上合并规则：LangGraph 用列表相加累积事件。节点只能返回本次新增事件；返回整个历史会导致重复累加。
+
 ## 16. `invoke()` 给你最终 State，`stream()` 让你看到过程
 
 普通执行：
 
 ```python
 result = graph.invoke(
-    initial_state,
+    initial_state(),
     config={"recursion_limit": 20},
 )
 ```
 
-最后拿到的是累积后的 State。
+最后拿到的是累积后的 State。这里沿用上一节导入的 `initial_state()` 函数；调用它才能得到初始字典。
 
 但 Graph 的一个常见需求是观察执行过程。LangGraph 可以：
 
 ```python
 for update in graph.stream(
-    initial_state,
+    initial_state(),
     stream_mode="updates",
+    config={"recursion_limit": 20},
 ):
     print(update)
 ```
@@ -885,6 +921,8 @@ for update in graph.stream(
 不要把“能实时看到更新”理解成“Graph 突然获得了另一套决策能力”。
 
 ---
+
+注意：先 `stream()` 再 `invoke()` 会执行两次独立的运行，不是读取同一次运行的结果。离线示例这样做是为了比较两种接口；真实 DeepSeek 示例只执行一次 `stream()`，避免重复请求和工具执行。
 
 ## 17. LangGraph 的 Recursion Limit 和我们手写的 max_steps 是一类东西
 
@@ -1022,12 +1060,12 @@ Conditional Edge 只负责：
 没有 Tool Call / 已结束 -> END
 ```
 
-这就是 [`code/langgraph_agent.py`](code/langgraph_agent.py) 演示的结构。
+这就是离线版 [`code/langgraph_scripted_agent.py`](code/langgraph_scripted_agent.py) 演示的结构。
 
 运行：
 
 ```bash
-python stages/03-stateful-orchestration/code/langgraph_agent.py
+python stages/03-stateful-orchestration/code/langgraph_scripted_agent.py
 ```
 
 它使用一个确定性的 `ScriptedModel`，第一次请求：
@@ -1052,6 +1090,67 @@ TOOLS["multiply"](**call.arguments)
 
 ---
 
+下面的构建函数新增 `model` 参数，默认仍使用 `ScriptedModel`。传入实现 `generate(messages) -> ModelTurn` 的对象，即可复用同一组节点与边。新增工具时需要同步修改 Provider 的工具描述和工具节点的参数校验。
+
+### 19.1 使用 DeepSeek 运行同一张图
+
+原版 Stage 03 全部使用模型替身。现在有一组并列、完整的实现：[langgraph_scripted_agent.py](code/langgraph_scripted_agent.py) 使用离线 `ScriptedModel`，[langgraph_deepseek_agent.py](code/langgraph_deepseek_agent.py) 使用真实 DeepSeek 模型。两者都有独立的 State、Node、Edge、Tool 和 Graph 构建代码，便于逐段对照。先完成第 30 节的依赖安装，再在仓库根目录的同一个终端中设置环境变量：
+
+Windows CMD：
+
+```cmd
+set "DEEPSEEK_API_KEY=你的DeepSeek密钥"
+set "DEEPSEEK_MODEL=deepseek-v4-flash"
+python stages/03-stateful-orchestration/code/langgraph_deepseek_agent.py
+```
+
+PowerShell：
+
+```powershell
+$env:DEEPSEEK_API_KEY="你的DeepSeek密钥"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+python stages/03-stateful-orchestration/code/langgraph_deepseek_agent.py
+```
+
+Bash：
+
+```bash
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+python stages/03-stateful-orchestration/code/langgraph_deepseek_agent.py
+```
+
+客户端的创建如下；`required_env` 是该文件内检查空环境变量的辅助函数：
+
+```python
+from openai import OpenAI
+from langgraph_deepseek_agent import DeepSeekModel, required_env, build_agent_graph
+
+client = OpenAI(
+    api_key=required_env("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com",
+)
+model = DeepSeekModel(client=client, model=required_env("DEEPSEEK_MODEL"))
+graph = build_agent_graph(model=model, max_model_steps=4)
+```
+
+`api_key` 是 DeepSeek 身份凭证，`base_url` 决定请求地址，`model` 指定模型。
+
+与 Stage 01 相同，DeepSeek Adapter 每轮重建完整输入：用户消息、assistant 的 `function_call`、匹配 `call_id` 的 `function_call_output`。它不依赖服务端保存历史；只发送 State 中的 `messages`，不会把 `model_steps` 等控制字段作为模型输入。协议依据见 [DeepSeek Responses 文档](https://api-docs.deepseek.com/guides/responses_api/)。
+
+离线示例的确定输出为：
+
+```text
+final_answer: 6 * 7 = 42
+model_steps: 2
+message roles: ['user', 'assistant', 'tool', 'assistant']
+```
+
+真实模型的措辞和调用次数可能变化；观察更新应能看到 model 提议 multiply、tools 返回 42、model 给出最终答案。模型最多调用四轮；达到预算会返回 error，真实入口将它作为异常报告。图的 `recursion_limit=20` 是另一层边界，计算图执行的 super-step；当前顺序图通常每个节点一次，不能将其等同于模型调用次数。
+
+API 错误、非法 JSON、未知工具和无效参数会直接终止，不自动重试。工具参数必须恰好为两个有限数字 a、b；重复调用 ID 会被拒绝。沿用前几章的执行边界，不用跳过校验来让模型输出“能跑”。
+
+
 ## 20. 把 while 改成 Graph，不会改变权限边界
 
 这是本章非常容易被忽略的一点。
@@ -1069,9 +1168,37 @@ def model_node(state):
 真正执行 Tool 的仍然是：
 
 ```python
-def tool_node(state):
-    handler = TOOLS[call.name]
-    result = handler(**call.arguments)
+import math
+from typing import Any
+from langgraph_scripted_agent import AgentState, TOOLS
+
+def tool_node(state: AgentState) -> dict:
+    observations: list[dict[str, Any]] = []
+
+    for call in state.get("pending_tool_calls", []):
+        try:
+            handler = TOOLS[call.name]
+        except KeyError as exc:
+            raise RuntimeError(f"unknown tool: {call.name}") from exc
+
+        if set(call.arguments) != {"a", "b"} or any(
+            type(value) not in (int, float) or not math.isfinite(value)
+            for value in call.arguments.values()
+        ):
+            raise ValueError("multiply requires exactly two finite numbers: a, b")
+        result = handler(**call.arguments)
+        observations.append(
+            {
+                "role": "tool",
+                "tool_call_id": call.call_id,
+                "content": str(result),
+            }
+        )
+
+    return {
+        "messages": observations,
+        "pending_tool_calls": [],
+    }
 ```
 
 所以：
@@ -1169,8 +1296,13 @@ class AgentState(TypedDict):
 更好的 State 会把真正影响控制的字段说清楚：
 
 ```python
+from operator import add
+from typing import Annotated, Any
+from typing_extensions import TypedDict
+from langgraph_scripted_agent import ToolCall
+
 class AgentState(TypedDict, total=False):
-    messages: list[dict]
+    messages: Annotated[list[dict[str, Any]], add]
     pending_tool_calls: list[ToolCall]
     final_answer: str | None
     error: str | None
@@ -1184,6 +1316,8 @@ class AgentState(TypedDict, total=False):
 如果一个 Graph 需要你打开十个 Node 才能猜出 State 里到底存了什么，那它虽然“用了 Graph”，但没有真正获得多少清晰度。
 
 ---
+
+`messages` 累加新消息；`pending_tool_calls` 覆盖并在执行后清空。若对待执行列表使用累加规则，旧调用就可能被重复执行。
 
 ## 23. 不要让 Node 偷偷改传入的 State
 
@@ -1230,6 +1364,8 @@ assert update == {"count": 2}
 Node 可以单独测试，不需要先启动整个 Graph。
 
 ---
+
+手写引擎的 `dict(state)` 只是浅拷贝，嵌套列表仍共享引用，不是隔离沙箱。不要对输入中的 `events` 或 `messages` 原地 `append()`，应返回新列表。当前图只在进程内保存状态；没有 checkpointer，重启后不会恢复运行。
 
 ## 24. Conditional Edge 不应该顺便承担业务执行
 
@@ -1518,7 +1654,7 @@ python stages/03-stateful-orchestration/code/langgraph_workflow.py
 然后运行 Graph 版 ReAct：
 
 ```bash
-python stages/03-stateful-orchestration/code/langgraph_agent.py
+python stages/03-stateful-orchestration/code/langgraph_scripted_agent.py
 ```
 
 最后运行离线检查：
@@ -1530,6 +1666,21 @@ python stages/03-stateful-orchestration/code/checks.py
 这些检查会覆盖 Partial Update、Reducer、非法 Conditional Route、Cycle Budget、手写 Graph 的 Revision Loop、LangGraph Workflow 的同等行为、Streaming Update，以及 Graph 版 ReAct 的 Model/Tool 边界。
 
 ---
+
+### 运行排错与文件对应
+
+| 文件 | 用途 | 是否请求模型 |
+|---|---|---|
+| state_graph.py | 手写合并和转移机制 | 否 |
+| langgraph_workflow.py | 相同客服流程的框架版本 | 否 |
+| langgraph_scripted_agent.py | 完整离线 model → tools 图 | 否 |
+| langgraph_deepseek_agent.py | 完整真实 DeepSeek model → tools 图 | 是 |
+| checks.py | 离线回归测试 | 否 |
+
+缺少模块时，请使用运行脚本的同一个 Python 执行 `python -m pip install -r stages/03-stateful-orchestration/code/requirements.txt`。缺少环境变量时，在运行程序的同一个终端设置；CMD 的 `set` 与 PowerShell 的 `$env:` 不能混用。达到预算时先检查节点轨迹和停止条件，再决定是否提高限额。
+
+LangGraph 行为参考：[Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api)。本章不配置持久化、并发调度或自动恢复，编译也不会证明业务逻辑正确。
+
 
 ## 31. 动手练习：别只改颜色，改控制语义
 
@@ -1552,7 +1703,7 @@ review
 
 然后给 `events` 换一个错误的默认覆盖语义，运行一次，观察历史是怎么丢掉的。再恢复 Reducer。
 
-最后修改 `langgraph_agent.py`，让 `ScriptedModel` 第一次调用 `multiply`，第二次再调用一个新的 `add` Tool，第三次才结束。不要改 Graph 拓扑，只增加 Tool 和 Model 行为。
+最后修改 `langgraph_scripted_agent.py`，让 `ScriptedModel` 第一次调用 `multiply`，第二次再调用一个新的 `add` Tool，第三次才结束。不要改 Graph 拓扑，只增加 Tool 和 Model 行为。然后对照把相同改动加入 `langgraph_deepseek_agent.py` 的 Tool schema 与参数校验。
 
 如果你能做到这一点，就说明你已经理解了一个非常关键的优势：
 

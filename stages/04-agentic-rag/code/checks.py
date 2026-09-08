@@ -10,7 +10,7 @@ from agentic_rag import (
 )
 from basic_rag import BasicRAG, EvidenceBoundAnswerer
 from evaluation import recall_at_k, reciprocal_rank
-from openai_rag import OpenAIAnswerer
+from deepseek_rag import DeepSeekAnswerer
 from retrieval import (
     Document,
     HashEmbeddingModel,
@@ -128,7 +128,7 @@ class Stage04Checks(unittest.TestCase):
         self.assertEqual(state.status, "insufficient_evidence")
         self.assertEqual(state.rewrites, 0)
 
-    def test_openai_answerer_sends_evidence_as_bounded_input(self) -> None:
+    def test_deepseek_answerer_sends_evidence_as_bounded_input(self) -> None:
         class FakeResponses:
             def __init__(self) -> None:
                 self.kwargs = None
@@ -147,7 +147,7 @@ class Stage04Checks(unittest.TestCase):
                 self.responses = FakeResponses()
 
         client = FakeClient()
-        answerer = OpenAIAnswerer(client=client, model="teaching-model")
+        answerer = DeepSeekAnswerer(client=client, model="teaching-model")
         evidence = [
             SearchResult(
                 Chunk("qdrant:0", "Qdrant supports payload filtering.", {"source": "notes"}),

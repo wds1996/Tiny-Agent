@@ -40,6 +40,15 @@ We are not going to treat a graph as a “more advanced Agent.” We are going t
 
 ---
 
+### Reading and running route
+
+This chapter assumes Stage 00's model/tool boundary, Stage 01's decide–act–observe loop, and Stage 02's finite routes and execution budgets. You should be comfortable reading Python dictionaries, functions, and classes; no LangGraph experience is required.
+
+Read sections 1–12 for the pure-Python mechanism, then 13–19 to map the same flow to LangGraph. Sections 20–29 review design boundaries, and section 30 collects run commands. `langgraph_scripted_agent.py` is the offline comparison example; the complete live comparison implementation is `langgraph_deepseek_agent.py` and needs a DeepSeek key.
+
+Run commands from the `Tiny-Agent` repository root. Mechanism excerpts are not all standalone programs; complete runnable sources live in `code/`, and the relevant dependencies of excerpts are identified below.
+
+
 ## 1. Before drawing a graph, find the state that is already hiding in your code
 
 Take the review loop again:
@@ -453,7 +462,7 @@ The runtime can then apply updates like this:
 ```python
 reducer = self._reducers.get(key)
 
-if reducer is None:
+if reducer is None or key not in state:
     state[key] = right
 else:
     state[key] = reducer(state[key], right)
@@ -666,9 +675,13 @@ That distinction matters.
 
 ---
 
-## 13. Now map the same ideas to LangGraph
+## 13. Meet LangGraph, then map the same mechanism
 
-Once the mechanism is visible, LangGraph becomes easier to read.
+[LangGraph](https://langchain-ai.github.io/langgraph/) is LangChain's stateful agent and workflow orchestration framework. It turns State, Nodes, Edges, conditional routing, and cycles into an executable graph, which suits programs that need multi-step, resumable, or observable execution.
+
+If LangGraph is new to you, start with the official [overview](https://langchain-ai.github.io/langgraph/) and [Workflows and agents tutorial](https://langchain-ai.github.io/langgraph/tutorials/workflows/). They cover the framework API, common workflow patterns, and broader production features.
+
+This tutorial does not repeat a general LangGraph course. Sections 01, 02 already unpacked the graph-runtime mechanism in pure Python. From here, we express the same State, Nodes, Edges, and routing logic with LangGraph, focusing on how agent state and control flow map to framework code.
 
 Install the Stage 03 dependency:
 
@@ -719,6 +732,8 @@ def classify(state: SupportState) -> dict:
 
     if "refund" in request or "charged" in request:
         category = "billing"
+    elif "password" in request or "login" in request:
+        category = "technical"
     else:
         category = "general"
 
@@ -731,11 +746,15 @@ def classify(state: SupportState) -> dict:
 Then register it:
 
 ```python
+from langgraph.graph import END, START, StateGraph
+
 builder = StateGraph(SupportState)
 
 builder.add_node("classify", classify)
 builder.add_node("draft", draft)
 builder.add_node("review", review)
+builder.add_node("revise", revise)
+builder.add_node("finish", finish)
 ```
 
 There is no special graph programming language here.
@@ -800,25 +819,42 @@ Now the methods are easier to remember because each one corresponds to a mechani
 
 ---
 
+### Run the connected pieces
+
+The `draft`, `review`, `revise`, `finish`, and `route_after_review` definitions used in sections 14–15 live in `langgraph_workflow.py`. Registration statements alone need those definitions. From that file's directory, this is a complete entry point:
+
+```python
+from langgraph_workflow import build_graph, initial_state
+
+graph = build_graph()
+result = graph.invoke(initial_state(), config={"recursion_limit": 20})
+print(result["answer"])
+assert result["revisions"] == 1
+assert len(result["events"]) == 6
+```
+
+`TypedDict` describes dictionary fields; `total=False` allows fields produced by later nodes to be absent initially. It does not supply defaults or runtime validation. `Annotated[list[str], add]` attaches a merge rule to the type: LangGraph concatenates event lists. Nodes must return only new events; returning the entire history duplicates earlier entries.
+
 ## 16. `invoke()` returns the accumulated state; `stream()` exposes the path as it runs
 
 A normal execution is:
 
 ```python
 result = graph.invoke(
-    initial_state,
+    initial_state(),
     config={"recursion_limit": 20},
 )
 ```
 
-The returned object contains the accumulated graph state.
+The returned object contains the accumulated graph state. This uses the imported `initial_state()` function from the preceding example; call it to obtain the initial dictionary.
 
 For learning and debugging, it is often useful to watch node updates:
 
 ```python
 for update in graph.stream(
-    initial_state,
+    initial_state(),
     stream_mode="updates",
+    config={"recursion_limit": 20},
 ):
     print(update)
 ```
@@ -837,6 +873,8 @@ You might see output shaped like:
 Streaming does not change the business logic. It only makes execution progress observable.
 
 ---
+
+Calling `stream()` and then `invoke()` starts two independent runs; it does not retrieve the same run twice. The offline demo compares both interfaces, while the live DeepSeek demo uses a single `stream()` to avoid duplicate requests and tool execution.
 
 ## 17. LangGraph's recursion limit serves the same kind of boundary as our max_steps
 
@@ -964,12 +1002,12 @@ pending calls -> tools
 otherwise -> END
 ```
 
-That is what [`code/langgraph_agent.py`](code/langgraph_agent.py) demonstrates.
+That is what the offline [`code/langgraph_scripted_agent.py`](code/langgraph_scripted_agent.py) demonstrates.
 
 Run it:
 
 ```bash
-python stages/03-stateful-orchestration/code/langgraph_agent.py
+python stages/03-stateful-orchestration/code/langgraph_scripted_agent.py
 ```
 
 The example uses a deterministic `ScriptedModel`. On the first turn it requests:
@@ -994,6 +1032,67 @@ Same mechanism as Stage 01, different orchestration representation.
 
 ---
 
+The builder now accepts `model`, defaulting to `ScriptedModel`. Any object implementing `generate(messages) -> ModelTurn` can reuse the same nodes and edges. Adding tools requires updating both the provider schema and tool-node argument validation.
+
+### 19.1 Run the same graph with DeepSeek
+
+The original Stage 03 used only scripted models. There is now a parallel, complete pair: [langgraph_scripted_agent.py](code/langgraph_scripted_agent.py) uses the offline `ScriptedModel`, while [langgraph_deepseek_agent.py](code/langgraph_deepseek_agent.py) uses a live DeepSeek model. Each file defines its own State, Nodes, Edges, Tool, and graph builder so you can compare them line by line. Install the dependencies from section 30, then configure and run from the repository root in the same terminal.
+
+Windows Command Prompt:
+
+```cmd
+set "DEEPSEEK_API_KEY=your-deepseek-api-key"
+set "DEEPSEEK_MODEL=deepseek-v4-flash"
+python stages/03-stateful-orchestration/code/langgraph_deepseek_agent.py
+```
+
+PowerShell:
+
+```powershell
+$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+python stages/03-stateful-orchestration/code/langgraph_deepseek_agent.py
+```
+
+Bash:
+
+```bash
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+python stages/03-stateful-orchestration/code/langgraph_deepseek_agent.py
+```
+
+Client creation follows. `required_env` is the helper in that file that rejects empty environment variables:
+
+```python
+from openai import OpenAI
+from langgraph_deepseek_agent import DeepSeekModel, required_env, build_agent_graph
+
+client = OpenAI(
+    api_key=required_env("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com",
+)
+model = DeepSeekModel(client=client, model=required_env("DEEPSEEK_MODEL"))
+graph = build_agent_graph(model=model, max_model_steps=4)
+```
+
+`api_key` is the DeepSeek credential, `base_url` selects the service address, and `model` selects an available model.
+
+As in Stage 01, the Adapter rebuilds the full input on each call: user messages, assistant `function_call` items, and `function_call_output` items paired by `call_id`. It sends only the state's messages, leaving control fields such as model_steps in the application. See the [DeepSeek Responses reference](https://api-docs.deepseek.com/guides/responses_api/).
+
+The offline demo has deterministic output:
+
+```text
+final_answer: 6 * 7 = 42
+model_steps: 2
+message roles: ['user', 'assistant', 'tool', 'assistant']
+```
+
+Live wording and turn counts may vary. Look for a model update requesting multiply, a tools update containing 42, then a final answer. At most four model calls are allowed; exhaustion returns an error that the live entry point raises. The separate `recursion_limit=20` counts graph super-steps, usually one node at a time in this sequential graph, rather than model calls.
+
+API errors, malformed JSON, unknown tools, and invalid arguments stop execution without automatic retries. Tool arguments must be exactly two finite numbers a and b; repeated call IDs are rejected. These checks preserve the execution boundary established in earlier chapters.
+
+
 ## 20. Converting a while loop into a graph does not change authority
 
 Inside the graph:
@@ -1009,9 +1108,37 @@ The model still only proposes what should happen next.
 Actual tool execution still occurs in:
 
 ```python
-def tool_node(state):
-    handler = TOOLS[call.name]
-    result = handler(**call.arguments)
+import math
+from typing import Any
+from langgraph_scripted_agent import AgentState, TOOLS
+
+def tool_node(state: AgentState) -> dict:
+    observations: list[dict[str, Any]] = []
+
+    for call in state.get("pending_tool_calls", []):
+        try:
+            handler = TOOLS[call.name]
+        except KeyError as exc:
+            raise RuntimeError(f"unknown tool: {call.name}") from exc
+
+        if set(call.arguments) != {"a", "b"} or any(
+            type(value) not in (int, float) or not math.isfinite(value)
+            for value in call.arguments.values()
+        ):
+            raise ValueError("multiply requires exactly two finite numbers: a, b")
+        result = handler(**call.arguments)
+        observations.append(
+            {
+                "role": "tool",
+                "tool_call_id": call.call_id,
+                "content": str(result),
+            }
+        )
+
+    return {
+        "messages": observations,
+        "pending_tool_calls": [],
+    }
 ```
 
 So:
@@ -1103,8 +1230,13 @@ It is also a very effective way to hide all semantics again.
 A better state exposes the fields that actually drive execution:
 
 ```python
+from operator import add
+from typing import Annotated, Any
+from typing_extensions import TypedDict
+from langgraph_scripted_agent import ToolCall
+
 class AgentState(TypedDict, total=False):
-    messages: list[dict]
+    messages: Annotated[list[dict[str, Any]], add]
     pending_tool_calls: list[ToolCall]
     final_answer: str | None
     error: str | None
@@ -1118,6 +1250,8 @@ That is one of the major benefits of explicit state: the execution model becomes
 A graph can have beautiful arrows and still have terrible state design.
 
 ---
+
+`messages` accumulates new messages; `pending_tool_calls` is replaced and cleared after execution. Appending pending calls could execute old calls again.
 
 ## 23. Prefer returned updates over secretly mutating the input state
 
@@ -1160,6 +1294,8 @@ assert update == {"count": 2}
 You can test node behavior without starting the whole graph.
 
 ---
+
+The handwritten engine uses `dict(state)`, a shallow copy: nested lists still share references. This is not an isolation sandbox. Return new lists instead of calling `append()` on input events or messages. These graphs keep state in the current process only; no checkpointer is configured, so restarting does not resume a run.
 
 ## 24. A conditional edge should not secretly perform the business action
 
@@ -1422,7 +1558,7 @@ python stages/03-stateful-orchestration/code/langgraph_workflow.py
 Run the graph-shaped ReAct example:
 
 ```bash
-python stages/03-stateful-orchestration/code/langgraph_agent.py
+python stages/03-stateful-orchestration/code/langgraph_scripted_agent.py
 ```
 
 Then run the offline checks:
@@ -1434,6 +1570,21 @@ python stages/03-stateful-orchestration/code/checks.py
 The checks cover partial updates, reducers, invalid conditional routes, cycle budgets, the handwritten revision loop, equivalent LangGraph workflow behavior, streaming updates, and the model/tool boundary in the ReAct graph.
 
 ---
+
+### Troubleshooting and file map
+
+| File | Purpose | Live model call |
+|---|---|---|
+| state_graph.py | Handwritten merge and transition engine | No |
+| langgraph_workflow.py | Same support flow in LangGraph | No |
+| langgraph_scripted_agent.py | Complete offline model → tools graph | No |
+| langgraph_deepseek_agent.py | Complete live DeepSeek model → tools graph | Yes |
+| checks.py | Offline regression checks | No |
+
+For missing modules, install requirements with the same Python interpreter used to run the script. Set environment variables in that same terminal; CMD's `set` and PowerShell's `$env:` are different syntax. For budget exhaustion, inspect the trace and stopping condition before increasing the limit.
+
+Framework reference: [LangGraph Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api). This chapter configures no persistence, concurrent scheduling, or automatic recovery; compilation does not prove business correctness.
+
 
 ## 31. Exercises: change control semantics, not just the labels
 
@@ -1456,7 +1607,7 @@ review
 
 Then intentionally remove the reducer from `events`, run the graph, and observe how accumulated history disappears. Restore it and explain why the field's meaning requires accumulation.
 
-Finally, modify `langgraph_agent.py` so the scripted model first calls `multiply`, then calls a new `add` tool, and only then returns a final answer. Do not change the graph topology.
+Finally, modify `langgraph_scripted_agent.py` so the scripted model first calls `multiply`, then calls a new `add` tool, and only then returns a final answer. Do not change the graph topology. Then make the matching Tool-schema and argument-validation changes in `langgraph_deepseek_agent.py`.
 
 If you can do that cleanly, you have understood an important benefit of the representation:
 

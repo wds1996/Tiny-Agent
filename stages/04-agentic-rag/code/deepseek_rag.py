@@ -21,6 +21,7 @@ def required_env(name: str) -> str:
 
 
 def create_client() -> Any:
+    """Create the OpenAI-compatible SDK client for DeepSeek's API."""
     try:
         from openai import OpenAI
     except ImportError as exc:
@@ -30,12 +31,18 @@ def create_client() -> Any:
             "stages/04-agentic-rag/code/requirements.txt"
         ) from exc
 
-    required_env("OPENAI_API_KEY")
-    return OpenAI()
+    return OpenAI(
+        api_key=required_env("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+    )
 
 
-class OpenAIAnswerer:
+class DeepSeekAnswerer:
+    """Generate an answer while keeping retrieved evidence as bounded input."""
+
     def __init__(self, *, client: Any, model: str) -> None:
+        if not model.strip():
+            raise ValueError("model must not be blank")
         self._client = client
         self._model = model
 
@@ -56,7 +63,7 @@ class OpenAIAnswerer:
         )
 
         if response.status != "completed" or not response.output_text.strip():
-            raise RuntimeError("The answer model did not return completed text output.")
+            raise RuntimeError("The DeepSeek model did not return completed text output.")
         return response.output_text.strip()
 
 
@@ -64,14 +71,17 @@ def main() -> None:
     retriever = InMemoryVectorRetriever(make_demo_corpus(), HashEmbeddingModel())
     rag = BasicRAG(
         retriever=retriever,
-        answer_generator=OpenAIAnswerer(
+        answer_generator=DeepSeekAnswerer(
             client=create_client(),
-            model=required_env("OPENAI_MODEL"),
+            model=required_env("DEEPSEEK_MODEL"),
         ),
     )
 
     result = rag.run("Why is Qdrant useful when metadata filters matter?", top_k=2)
-    print(result.answer)
+    print("status:", result.status)
+    print("answer:", result.answer)
+    print("\nevidence given to DeepSeek:")
+    print(format_evidence(result.evidence))
 
 
 if __name__ == "__main__":

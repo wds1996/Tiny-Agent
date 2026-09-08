@@ -1,3 +1,4 @@
+# DeepSeek is called through its OpenAI-compatible Python SDK.
 openai>=2,<3
 numpy>=1.26
 faiss-cpu>=1.9,<2

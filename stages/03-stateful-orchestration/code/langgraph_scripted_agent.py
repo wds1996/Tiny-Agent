@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from operator import add
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Protocol
+import math
 
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
@@ -19,6 +20,19 @@ class ToolCall:
 class ModelTurn:
     final_answer: str | None = None
     tool_calls: tuple[ToolCall, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (self.final_answer is not None) == bool(self.tool_calls):
+            raise ValueError("Return exactly one of final_answer or tool_calls")
+        if self.final_answer is not None and not self.final_answer.strip():
+            raise ValueError("final_answer must not be blank")
+        ids = [call.call_id for call in self.tool_calls]
+        if any(not value for value in ids) or len(set(ids)) != len(ids):
+            raise ValueError("Tool call IDs must be nonempty and unique")
+
+
+class Model(Protocol):
+    def generate(self, messages: list[dict[str, Any]]) -> ModelTurn: ...
 
 
 class AgentState(TypedDict, total=False):
@@ -56,8 +70,10 @@ TOOLS = {
 }
 
 
-def build_agent_graph(*, max_model_steps: int = 4):
-    model = ScriptedModel()
+def build_agent_graph(*, model: Model | None = None, max_model_steps: int = 4):
+    if max_model_steps < 1:
+        raise ValueError("max_model_steps must be positive")
+    model = model if model is not None else ScriptedModel()
 
     def model_node(state: AgentState) -> dict:
         steps = state.get("model_steps", 0)
@@ -69,6 +85,13 @@ def build_agent_graph(*, max_model_steps: int = 4):
             }
 
         turn = model.generate(state["messages"])
+        seen = {
+            message["tool_call_id"]
+            for message in state["messages"]
+            if message["role"] == "tool"
+        }
+        if any(call.call_id in seen for call in turn.tool_calls):
+            raise ValueError("Tool call IDs must not repeat across turns")
         update: dict[str, Any] = {
             "model_steps": steps + 1,
             "pending_tool_calls": list(turn.tool_calls),
@@ -117,6 +140,11 @@ def build_agent_graph(*, max_model_steps: int = 4):
             except KeyError as exc:
                 raise RuntimeError(f"unknown tool: {call.name}") from exc
 
+            if set(call.arguments) != {"a", "b"} or any(
+                type(value) not in (int, float) or not math.isfinite(value)
+                for value in call.arguments.values()
+            ):
+                raise ValueError("multiply requires exactly two finite numbers: a, b")
             result = handler(**call.arguments)
             observations.append(
                 {

@@ -526,7 +526,7 @@ Then run:
 python stages/01-react-runtime/code/deepseek_runtime.py
 ```
 
-The complete Adapter is in [`code/deepseek_runtime.py`](code/deepseek_runtime.py). The code still imports the compatible client from the `openai` package, but `base_url="https://api.deepseek.com"` and `DEEPSEEK_API_KEY` send the requests to DeepSeek; no OpenAI key is needed.
+The complete Adapter is in [`code/deepseek_runtime.py`](code/deepseek_runtime.py). The code still imports the compatible client from the `openai` package, but `base_url="https://api.deepseek.com"` and `DEEPSEEK_API_KEY` send the requests to DeepSeek.
 
 ```python
 class DeepSeekResponsesModel:

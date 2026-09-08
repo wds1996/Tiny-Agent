@@ -1,1 +1,4 @@
 langgraph>=1.2,<2
+# Compatible SDK; the live example sends requests to DeepSeek.
+openai>=2,<3
+typing_extensions>=4.12,<5

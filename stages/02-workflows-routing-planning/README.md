@@ -556,7 +556,7 @@ Budgets are not only about money. They define system behavior. The model may bel
 
 So far, `ScriptedSemanticRouter` and `ScriptedPlanner` make the examples reproducible. They are not language models.
 
-The real integration lives in [`code/deepseek_decisions.py`](code/deepseek_decisions.py). It requests structured decisions through DeepSeek's OpenAI-compatible API. The dependency is still called `openai`, but the API key and service address belong to DeepSeek, so no OpenAI key is required.
+The real integration lives in [`code/deepseek_decisions.py`](code/deepseek_decisions.py).
 
 Set:
 
