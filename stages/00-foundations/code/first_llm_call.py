@@ -16,18 +16,20 @@ def create_client() -> Any:
         from openai import OpenAI
     except ImportError as exc:
         raise RuntimeError(
-            "OpenAI SDK is not installed. Run:\n"
+            "The OpenAI-compatible Python SDK is not installed. Run:\n"
             "python -m pip install -r "
             "stages/00-foundations/code/requirements.txt"
         ) from exc
 
-    required_env("OPENAI_API_KEY")
-    return OpenAI()
+    return OpenAI(
+        api_key=required_env("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+    )
 
 
 def main() -> None:
     client = create_client()
-    model = required_env("OPENAI_MODEL")
+    model = required_env("DEEPSEEK_MODEL")
 
     response = client.responses.create(
         model=model,

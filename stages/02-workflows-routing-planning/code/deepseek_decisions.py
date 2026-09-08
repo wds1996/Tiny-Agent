@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from pydantic import ValidationError
+
 from planning import (
     Operation,
     Plan,
@@ -26,16 +28,18 @@ def create_client() -> Any:
         from openai import OpenAI
     except ImportError as exc:
         raise RuntimeError(
-            "OpenAI SDK is not installed. Run:\n"
+            "The OpenAI-compatible Python SDK is not installed. Run:\n"
             "python -m pip install -r "
             "stages/02-workflows-routing-planning/code/requirements.txt"
         ) from exc
 
-    required_env("OPENAI_API_KEY")
-    return OpenAI()
+    return OpenAI(
+        api_key=required_env("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+    )
 
 
-class OpenAISemanticRouter(SemanticRouter):
+class DeepSeekSemanticRouter(SemanticRouter):
     def __init__(self, *, client: Any, model: str) -> None:
         self.client = client
         self.model = model
@@ -60,7 +64,7 @@ class OpenAISemanticRouter(SemanticRouter):
         return response.output_parsed
 
 
-class OpenAIPlanner(Planner):
+class DeepSeekPlanner(Planner):
     def __init__(self, *, client: Any, model: str) -> None:
         self.client = client
         self.model = model
@@ -80,33 +84,58 @@ class OpenAIPlanner(Planner):
             )
         )
 
-        response = self.client.responses.parse(
-            model=self.model,
-            instructions=(
-                "Create a short executable plan using only these operations: "
-                f"{', '.join(operation.value for operation in Operation)}. "
-                "For the initial plan, read Tokyo with read_primary_weather. "
-                "If the observed failure says the primary source is unavailable, "
-                "use read_backup_weather instead. Then convert the weather step "
-                "with convert_temperature and finish with write_brief. "
-                "Use unique step_id values. A step may reference only earlier steps. "
-                "Keep the plan to at most five steps."
-            ),
-            input=f"Task: {task}\n{failure_text}",
-            text_format=Plan,
+        instructions = (
+            "Create a short executable plan using only these operations: "
+            f"{', '.join(operation.value for operation in Operation)}. "
+            "Return exactly three steps in this order: "
+            "(1) weather: read Tokyo with read_primary_weather, or with "
+            "read_backup_weather only after a primary-source failure; this step "
+            "uses city='Tokyo' and no source references. "
+            "(2) convert: convert_temperature; depends_on=['weather'] and "
+            "source_step='weather'; it has no city or conversion_step. "
+            "(3) brief: write_brief; depends_on=['weather', 'convert'], "
+            "source_step='weather', and conversion_step='convert'. "
+            "write_brief never has a city field: it receives the city through "
+            "source_step. Use these exact step_id values and do not add steps."
         )
+        input_text = f"Task: {task}\n{failure_text}"
+        validation_error: ValidationError | None = None
 
-        if response.status != "completed" or response.output_parsed is None:
-            raise RuntimeError("The planner did not return a valid Plan.")
+        for attempt in range(2):
+            retry_note = ""
+            if validation_error is not None:
+                retry_note = (
+                    "\nYour previous plan was rejected by the application validator: "
+                    f"{validation_error}. Return a corrected plan that follows the "
+                    "required step shapes exactly."
+                )
+            try:
+                response = self.client.responses.parse(
+                    model=self.model,
+                    instructions=instructions + retry_note,
+                    input=input_text,
+                    text_format=Plan,
+                )
+            except ValidationError as exc:
+                validation_error = exc
+                if attempt == 0:
+                    continue
+                raise RuntimeError(
+                    "The planner returned an invalid Plan after one corrective retry."
+                ) from exc
 
-        return response.output_parsed
+            if response.status != "completed" or response.output_parsed is None:
+                raise RuntimeError("The planner did not return a valid Plan.")
+            return response.output_parsed
+
+        raise AssertionError("unreachable")
 
 
 def main() -> None:
     client = create_client()
-    model = required_env("OPENAI_MODEL")
+    model = required_env("DEEPSEEK_MODEL")
 
-    router = HybridRouter(OpenAISemanticRouter(client=client, model=model))
+    router = HybridRouter(DeepSeekSemanticRouter(client=client, model=model))
     request = "I was charged twice and I do not know which team should handle it."
     routing = router.route(request)
 
@@ -119,7 +148,7 @@ def main() -> None:
     print("\n=== planning ===")
     answer = run_with_replanning(
         "Read Tokyo's teaching weather and report Celsius and Fahrenheit.",
-        planner=OpenAIPlanner(client=client, model=model),
+        planner=DeepSeekPlanner(client=client, model=model),
         executor=PlanExecutor(primary_available=False),
         max_replans=1,
     )

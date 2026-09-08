@@ -54,21 +54,23 @@ The examples use Python 3.10 or later. Install the chapter dependencies from the
 python -m pip install -r stages/00-foundations/code/requirements.txt
 ```
 
-Then configure an API key and a model available to your project:
+Then configure your DeepSeek API key and model. Create the key in the [DeepSeek platform](https://platform.deepseek.com/api_keys); this chapter uses DeepSeek's OpenAI-compatible endpoint.
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_MODEL="your-model-id"
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
 ```
 
 PowerShell:
 
 ```powershell
-$env:OPENAI_API_KEY="your-api-key"
-$env:OPENAI_MODEL="your-model-id"
+$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
 ```
 
-The examples deliberately avoid hard-coding a model name. Model catalogs and account permissions change. An explicit `OPENAI_MODEL` is less magical and easier to debug.
+`DEEPSEEK_MODEL` remains explicit because model catalogs and account permissions change. `deepseek-v4-flash` is the current example value; choose another DeepSeek model you can access when needed.
+
+The dependency is still named `openai` because DeepSeek officially supports that SDK's compatible API. The code creates the client with `DEEPSEEK_API_KEY` and `base_url="https://api.deepseek.com"`, so requests are sent to DeepSeek rather than OpenAI.
 
 Every example checks required environment variables near startup:
 
@@ -92,9 +94,17 @@ Run:
 python stages/00-foundations/code/first_llm_call.py
 ```
 
-The complete example is in [`code/first_llm_call.py`](code/first_llm_call.py). The central request is:
+The complete example is in [`code/first_llm_call.py`](code/first_llm_call.py). Here is client creation and request submission as one continuous example:
 
 ```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=required_env("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com",
+)
+model = required_env("DEEPSEEK_MODEL")
+
 response = client.responses.create(
     model=model,
     instructions=(
@@ -108,6 +118,19 @@ response = client.responses.create(
     ),
 )
 ```
+
+Although the imported class is named `OpenAI`, this client uses the DeepSeek service. DeepSeek provides a compatible API that works with the `openai` Python SDK; the `base_url` supplied when the client is created determines where requests are sent.
+
+Read the example as two steps. First, create a `client` that knows the service address and credential. Then call `client.responses.create(...)` to submit one model request.
+
+| Name | Meaning |
+|---|---|
+| `api_key` | The credential sent to the service. It is read from `DEEPSEEK_API_KEY` so the secret does not have to be stored in source code. |
+| `base_url` | The API service address. `https://api.deepseek.com` sends requests to DeepSeek. |
+| `model` | The model ID for this request, read from `DEEPSEEK_MODEL`. |
+| `instructions` | Application-level rules for the answer, such as role, style, and constraints. |
+| `input` | The question or data the model should process in this request. |
+| `response` | The response object returned by the service. It contains generated text as well as status, model, and token-usage metadata. |
 
 A common beginner mental model is “string in, string out.” That is close enough to get a demo running and imprecise enough to cause trouble later.
 
@@ -351,7 +374,6 @@ first = client.responses.create(
     ),
     tools=[WEATHER_TOOL],
     tool_choice={"type": "function", "name": "get_teaching_weather"},
-    parallel_tool_calls=False,
 )
 ```
 
@@ -437,7 +459,7 @@ Without IDs, you have two identical menu items and no table numbers.
 
 ### 4.6 The second model call finally sees the Observation
 
-The final request continues the previous provider response and supplies the Tool Output:
+DeepSeek's Responses API is stateless: it does not support `previous_response_id`. The final request therefore resends the user request, the Function Call, and its Tool Output:
 
 ```python
 final = client.responses.create(
@@ -446,8 +468,20 @@ final = client.responses.create(
         "Answer only from the returned function output. Make clear that this is "
         "a deterministic teaching record, not live weather."
     ),
-    previous_response_id=first.id,
     input=[
+        {
+            "role": "user",
+            "content": (
+                "Read Tokyo's deterministic teaching weather record and report "
+                "the temperature and condition."
+            ),
+        },
+        {
+            "type": "function_call",
+            "call_id": call.call_id,
+            "name": call.name,
+            "arguments": call.arguments,
+        },
         {
             "type": "function_call_output",
             "call_id": call.call_id,
@@ -459,10 +493,7 @@ final = client.responses.create(
 )
 ```
 
-The two identifiers solve different relationships:
-
-- `call_id` links a Tool Call to its Tool Output;
-- `previous_response_id` links one provider response to the response it continues.
+`call_id` links a Tool Call to its Tool Output. Because the API is stateless, the application explicitly includes the relevant earlier input items in every later request.
 
 The model can now answer from an Observation produced by application execution rather than from an unsupported guess.
 
@@ -482,7 +513,7 @@ application returns a Function Call Output
 model answers from the Observation
 ```
 
-Putting `call_id` and `previous_response_id` back onto the same timeline makes the relationships easier to see:
+The `call_id` shows which request the Tool Output belongs to:
 
 <p align="center">
   <img src="../../assets/en/stage00-02.png" alt="Tool Calling flow from request to Observation" width="60%" />
@@ -565,7 +596,7 @@ Finally, draw two calls to the same Tool on paper and erase their `call_id` valu
 
 ## 9. Before moving on, explain the execution path in your own words
 
-You should be able to answer these without reciting definitions: Why is `response.output_text` not the entire Response? Why do `instructions` and `input` have different provenance? Which kind of correctness does Structured Output actually enforce? At what exact line does a Function Call become Python execution? What relationships do `call_id` and `previous_response_id` represent? Why does a teaching example prefer deterministic weather over live weather?
+You should be able to answer these without reciting definitions: Why is `response.output_text` not the entire Response? Why do `instructions` and `input` have different provenance? Which kind of correctness does Structured Output actually enforce? At what exact line does a Function Call become Python execution? What does `call_id` link? Why does a stateless API require earlier input items to be sent again? Why does a teaching example prefer deterministic weather over live weather?
 
 If you can answer those by tracing the code, you are ready for the Runtime chapter.
 

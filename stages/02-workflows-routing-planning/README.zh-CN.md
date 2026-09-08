@@ -585,12 +585,31 @@ Budget 的价值也不只是省钱。它首先是在定义系统行为：**即�
 
 真正接入模型时，我们只替换“做语义判断”的部分，不改 Hybrid Router，不改 PlanExecutor，也不改 Budget。
 
+真实 Provider 集成位于 [`code/deepseek_decisions.py`](code/deepseek_decisions.py)。
+
 运行真实示例前设置：
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_MODEL="your-model-id"
-python stages/02-workflows-routing-planning/code/openai_decisions.py
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+PowerShell：
+
+```powershell
+$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+Windows CMD：
+
+```cmd
+set "DEEPSEEK_API_KEY=your-deepseek-api-key"
+set "DEEPSEEK_MODEL=deepseek-v4-flash"
+```
+
+```bash
+python stages/02-workflows-routing-planning/code/deepseek_decisions.py
 ```
 
 Router 使用 Structured Output：
@@ -622,9 +641,11 @@ response = self.client.responses.parse(
 )
 ```
 
+真实模型偶尔会生成 JSON 合法、但违反业务约束的 Plan，例如给 `write_brief` 额外传入 `city`。`Plan` 验证器会拒绝它；DeepSeek Adapter 会把验证错误带入一次受限的纠正请求，要求模型只修正 Plan。第二次仍不符合约束就报错，不会无限重试。这样既保留了“使用前验证”的边界，也让偶发的结构失误有一次明确、可观察的恢复机会。
+
 这就是 Provider Adapter 在本章最重要的意义：模型负责语义工作，但核心控制代码只认识 `RouteDecision` 和 `Plan`。
 
-换句话说，我们不是让 OpenAI Response 对象一路渗透到业务控制逻辑，而是尽快把它翻译成应用自己的数据结构。
+换句话说，我们不是让 DeepSeek Response 对象一路渗透到业务控制逻辑，而是尽快把它翻译成应用自己的数据结构。
 
 ---
 

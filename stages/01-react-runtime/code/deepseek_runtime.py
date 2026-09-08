@@ -23,20 +23,22 @@ def create_client() -> Any:
         from openai import OpenAI
     except ImportError as exc:
         raise RuntimeError(
-            "OpenAI SDK is not installed. Run:\n"
+            "The OpenAI-compatible Python SDK is not installed. Run:\n"
             "python -m pip install -r "
             "stages/01-react-runtime/code/requirements.txt"
         ) from exc
 
-    required_env("OPENAI_API_KEY")
-    return OpenAI()
+    return OpenAI(
+        api_key=required_env("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+    )
 
 
-class OpenAIResponsesModel:
-    """Translate between the chapter runtime and the OpenAI Responses API.
+class DeepSeekResponsesModel:
+    """Translate between the chapter runtime and the DeepSeek Responses API.
 
-    One adapter instance represents one run. It chains provider responses with
-    previous_response_id and sends only newly produced tool outputs on later turns.
+    DeepSeek's Responses API is stateless, so every request is rebuilt from the
+    complete transcript maintained by AgentRuntime.
     """
 
     def __init__(
@@ -54,35 +56,24 @@ class OpenAIResponsesModel:
         self.model = model
         self.client = client if client is not None else create_client()
         self.instructions = instructions
-        self._previous_response_id: str | None = None
-        self._submitted_tool_call_ids: set[str] = set()
 
     def generate(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> ModelTurn:
-        input_items, pending_call_ids = self._next_input(messages)
-
         request: dict[str, Any] = {
             "model": self.model,
             "instructions": self.instructions,
-            "input": input_items,
-            "tools": [self._to_openai_tool(tool) for tool in tools],
-            "parallel_tool_calls": False,
+            "input": self._to_deepseek_input(messages),
+            "tools": [self._to_deepseek_tool(tool) for tool in tools],
         }
-        if self._previous_response_id is not None:
-            request["previous_response_id"] = self._previous_response_id
 
         response = self.client.responses.create(**request)
         if response.status != "completed":
             raise ProviderResponseError(
                 f"The provider response did not complete: {response.status}"
             )
-
-        response_id = getattr(response, "id", None)
-        if not isinstance(response_id, str) or not response_id.strip():
-            raise ProviderResponseError("The provider response has no valid ID")
 
         calls = self._extract_tool_calls(response)
         if calls:
@@ -95,50 +86,53 @@ class OpenAIResponsesModel:
                 )
             turn = ModelTurn(final_text=text)
 
-        self._previous_response_id = response_id
-        self._submitted_tool_call_ids.update(pending_call_ids)
         return turn
 
-    def _next_input(
-        self, messages: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], set[str]]:
-        if self._previous_response_id is None:
-            initial = [
-                {"role": message["role"], "content": message.get("content", "")}
-                for message in messages
-                if message.get("role") in {"system", "developer", "user"}
-            ]
-            if not initial:
-                raise ProviderResponseError("The first provider turn needs user input")
-            return initial, set()
-
-        outputs: list[dict[str, Any]] = []
-        pending_call_ids: set[str] = set()
+    @staticmethod
+    def _to_deepseek_input(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        input_items: list[dict[str, Any]] = []
         for message in messages:
-            if message.get("role") != "tool":
+            role = message.get("role")
+            if role in {"system", "developer", "user"}:
+                input_items.append(
+                    {"role": role, "content": str(message.get("content", ""))}
+                )
                 continue
 
-            call_id = str(message.get("tool_call_id", ""))
-            if not call_id or call_id in self._submitted_tool_call_ids:
+            if role == "assistant":
+                content = str(message.get("content", ""))
+                if content:
+                    input_items.append({"role": "assistant", "content": content})
+                for call in message.get("tool_calls", []):
+                    input_items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": str(call["call_id"]),
+                            "name": str(call["name"]),
+                            "arguments": json.dumps(
+                                call["arguments"], ensure_ascii=False
+                            ),
+                        }
+                    )
                 continue
 
-            outputs.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": str(message.get("content", "")),
-                }
-            )
-            pending_call_ids.add(call_id)
+            if role == "tool":
+                input_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": str(message.get("tool_call_id", "")),
+                        "output": str(message.get("content", "")),
+                    }
+                )
 
-        if not outputs:
-            raise ProviderResponseError(
-                "A continued provider turn needs at least one new tool output"
-            )
-        return outputs, pending_call_ids
+        if not input_items:
+            raise ProviderResponseError("The provider turn needs at least one input")
+        return input_items
 
     @staticmethod
-    def _to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
+    def _to_deepseek_tool(tool: dict[str, Any]) -> dict[str, Any]:
         return {
             "type": "function",
             "name": tool["name"],
@@ -176,7 +170,7 @@ class OpenAIResponsesModel:
 
 
 def main() -> None:
-    model = OpenAIResponsesModel(model=required_env("OPENAI_MODEL"))
+    model = DeepSeekResponsesModel(model=required_env("DEEPSEEK_MODEL"))
     runtime = AgentRuntime(
         model=model,
         tools=build_tools(),

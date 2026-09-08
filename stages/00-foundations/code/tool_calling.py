@@ -45,13 +45,15 @@ def create_client() -> Any:
         from openai import OpenAI
     except ImportError as exc:
         raise RuntimeError(
-            "OpenAI SDK is not installed. Run:\n"
+            "The OpenAI-compatible Python SDK is not installed. Run:\n"
             "python -m pip install -r "
             "stages/00-foundations/code/requirements.txt"
         ) from exc
 
-    required_env("OPENAI_API_KEY")
-    return OpenAI()
+    return OpenAI(
+        api_key=required_env("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+    )
 
 
 def get_teaching_weather(city: str) -> dict[str, Any]:
@@ -85,7 +87,7 @@ def validate_weather_arguments(arguments: dict[str, Any]) -> str:
 
 def main() -> None:
     client = create_client()
-    model = required_env("OPENAI_MODEL")
+    model = required_env("DEEPSEEK_MODEL")
 
     first = client.responses.create(
         model=model,
@@ -100,7 +102,6 @@ def main() -> None:
         ),
         tools=[WEATHER_TOOL],
         tool_choice={"type": "function", "name": "get_teaching_weather"},
-        parallel_tool_calls=False,
     )
 
     if first.status != "completed":
@@ -129,8 +130,20 @@ def main() -> None:
             "Answer only from the returned function output. Make clear that this is "
             "a deterministic teaching record, not live weather."
         ),
-        previous_response_id=first.id,
         input=[
+            {
+                "role": "user",
+                "content": (
+                    "Read Tokyo's deterministic teaching weather record and report "
+                    "the temperature and condition."
+                ),
+            },
+            {
+                "type": "function_call",
+                "call_id": call.call_id,
+                "name": call.name,
+                "arguments": call.arguments,
+            },
             {
                 "type": "function_call_output",
                 "call_id": call.call_id,

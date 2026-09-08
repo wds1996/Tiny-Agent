@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from pydantic import ValidationError
 
@@ -13,6 +14,7 @@ from planning import (
     StepFailure,
     run_with_replanning,
 )
+from deepseek_decisions import DeepSeekPlanner
 from routing import (
     HybridRouter,
     Route,
@@ -40,7 +42,65 @@ class FixedSemanticRouter(SemanticRouter):
         )
 
 
+class PlannerResponsesAPI:
+    def __init__(self) -> None:
+        self.requests: list[dict[str, object]] = []
+
+    def parse(self, **request: object) -> object:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return SimpleNamespace(
+                status="completed",
+                output_parsed=Plan.model_validate(
+                    {
+                        "goal": "weather",
+                        "steps": [
+                            {
+                                "step_id": "weather",
+                                "operation": "read_primary_weather",
+                                "city": "Tokyo",
+                            },
+                            {
+                                "step_id": "convert",
+                                "operation": "convert_temperature",
+                                "depends_on": ["weather"],
+                                "source_step": "weather",
+                            },
+                            {
+                                "step_id": "brief",
+                                "operation": "write_brief",
+                                "depends_on": ["weather", "convert"],
+                                "source_step": "weather",
+                                "conversion_step": "convert",
+                                "city": "Tokyo",
+                            },
+                        ],
+                    }
+                ),
+            )
+
+        return SimpleNamespace(
+            status="completed",
+            output_parsed=ScriptedPlanner().make_plan("weather"),
+        )
+
+
 class Stage02Checks(unittest.TestCase):
+    def test_deepseek_planner_retries_a_schema_invalid_plan_once(self) -> None:
+        responses = PlannerResponsesAPI()
+        planner = DeepSeekPlanner(
+            client=SimpleNamespace(responses=responses), model="test-model"
+        )
+
+        plan = planner.make_plan("weather")
+
+        self.assertEqual(plan.steps[-1].step_id, "brief")
+        self.assertEqual(len(responses.requests), 2)
+        self.assertIn(
+            "previous plan was rejected",
+            str(responses.requests[1]["instructions"]),
+        )
+
     def test_explicit_rule_bypasses_semantic_router(self) -> None:
         router = HybridRouter(FailIfCalledRouter())
         result = router.route("weather: Tokyo")

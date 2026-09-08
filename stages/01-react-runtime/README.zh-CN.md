@@ -548,27 +548,41 @@ self.assertEqual(
 
 ## 10. 最后再接真实 Provider：Adapter 只做翻译
 
-现在核心 Runtime 已经能离线工作，我们再把 OpenAI Responses API 接进来。
+现在核心 Runtime 已经能离线工作，我们再把 DeepSeek Responses API 接进来。
 
 运行前配置：
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_MODEL="your-model-id"
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+PowerShell：
+
+```powershell
+$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+Windows CMD：
+
+```cmd
+set "DEEPSEEK_API_KEY=your-deepseek-api-key"
+set "DEEPSEEK_MODEL=deepseek-v4-flash"
 ```
 
 然后执行：
 
 ```bash
-python stages/01-react-runtime/code/openai_runtime.py
+python stages/01-react-runtime/code/deepseek_runtime.py
 ```
 
-完整代码在 [`code/openai_runtime.py`](code/openai_runtime.py)。
+完整代码在 [`code/deepseek_runtime.py`](code/deepseek_runtime.py)。虽然代码仍从 `openai` 包导入兼容客户端，但 `base_url="https://api.deepseek.com"` 和 `DEEPSEEK_API_KEY` 决定了请求实际发往 DeepSeek。
 
 关键类是：
 
 ```python
-class OpenAIResponsesModel:
+class DeepSeekResponsesModel:
     ...
 ```
 
@@ -579,9 +593,9 @@ Adapter 做的事情大致是三种翻译：
 ```text
 Runtime Tool schema
       ↓
-OpenAI function tool
+DeepSeek function tool
 
-OpenAI function_call
+DeepSeek function_call
       ↓
 ToolCall
 
@@ -592,53 +606,37 @@ function_call_output
 
 核心 Runtime 不需要 import Provider SDK，也不需要知道 `response.output` 里是什么对象。这就是 Adapter 的价值：不是“为了面向对象多写一个类”，而是把容易变化的外部协议挡在核心控制逻辑外面。
 
-### 10.1 为什么 Adapter 保存 `previous_response_id`
+### 10.1 为什么 Adapter 每轮都发送完整轨迹
 
-第一次 Provider Response 如果包含 Tool Call，工具执行以后，下一轮需要继续同一条响应链。
+DeepSeek 的 Responses API 是无状态的，不支持用 `previous_response_id` 继续上一份响应。因此，对话状态必须由应用程序保存，并在下一次请求时重新发送。
 
-Adapter 保存：
-
-```python
-self._previous_response_id: str | None = None
-```
-
-后续请求会带上：
+Runtime 已经在 `messages` 中保存了完整轨迹，所以 Adapter 每轮都会调用：
 
 ```python
-request["previous_response_id"] = self._previous_response_id
+self._to_deepseek_input(messages)
 ```
 
-这样 Provider 可以理解“这次 Tool Output 是在继续上一轮”。
+把内部消息转换成 DeepSeek 接受的输入项：
 
-因此当前 `OpenAIResponsesModel` 实例实际上带有 run 级状态。教程会明确约定：**一个 Adapter 实例只服务一条 Runtime run。** 如果你拿同一个实例处理两个完全无关的用户任务，它可能把第二个任务接到第一个响应后面。
-
-这不是“所有 Adapter 永远都必须这样设计”，只是当前代码的真实规格。高质量教程应该把这种限制说出来，而不是等读者踩到以后再解释。
-
-### 10.2 为什么只发送“新的” Tool Output
-
-Runtime 的 `messages` 保存整条轨迹。第二轮、第三轮以后，旧的 Tool Output 仍然留在里面。
-
-如果 Adapter 每轮都把所有 Tool Output 重发，Provider 会再次收到之前已经提交过的结果。于是 Adapter 维护：
-
-```python
-self._submitted_tool_call_ids: set[str] = set()
+```text
+Runtime user message       → DeepSeek user message
+Runtime assistant ToolCall → DeepSeek function_call
+Runtime tool observation   → DeepSeek function_call_output
 ```
 
-只有新的 Tool Output 才进入下一次 Provider 请求。
+这样第二轮请求同时包含最初的用户问题、模型提出的 Function Call 和 Python 执行得到的 Tool Output。DeepSeek 可以从这些输入恢复完整上下文。
 
-这个细节看起来很小，其实正好说明 Provider Adapter 为什么值得单独存在：Runtime 关心的是“我有一条 Tool Observation”；Provider 关心的是“这个 Observation 用什么 wire format、是否已经提交过、怎样继续上一份 Response”。两边的问题不一样。
+这正好印证前文的说法：**不是模型自己记住了轨迹，而是应用记录轨迹，并在下一轮重新提供给模型。**
 
-### 10.3 为什么真实示例关闭 parallel tool calls
+### 10.2 为什么不能只发送最新的 Tool Output
 
-Adapter 设置：
+如果第二轮只发送最新的 `function_call_output`，无状态的 Provider 并不知道它对应哪个函数，也看不到用户原来的问题。因此 Adapter 必须连同对应的 `function_call` 和更早的相关输入一起发送。
 
-```python
-"parallel_tool_calls": False,
-```
+这种设计也让状态归属非常明确：Runtime 保存 Provider 无关的 `messages`；Adapter 只负责把它们转换成外部 API 的 wire format。
 
-不是因为 Runtime 永远只能处理一个 Tool Call，而是因为本章想让真实 Provider 示例保持单线、好观察。内部 `ModelTurn` 仍然允许多个 `ToolCall`。
+### 10.3 多个 Tool Call 怎样处理
 
-这是教学代码很重要的一种取舍：**别为了展示“我什么都支持”而一次把所有复杂度打开。** 先让一条轨迹清楚，再扩展并发，比一开始就把失败顺序、共享副作用和取消语义全混进来更容易学明白。
+DeepSeek 可能在一轮中返回多个 Tool Call。内部 `ModelTurn` 能保存多个调用，当前 Runtime 会按返回顺序逐个执行。这里的“模型可以一次提出多个调用”和“Python 是否并发执行它们”仍然是两件不同的事。
 
 ---
 
@@ -688,7 +686,7 @@ stages/01-react-runtime/
 ├── README.zh-CN.md
 └── code/
     ├── runtime.py
-    ├── openai_runtime.py
+    ├── deepseek_runtime.py
     ├── runtime_checks.py
     └── requirements.txt
 ```

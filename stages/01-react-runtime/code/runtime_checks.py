@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from typing import Any
 
-from openai_runtime import OpenAIResponsesModel
+from deepseek_runtime import DeepSeekResponsesModel
 from runtime import (
     AgentRuntime,
     InvalidModelTurnError,
@@ -234,10 +234,10 @@ class RuntimeChecks(unittest.TestCase):
         with self.assertRaises(MaxStepsExceeded):
             runtime.run("keep going")
 
-    def test_openai_adapter_chains_and_sends_only_new_tool_output(self) -> None:
+    def test_deepseek_adapter_resends_the_complete_transcript(self) -> None:
         fake_api = FakeResponsesAPI()
         fake_client = SimpleNamespace(responses=fake_api)
-        adapter = OpenAIResponsesModel(model="test-model", client=fake_client)
+        adapter = DeepSeekResponsesModel(model="test-model", client=fake_client)
         schemas = [tool.schema() for tool in build_tools()]
 
         first_turn = adapter.generate(
@@ -253,6 +253,17 @@ class RuntimeChecks(unittest.TestCase):
             [
                 {"role": "user", "content": "Read Tokyo's teaching weather."},
                 {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "call_id": "call-weather",
+                            "name": "get_teaching_weather",
+                            "arguments": {"city": "Tokyo"},
+                        }
+                    ],
+                },
+                {
                     "role": "tool",
                     "tool_call_id": "call-weather",
                     "name": "get_teaching_weather",
@@ -267,10 +278,17 @@ class RuntimeChecks(unittest.TestCase):
             "The teaching record says 18°C and cloudy.",
         )
         second_request = fake_api.requests[1]
-        self.assertEqual(second_request["previous_response_id"], "response-1")
+        self.assertNotIn("previous_response_id", second_request)
         self.assertEqual(
             second_request["input"],
             [
+                {"role": "user", "content": "Read Tokyo's teaching weather."},
+                {
+                    "type": "function_call",
+                    "call_id": "call-weather",
+                    "name": "get_teaching_weather",
+                    "arguments": '{"city": "Tokyo"}',
+                },
                 {
                     "type": "function_call_output",
                     "call_id": "call-weather",

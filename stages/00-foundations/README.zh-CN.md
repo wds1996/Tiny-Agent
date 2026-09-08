@@ -53,21 +53,23 @@ Python 读取响应
 python -m pip install -r stages/00-foundations/code/requirements.txt
 ```
 
-然后配置 API Key 和你项目中可用的模型：
+然后配置 DeepSeek 的 API Key 和模型。在 [DeepSeek 平台](https://platform.deepseek.com/api_keys) 创建 Key；本章通过 DeepSeek 的 OpenAI 兼容接口调用模型：
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_MODEL="your-model-id"
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
 ```
 
 PowerShell 对应写法是：
 
 ```powershell
-$env:OPENAI_API_KEY="your-api-key"
-$env:OPENAI_MODEL="your-model-id"
+$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
 ```
 
-示例故意不把模型名称写死。教程最怕的事情之一，就是正文说得云淡风轻，读者复制代码以后发现“这个模型我根本没有权限”。把 `OPENAI_MODEL` 作为显式配置，反而更诚实。
+模型目录和账户权限会变化，所以示例仍把 `DEEPSEEK_MODEL` 作为显式配置。`deepseek-v4-flash` 是当前示例值；如需其他模型，请改为你账户可用的 DeepSeek 模型。
+
+依赖包仍叫 `openai`，是因为 DeepSeek 官方支持使用这个兼容 SDK。代码会使用 `DEEPSEEK_API_KEY` 和 `base_url="https://api.deepseek.com"` 创建客户端，因此请求实际发往 DeepSeek，而不是 OpenAI。
 
 三个示例都会先检查环境变量：
 
@@ -91,9 +93,17 @@ def required_env(name: str) -> str:
 python stages/00-foundations/code/first_llm_call.py
 ```
 
-完整程序在 [`code/first_llm_call.py`](code/first_llm_call.py)。我们先只看最核心的调用：
+完整程序在 [`code/first_llm_call.py`](code/first_llm_call.py)。下面把创建客户端和发送请求连在一起看：
 
 ```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=required_env("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com",
+)
+model = required_env("DEEPSEEK_MODEL")
+
 response = client.responses.create(
     model=model,
     instructions=(
@@ -107,6 +117,19 @@ response = client.responses.create(
     ),
 )
 ```
+
+虽然导入的类叫 `OpenAI`，这里使用的是 DeepSeek 服务。原因是 DeepSeek 提供了兼容接口，可以直接复用 `openai` Python SDK；真正决定请求发往哪里的，是创建客户端时传入的 `base_url`。
+
+这几行代码可以分成两步理解：先创建一个知道“向哪里发送请求、用什么凭证”的 `client`，再调用 `client.responses.create(...)` 发起一次模型请求。
+
+| 名称 | 含义 |
+|---|---|
+| `api_key` | 调用服务时使用的身份凭证。这里从 `DEEPSEEK_API_KEY` 环境变量读取，避免把密钥写进代码。 |
+| `base_url` | API 服务地址。`https://api.deepseek.com` 表示请求发送给 DeepSeek。 |
+| `model` | 本次调用使用的模型 ID，从 `DEEPSEEK_MODEL` 环境变量读取。 |
+| `instructions` | 应用程序给模型的回答规则，例如角色、风格和限制。 |
+| `input` | 这一次真正交给模型处理的问题或数据。 |
+| `response` | 服务返回的响应对象，其中既有生成文本，也有状态、模型名称和 Token 用量等信息。 |
 
 第一次看到这种调用时，很多人会下意识把它理解成：
 
@@ -367,11 +390,10 @@ first = client.responses.create(
     ),
     tools=[WEATHER_TOOL],
     tool_choice={"type": "function", "name": "get_teaching_weather"},
-    parallel_tool_calls=False,
 )
 ```
 
-这里我们故意用 `tool_choice` 强制走一遍 Tool Call 流程，因为这一章要观察机制，而不是观察模型“今天愿不愿意主动调用”。`parallel_tool_calls=False` 也把轨迹保持成单线，方便第一次学习。
+这里我们故意用 `tool_choice` 强制走一遍 Tool Call 流程，因为这一章要观察机制，而不是观察模型“今天愿不愿意主动调用”。
 
 模型返回 Function Call 以后，Python 函数还没有执行。此时发生的只是：
 
@@ -445,7 +467,7 @@ call_B → get_teaching_weather(Paris)
 
 ### 4.6 第二次模型调用，才真正拿到了 Observation
 
-第二轮这样继续：
+DeepSeek 的 Responses API 是无状态的，不支持 `previous_response_id`。所以第二轮需要重新带上用户请求、Function Call 和它的 Tool Output：
 
 ```python
 final = client.responses.create(
@@ -454,8 +476,20 @@ final = client.responses.create(
         "Answer only from the returned function output. Make clear that this is "
         "a deterministic teaching record, not live weather."
     ),
-    previous_response_id=first.id,
     input=[
+        {
+            "role": "user",
+            "content": (
+                "Read Tokyo's deterministic teaching weather record and report "
+                "the temperature and condition."
+            ),
+        },
+        {
+            "type": "function_call",
+            "call_id": call.call_id,
+            "name": call.name,
+            "arguments": call.arguments,
+        },
         {
             "type": "function_call_output",
             "call_id": call.call_id,
@@ -467,10 +501,7 @@ final = client.responses.create(
 )
 ```
 
-这里有两个 ID，别混：
-
-- `call_id` 关联的是 Tool Call 和它的 Tool Output；
-- `previous_response_id` 关联的是这次模型响应和上一份 Provider Response。
+`call_id` 用来关联 Tool Call 和它的 Tool Output。由于 API 无状态，应用程序必须在后续请求中显式带上相关的历史输入项。
 
 这一轮模型终于看到了 Python 执行后的真实结果，于是可以根据 Observation 生成最终文字。
 
@@ -490,7 +521,7 @@ final = client.responses.create(
 模型根据 Observation 回答
 ```
 
-如果把 `call_id` 和 `previous_response_id` 也放回这条时间线里，关系会更直观：
+把 `call_id` 放回这条时间线里，Tool Output 的归属关系会更直观：
 
 <p align="center">
   <img src="../../assets/stage00-02.png" alt="Tool Calling 从请求到 Observation 的完整流程" width="70%" />
@@ -577,7 +608,7 @@ while run_not_finished:
 
 ## 9. 本章结束前，自己回答这几个问题
 
-不用背术语，沿着程序执行顺序回答就行：为什么 `response.output_text` 不是整个 Response？`instructions` 和 `input` 的来源有什么不同？Structured Output 到底保证了哪一层正确性？Function Call 在哪一行代码之后才真正变成 Python 执行？`call_id` 和 `previous_response_id` 分别解决什么关联问题？为什么教学示例宁愿用固定天气，也不急着接真实天气 API？
+不用背术语，沿着程序执行顺序回答就行：为什么 `response.output_text` 不是整个 Response？`instructions` 和 `input` 的来源有什么不同？Structured Output 到底保证了哪一层正确性？Function Call 在哪一行代码之后才真正变成 Python 执行？`call_id` 关联的是什么？无状态 API 为什么要再次发送历史输入项？为什么教学示例宁愿用固定天气，也不急着接真实天气 API？
 
 如果这些问题你都能顺着代码讲明白，就可以进入下一章。
 

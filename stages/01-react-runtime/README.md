@@ -497,25 +497,39 @@ A useful rule of thumb is: if you cannot write a deterministic counterexample fo
 
 ## 10. Only now connect a real Provider
 
-Once the core Runtime works offline, we can attach the OpenAI Responses API without modifying `AgentRuntime.run()`.
+Once the core Runtime works offline, we can attach the DeepSeek Responses API without modifying `AgentRuntime.run()`.
 
 Configure:
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_MODEL="your-model-id"
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+PowerShell:
+
+```powershell
+$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+Windows Command Prompt:
+
+```cmd
+set "DEEPSEEK_API_KEY=your-deepseek-api-key"
+set "DEEPSEEK_MODEL=deepseek-v4-flash"
 ```
 
 Then run:
 
 ```bash
-python stages/01-react-runtime/code/openai_runtime.py
+python stages/01-react-runtime/code/deepseek_runtime.py
 ```
 
-The complete Adapter is in [`code/openai_runtime.py`](code/openai_runtime.py). The key class is:
+The complete Adapter is in [`code/deepseek_runtime.py`](code/deepseek_runtime.py). The code still imports the compatible client from the `openai` package, but `base_url="https://api.deepseek.com"` and `DEEPSEEK_API_KEY` send the requests to DeepSeek; no OpenAI key is needed.
 
 ```python
-class OpenAIResponsesModel:
+class DeepSeekResponsesModel:
     ...
 ```
 
@@ -526,9 +540,9 @@ Its job is translation:
 ```text
 Runtime Tool schema
       ↓
-OpenAI function Tool
+DeepSeek function Tool
 
-OpenAI function_call
+DeepSeek function_call
       ↓
 ToolCall
 
@@ -539,53 +553,37 @@ function_call_output
 
 The core Runtime does not import the provider SDK or inspect provider-specific output objects. That is the real value of the Adapter. It is not “another class for architecture points”; it is a boundary that keeps unstable external protocol details from spreading into the control loop.
 
-### 10.1 Why the Adapter remembers `previous_response_id`
+### 10.1 Why the Adapter sends the complete transcript every turn
 
-After the first provider response contains a Tool Call, the next request must continue the same provider conversation chain.
+DeepSeek's Responses API is stateless and does not support continuing a response with `previous_response_id`. The application must retain the conversation state and send it again with the next request.
 
-The Adapter stores:
-
-```python
-self._previous_response_id: str | None = None
-```
-
-and later sends:
+The Runtime already retains the complete trajectory in `messages`, so the Adapter calls:
 
 ```python
-request["previous_response_id"] = self._previous_response_id
+self._to_deepseek_input(messages)
 ```
 
-That means the current Adapter instance carries run-level state. In this teaching implementation, one Adapter instance belongs to one Runtime run. Reusing it for unrelated user tasks could accidentally chain the second task onto the first provider response.
+to translate the internal transcript:
 
-That is not a universal law about Adapters. It is the actual behavior of this implementation, and the tutorial should tell you so plainly.
-
-### 10.2 Why only new Tool Outputs are submitted
-
-The Runtime transcript contains the whole trajectory. Old Tool observations remain in `messages` on later turns.
-
-The Provider should not receive the same `function_call_output` repeatedly, so the Adapter tracks submitted IDs:
-
-```python
-self._submitted_tool_call_ids: set[str] = set()
+```text
+Runtime user message       → DeepSeek user message
+Runtime assistant ToolCall → DeepSeek function_call
+Runtime tool observation   → DeepSeek function_call_output
 ```
 
-Only new Tool Outputs are sent in the next request.
+The second request therefore contains the original user question, the Function Call proposed by the model, and the Tool Output produced by Python. DeepSeek can reconstruct the full context from those input items.
 
-This tiny detail illustrates why the Adapter boundary matters. The Runtime thinks in terms of “the run has an Observation.” The Provider cares about wire format, continuation IDs, and whether that Observation has already been submitted. Those are different concerns.
+This directly supports an earlier point: **the model does not privately remember the trajectory; the application records it and supplies it again.** The Adapter no longer keeps a provider response ID and can handle independent Runtime runs safely.
 
-### 10.3 Why the live example disables parallel Tool Calls
+### 10.2 Why the latest Tool Output is not enough
 
-The Adapter sends:
+If the second request contained only the latest `function_call_output`, a stateless provider would not know which Function Call it belongs to or what the user originally asked. The Adapter must include the matching `function_call` and the earlier relevant input.
 
-```python
-"parallel_tool_calls": False,
-```
+This makes state ownership explicit. The Runtime retains provider-neutral `messages`; the Adapter only converts them to the external API's wire format.
 
-This is a teaching choice, not a claim that the Runtime can only represent one call. `ModelTurn` still supports multiple `ToolCall` objects.
+### 10.3 How multiple Tool Calls are handled
 
-For the live example, a single-line trajectory is easier to inspect. Turning on concurrency would introduce execution ordering, shared side effects, cancellation, and partial failure before we have a reason to teach them.
-
-Good teaching code should not enable every feature merely to prove the features exist.
+DeepSeek may return more than one Tool Call in a turn. `ModelTurn` can hold all of them, and the current Runtime executes them one by one in response order. A model proposing several calls at once and Python executing those calls concurrently remain separate engineering decisions.
 
 ---
 
@@ -637,7 +635,7 @@ stages/01-react-runtime/
 ├── README.zh-CN.md
 └── code/
     ├── runtime.py
-    ├── openai_runtime.py
+    ├── deepseek_runtime.py
     ├── runtime_checks.py
     └── requirements.txt
 ```

@@ -556,14 +556,28 @@ Budgets are not only about money. They define system behavior. The model may bel
 
 So far, `ScriptedSemanticRouter` and `ScriptedPlanner` make the examples reproducible. They are not language models.
 
-The real integration lives in `openai_decisions.py`.
+The real integration lives in [`code/deepseek_decisions.py`](code/deepseek_decisions.py). It requests structured decisions through DeepSeek's OpenAI-compatible API. The dependency is still called `openai`, but the API key and service address belong to DeepSeek, so no OpenAI key is required.
 
 Set:
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_MODEL="your-model-id"
-python stages/02-workflows-routing-planning/code/openai_decisions.py
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+python stages/02-workflows-routing-planning/code/deepseek_decisions.py
+```
+
+PowerShell:
+
+```powershell
+$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+Windows Command Prompt:
+
+```cmd
+set "DEEPSEEK_API_KEY=your-deepseek-api-key"
+set "DEEPSEEK_MODEL=deepseek-v4-flash"
 ```
 
 The Router requests a structured `RouteDecision`:
@@ -594,6 +608,8 @@ response = self.client.responses.parse(
     text_format=Plan,
 )
 ```
+
+A live model can occasionally return JSON that is syntactically valid but breaks a business constraint, such as passing `city` directly to `write_brief`. The `Plan` validator rejects it. The DeepSeek Adapter sends that validation error in one bounded correction request and asks the model to repair only the Plan. A second invalid result raises an error rather than retrying indefinitely. This preserves the validation boundary while giving an occasional structural mistake one explicit, observable recovery attempt.
 
 Notice what does **not** change: `HybridRouter`, `dispatch`, `PlanExecutor`, plan validation, and the budget logic.
 
