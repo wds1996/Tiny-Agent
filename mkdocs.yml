@@ -1,0 +1,79 @@
+site_name: Tiny-Agent | Python AI Agent Engineering Course
+site_description: >-
+  A bilingual, mechanism-first Python course for building production-minded
+  AI agents with DeepSeek, LangGraph, Agentic RAG, MCP, and more.
+site_url: https://wds1996.github.io/Tiny-Agent/
+repo_url: https://github.com/wds1996/Tiny-Agent
+repo_name: wds1996/Tiny-Agent
+edit_uri: edit/main/
+docs_dir: .site-source
+use_directory_urls: true
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.action.edit
+
+plugins:
+  - search
+
+extra:
+  alternate:
+    - name: English
+      link: /
+      lang: en
+    - name: 简体中文
+      link: /zh/
+      lang: zh-CN
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - tables
+
+nav:
+  - English: index.md
+  - 中文: zh/index.md
+  - Course (English):
+      - "00 Foundations": stages/00-foundations/README.md
+      - "01 ReAct Runtime": stages/01-react-runtime/README.md
+      - "02 Workflows, Routing, Planning": stages/02-workflows-routing-planning/README.md
+      - "03 Stateful Orchestration": stages/03-stateful-orchestration/README.md
+      - "04 Agentic RAG": stages/04-agentic-rag/README.md
+      - "05 MCP": stages/05-mcp/README.md
+      - "06 Memory, Persistence, HITL": stages/06-memory-persistence-hitl/README.md
+      - "07 Context Engineering": stages/07-context-engineering/README.md
+      - "08 Agent Skills": stages/08-agent-skills/README.md
+      - "09 Reliability and Safety": stages/09-reliability-safety/README.md
+      - "10 Evaluation and Observability": stages/10-evaluation-observability/README.md
+      - "11 Multi-Agent": stages/11-multi-agent/README.md
+      - "12 Workspace and Sandbox": stages/12-agent-workspace-sandbox/README.md
+      - "13 Production Deployment": stages/13-production-deployment/README.md
+      - "14 Long-Horizon Harness": stages/14-long-horizon-harness/README.md
+      - "15 Capstone": stages/15-capstone-enterprise-agent/README.md
+  - 课程（中文）:
+      - "00 基础": stages/00-foundations/README.zh-CN.md
+      - "01 ReAct Runtime": stages/01-react-runtime/README.zh-CN.md
+      - "02 工作流、路由与规划": stages/02-workflows-routing-planning/README.zh-CN.md
+      - "03 有状态编排": stages/03-stateful-orchestration/README.zh-CN.md
+      - "04 Agentic RAG": stages/04-agentic-rag/README.zh-CN.md
+      - "05 MCP": stages/05-mcp/README.zh-CN.md
+      - "06 记忆、持久化与 HITL": stages/06-memory-persistence-hitl/README.zh-CN.md
+      - "07 上下文工程": stages/07-context-engineering/README.zh-CN.md
+      - "08 Agent Skills": stages/08-agent-skills/README.zh-CN.md
+      - "09 可靠性与安全": stages/09-reliability-safety/README.zh-CN.md
+      - "10 评估与可观测性": stages/10-evaluation-observability/README.zh-CN.md
+      - "11 多 Agent": stages/11-multi-agent/README.zh-CN.md
+      - "12 工作区与沙箱": stages/12-agent-workspace-sandbox/README.zh-CN.md
+      - "13 生产部署": stages/13-production-deployment/README.zh-CN.md
+      - "14 长任务 Harness": stages/14-long-horizon-harness/README.zh-CN.md
+      - "15 综合项目": stages/15-capstone-enterprise-agent/README.zh-CN.md
