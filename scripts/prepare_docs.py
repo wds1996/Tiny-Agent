@@ -34,6 +34,9 @@ def main() -> None:
         shutil.rmtree(SOURCE)
     SOURCE.mkdir()
 
+    for verification_file in ROOT.glob("google*.html"):
+        shutil.copy2(verification_file, SOURCE / verification_file.name)
+
     copy_tree(ROOT / "assets", SOURCE / "assets")
     copy_tree(ROOT / "stages", SOURCE / "stages")
 
