@@ -21,7 +21,35 @@ class ActivatedSkill:
     instructions: str
 
 
+def parse_frontmatter_lines(lines: list[str], *, path: Path) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for raw_line in lines:
+        if not raw_line.strip():
+            continue
+        if ":" not in raw_line:
+            raise ValueError(f"{path} has unsupported frontmatter line: {raw_line}")
+        key, value = raw_line.split(":", 1)
+        fields[key.strip()] = value.strip().strip('"').strip("'")
+    return fields
+
+
+def read_frontmatter(path: Path) -> dict[str, str]:
+    """Read only the YAML-like header used during Skill discovery."""
+    with path.open(encoding="utf-8") as file:
+        if file.readline().strip() != "---":
+            raise ValueError(f"{path} is missing YAML frontmatter")
+
+        frontmatter: list[str] = []
+        for line in file:
+            if line.strip() == "---":
+                return parse_frontmatter_lines(frontmatter, path=path)
+            frontmatter.append(line)
+
+    raise ValueError(f"{path} has incomplete frontmatter")
+
+
 def parse_skill_file(path: Path) -> tuple[dict[str, str], str]:
+    """Load a complete Skill only after it has been selected for activation."""
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---\n"):
         raise ValueError(f"{path} is missing YAML frontmatter")
@@ -30,14 +58,7 @@ def parse_skill_file(path: Path) -> tuple[dict[str, str], str]:
     except ValueError as exc:
         raise ValueError(f"{path} has incomplete frontmatter") from exc
 
-    fields: dict[str, str] = {}
-    for raw_line in frontmatter.strip().splitlines():
-        if not raw_line.strip():
-            continue
-        if ":" not in raw_line:
-            raise ValueError(f"unsupported frontmatter line: {raw_line}")
-        key, value = raw_line.split(":", 1)
-        fields[key.strip()] = value.strip().strip('"').strip("'")
+    fields = parse_frontmatter_lines(frontmatter.strip().splitlines(), path=path)
     return fields, body.strip()
 
 
@@ -50,7 +71,7 @@ class SkillCatalog:
         if not self.root.exists():
             return skills
         for skill_md in sorted(self.root.glob("*/SKILL.md")):
-            fields, _ = parse_skill_file(skill_md)
+            fields = read_frontmatter(skill_md)
             name = fields.get("name", "")
             description = fields.get("description", "")
             directory_name = skill_md.parent.name
