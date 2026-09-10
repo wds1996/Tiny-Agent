@@ -40,6 +40,14 @@ def main() -> None:
     copy_tree(ROOT / "assets", SOURCE / "assets")
     copy_tree(ROOT / "stages", SOURCE / "stages")
 
+    # MkDocs publishes README.zh-CN.md below an extra URL segment
+    # (for example, stages/00-foundations/README.zh-CN/). Keep the canonical
+    # repository links intact while correcting asset paths in the generated copy.
+    for chinese_lesson in (SOURCE / "stages").glob("*/README.zh-CN.md"):
+        lesson = chinese_lesson.read_text(encoding="utf-8")
+        lesson = lesson.replace('src="../../assets/', 'src="../../../assets/')
+        chinese_lesson.write_text(lesson, encoding="utf-8")
+
     english_home = (ROOT / "README.md").read_text(encoding="utf-8")
     english_home = english_home.replace("](README.zh-CN.md)", "](zh/index.md)")
     (SOURCE / "index.md").write_text(english_home, encoding="utf-8")

@@ -9,7 +9,7 @@ You opened the repository to learn Agents, and the first chapter asks you to sta
 We will follow one continuous story. First, Python asks a model for text. Then we notice that prose is awkward for software to consume, so we introduce Structured Output. Then we notice that a perfectly structured answer still cannot fetch live or private data, so we introduce Tool Calling. By the end, you will have a complete `model → tool → model` round trip.
 
 <p align="center">
-  <img src="../../assets/stage00-00.png" alt="Agent loop" width="100%" />
+  <img src="../../assets/zh/stage00-00.png" alt="Agent loop" width="100%" />
 </p>
 
 ---
