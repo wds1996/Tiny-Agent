@@ -8,6 +8,23 @@ from durable_workflow import RefundWorkflow, SQLiteCheckpointStore
 from memory import ConservativeMemoryWritePolicy, MemoryCandidate, SQLiteMemoryStore
 
 
+def read_approval_decision() -> ApprovalDecision:
+    while True:
+        outcome = input("Review outcome [approve/edit/reject]: ").strip().lower()
+        if outcome == "approve":
+            return ApprovalDecision(outcome="approve")
+        if outcome == "reject":
+            return ApprovalDecision(outcome="reject")
+        if outcome == "edit":
+            order_id = input("Edited order ID: ").strip()
+            amount = input("Edited refund amount: ").strip()
+            return ApprovalDecision(
+                outcome="edit",
+                edited_arguments={"order_id": order_id, "amount": amount},
+            )
+        print("Enter approve, edit, or reject.")
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         db = Path(tmp) / "agent.db"
@@ -21,11 +38,18 @@ def main() -> None:
         print("paused:", request)
 
         # Pretend the original process disappeared here.
+        print("\nProcess disappeared. A new runtime opens the same checkpoint file.")
         runtime_b = RefundWorkflow(SQLiteCheckpointStore(db))
-        final = runtime_b.resume(
-            "run-001",
-            ApprovalDecision(outcome="approve"),
-        )
+
+        while True:
+            decision = read_approval_decision()
+            try:
+                final = runtime_b.resume("run-001", decision)
+            except ValueError as exc:
+                print(f"Review input was rejected: {exc}\n")
+                continue
+            break
+
         print("resumed:", final.phase, final.result)
 
         memory_store = SQLiteMemoryStore(db)

@@ -1,5 +1,5 @@
 from context import ContextBudget, ContextBuilder, ContextItem, render_context
-from compaction import Message, compact_history
+from compaction import Message, compact_history, render_messages, split_history
 
 
 def main() -> None:
@@ -9,6 +9,7 @@ def main() -> None:
         Message("m3", "tool", "Policy: refunds within 30 days use the original payment method."),
         Message("m4", "user", "The order is 12 days old."),
     ]
+    _older_history, recent_history = split_history(history, keep_last=2)
     compacted = compact_history(history, keep_last=2)
 
     items = [
@@ -25,6 +26,14 @@ def main() -> None:
             kind="user",
             priority=100,
             required=True,
+        ),
+        ContextItem(
+            key="recent-history",
+            content=render_messages(recent_history),
+            kind="recent-history",
+            priority=100,
+            required=True,
+            provenance="conversation:m3,m4",
         ),
         ContextItem(
             key="retrieved-policy",
@@ -51,7 +60,7 @@ def main() -> None:
 
     selection = ContextBuilder().build(
         items,
-        ContextBudget(max_input_tokens=120, reserved_output_tokens=30),
+        ContextBudget(max_input_tokens=105, reserved_output_tokens=30),
     )
     print("used_tokens:", selection.used_tokens)
     print("omitted:", selection.omitted_keys)

@@ -1,4 +1,4 @@
-# Stage 06：Agent 也得学会“下班前存档”——从 State 到 Memory、Checkpoint 与 HITL
+# Stage 06：Agent 也得学会“下班前存档”——从 State 到 Memory、Checkpoint 与 Human-in-the-Loop (HITL)
 
 > Language: [English](README.md) | **简体中文**
 
@@ -66,7 +66,7 @@ Checkpoint 可以理解成某个执行时刻的**可恢复快照**。它关心�
 
 数据库表可能长得很像，但**语义不是由数据库产品决定的**。
 
-把 `checkpoint` 表改名叫 `memory_super_pro_max`，它也不会突然获得心理学学位。
+把 `checkpoint` 表改名叫 `memory_super_pro_max`，它也不会突然变成加强版的memory。
 
 ---
 
@@ -110,13 +110,34 @@ User
 
 持久化系统的第一道题，往往不是“选 SQLite 还是 Postgres”，而是先把作用域说清楚。
 
+本章教学实现有意只保存 `run_id`，这样读者可以把注意力放在 Checkpoint 与恢复机制上。在真实产品中，Checkpoint 记录还应关联它所属的 `thread_id` 和已认证的 `user_id`；不要把这个最小表结构当成完整的多用户数据模型。
+
 ---
 
 ## 3. Checkpoint 保存的是“继续干活所需的信息”
 
-本章的教学代码用 SQLite 手写一个很小的 Checkpoint Store：
+### 为什么这里使用 SQLite
+
+SQLite 是嵌入式关系型数据库：数据保存在本地的一个文件中，例如 `agent.db`；它不像 MySQL 或 Postgres 那样需要先运行一个独立的数据库服务。Python 标准库自带 [`sqlite3`](https://docs.python.org/3/library/sqlite3.html)，所以本章无需安装额外依赖。
+
+这一节只需要先认识四个词：
+
+| 术语 | 在本章中的含义 |
+|---|---|
+| 数据库文件 | 可持久化保存的数据文件，例如 `agent.db`；新的 Python 进程可以重新打开它。 |
+| 表（table） | 一类有名字的记录集合，例如 `checkpoints`。 |
+| 行（row） | 一条保存的记录；这里由 `run_id` 唯一标识。 |
+| 事务（transaction） | `with conn:` 中的写入成功时提交；若异常逃出则回滚。 |
+
+SQLite 是本章便于理解的本地起点，并不是唯一的生产选择。需要继续学习时，可阅读 [SQLite 官方文档](https://www.sqlite.org/docs.html)、[Python `sqlite3` 官方文档](https://docs.python.org/3/library/sqlite3.html)，或中文的[菜鸟教程 SQLite 教程](https://www.runoob.com/sqlite/sqlite-tutorial.html)。
+
+先定义“恢复时必须读回什么”的状态：
 
 ```python
+from dataclasses import dataclass
+from typing import Any
+
+
 @dataclass(frozen=True, slots=True)
 class WorkflowState:
     run_id: str
@@ -126,37 +147,74 @@ class WorkflowState:
     result: dict[str, Any] | None = None
 ```
 
-保存时，我们把状态序列化后写入数据库：
+Store 打开数据库文件，并在第一次使用时建表。`run_id TEXT PRIMARY KEY` 表示同一次 run 最多有一条当前 Checkpoint：
 
 ```python
+from contextlib import contextmanager
+from pathlib import Path
+import sqlite3
+
+
+class SQLiteCheckpointStore:
+    def __init__(self, path: str | Path) -> None:
+        self.path = str(path)
+        self._init_db()
+
+    @contextmanager
+    def _session(self):
+        conn = sqlite3.connect(self.path)
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def _init_db(self) -> None:
+        with self._session() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS checkpoints (
+                    run_id TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL
+                )
+                """
+            )
+```
+
+接下来在同一个 session 中完整地保存和读回状态：
+
+```python
+from dataclasses import asdict
+import json
+
+
 def save(self, state: WorkflowState) -> None:
-    payload = json.dumps(asdict(state))
-    conn.execute(
-        """
-        INSERT INTO checkpoints(run_id, state_json)
-        VALUES (?, ?)
-        ON CONFLICT(run_id)
-        DO UPDATE SET state_json=excluded.state_json
-        """,
-        (state.run_id, payload),
-    )
+    payload = json.dumps(asdict(state), ensure_ascii=False, sort_keys=True)
+    with self._session() as conn:
+        conn.execute(
+            """
+            INSERT INTO checkpoints(run_id, state_json)
+            VALUES (?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET state_json=excluded.state_json
+            """,
+            (state.run_id, payload),
+        )
+
+
+def load(self, run_id: str) -> WorkflowState:
+    with self._session() as conn:
+        row = conn.execute(
+            "SELECT state_json FROM checkpoints WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+    if row is None:
+        raise KeyError(f"unknown run_id: {run_id}")
+    return WorkflowState(**json.loads(row[0]))
 ```
 
-这段代码最重要的不是 SQLite 语法，而是一个变化：
+`?` 是 SQL 参数占位符：值与 SQL 文本分开传入，而不是用字符串拼接 SQL。`ON CONFLICT ... DO UPDATE` 表示同一个 `run_id` 再次保存时，覆盖旧快照。
 
-以前，流程能不能继续依赖原来的 Python 对象还在不在。
-
-现在，只要新的 Runtime 能拿到同一个持久化存储和 `run_id`，就能重新读出：
-
-```text
-phase = waiting_approval
-action = issue_refund
-arguments = ...
-```
-
-于是“恢复”第一次不再依赖原进程的寿命。
-
-这就是 Durable Execution 最基础的一层含义。
+最重要的变化不在 SQLite 语法，而在架构：新的 Runtime 只要拿到同一个持久化文件和 `run_id`，就能读回 `phase`、`action` 与 `arguments`。于是“恢复”第一次不再依赖原进程的寿命；这就是 Durable Execution 最基础的一层含义。
 
 ---
 
@@ -195,7 +253,32 @@ idempotency_key = f"{run_id}:issue_refund"
 
 然后在本地 `effects` 表里用唯一键保证同一动作不会被重复记录。
 
+完整的教学方法会先返回已经保存的结果；没有记录时再写入新的结果：
+
+```python
+def record_effect_once(
+    self,
+    idempotency_key: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    encoded = json.dumps(result, ensure_ascii=False, sort_keys=True)
+    with self._session() as conn:
+        existing = conn.execute(
+            "SELECT result_json FROM effects WHERE idempotency_key=?",
+            (idempotency_key,),
+        ).fetchone()
+        if existing is not None:
+            return json.loads(existing[0])
+        conn.execute(
+            "INSERT INTO effects(idempotency_key, result_json) VALUES (?, ?)",
+            (idempotency_key, encoded),
+        )
+    return result
+```
+
 这只能证明**教学数据库内部**的幂等思路。
+
+这个示例保存的是“模拟退款结果”，并没有真的调用支付服务；它展示的是幂等边界的形状，不是分布式事务。两个独立 Worker 也可能恰好同时通过 `SELECT`，然后在 `INSERT` 处竞争。因此生产系统还需要原子地抢占执行权、处理唯一键竞争，或更理想地使用外部 API 自己支持的 idempotency key、业务唯一约束或补偿机制。
 
 到了真实外部 API，你通常还需要对方支持 idempotency key、业务唯一约束，或者设计安全的补偿机制。
 
@@ -252,9 +335,16 @@ def remember_everything(user_message):
 
 ## 6. 模型提取出的 Memory 只是候选，不是写入许可
 
-我们定义一个 `MemoryCandidate`：
+先定义本章允许讨论的 Memory 类别，再定义模型提出的候选：
 
 ```python
+from dataclasses import dataclass
+from typing import Any, Literal
+
+
+MemoryKind = Literal["semantic", "episodic", "procedural"]
+
+
 @dataclass(frozen=True, slots=True)
 class MemoryCandidate:
     owner_id: str
@@ -299,6 +389,28 @@ if decision.store:
 ```
 
 本章的保守策略会拒绝三类东西：敏感信息、没有明确记忆意图的偶发信息，以及直接修改 Agent 自身程序规则的 procedural memory。
+
+它的判断是普通的应用程序代码，不是模型自己的判断：
+
+```python
+@dataclass(frozen=True, slots=True)
+class MemoryDecision:
+    store: bool
+    reason: str
+
+
+class ConservativeMemoryWritePolicy:
+    def evaluate(self, candidate: MemoryCandidate) -> MemoryDecision:
+        if candidate.sensitive:
+            return MemoryDecision(False, "sensitive data is not stored")
+        if candidate.kind == "procedural":
+            return MemoryDecision(False, "procedural memory needs stronger governance")
+        if not candidate.explicit_user_request:
+            return MemoryDecision(False, "an incidental fact is not durable memory")
+        if not candidate.owner_id.strip() or not candidate.key.strip():
+            return MemoryDecision(False, "owner_id and key are required")
+        return MemoryDecision(True, "explicit non-sensitive memory is allowed")
+```
 
 这并不是说所有产品都必须使用完全一样的规则。
 
@@ -348,10 +460,16 @@ Procedural Memory 则涉及“应该怎样做事”，例如某种工作流程�
 
 一个最小 Long-term Memory Store 至少应该知道“这是谁的数据”。
 
-本章使用：
+本章的表结构把 Owner Scope 直接写进了主键：
 
 ```python
-PRIMARY KEY (owner_id, key)
+CREATE TABLE IF NOT EXISTS memories (
+    owner_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    PRIMARY KEY (owner_id, key)
+)
 ```
 
 读取时也必须带 `owner_id`：
@@ -359,6 +477,8 @@ PRIMARY KEY (owner_id, key)
 ```python
 store.get("alice", "answer-style")
 ```
+
+真实服务中的 `owner_id` 必须来自已认证的请求上下文，不能直接相信模型建议或不可信客户端字段。表中有一个 owner 列，并不等于访问控制已经成立。
 
 而不是：
 
@@ -404,9 +524,21 @@ issue_refund(order_id="ORDER-42", amount="18.50")
 waiting_approval
 ```
 
-并产生结构化审批请求：
+并产生结构化审批请求。类型本身说明：审批人看到的是待执行动作、参数和原因，而不是一个没有上下文的布尔值：
 
 ```python
+from dataclasses import dataclass
+from typing import Any, Mapping
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalRequest:
+    run_id: str
+    action: str
+    arguments: Mapping[str, Any]
+    reason: str
+
+
 ApprovalRequest(
     run_id="run-001",
     action="issue_refund",
@@ -457,10 +589,43 @@ authorization check
 execute
 ```
 
-本章代码中的：
+本章代码中的 `resolve_refund_arguments` 负责这一步。下面是能看清重新验证位置的完整核心逻辑：
 
 ```python
-resolve_refund_arguments(...)
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from typing import Any, Mapping, Literal
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalDecision:
+    outcome: Literal["approve", "edit", "reject"]
+    edited_arguments: Mapping[str, Any] | None = None
+
+
+def resolve_refund_arguments(
+    original: Mapping[str, Any],
+    decision: ApprovalDecision,
+) -> dict[str, Any] | None:
+    if decision.outcome == "reject":
+        return None
+    if decision.outcome == "approve":
+        candidate = dict(original)
+    elif decision.outcome == "edit" and decision.edited_arguments is not None:
+        candidate = dict(decision.edited_arguments)
+    else:
+        raise ValueError("edit requires edited_arguments")
+
+    order_id = candidate.get("order_id")
+    if not isinstance(order_id, str) or not order_id.strip():
+        raise ValueError("order_id must be a non-empty string")
+    try:
+        amount = Decimal(str(candidate.get("amount")))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError("amount must be numeric") from exc
+    if amount <= 0:
+        raise ValueError("amount must be positive")
+    return {"order_id": order_id.strip(), "amount": str(amount)}
 ```
 
 会对编辑后的 `order_id` 和 `amount` 重新验证。
@@ -514,6 +679,14 @@ side effect
 Runtime A 启动退款：
 
 ```python
+from pathlib import Path
+
+from approval import ApprovalDecision
+from durable_workflow import RefundWorkflow, SQLiteCheckpointStore
+
+
+db_path = Path("agent.db")
+runtime_a = RefundWorkflow(SQLiteCheckpointStore(db_path))
 runtime_a.start(
     run_id="run-001",
     order_id="ORDER-42",
@@ -543,7 +716,7 @@ runtime_b = RefundWorkflow(
 但它能：
 
 ```python
-state = store.load("run-001")
+state = SQLiteCheckpointStore(db_path).load("run-001")
 ```
 
 恢复后再处理：
@@ -571,6 +744,53 @@ resume
 ```
 
 这比“在一个 `input()` 前面停住 Python”多迈了一大步。
+
+`runtime_b` 与 `runtime_a` 不共享任何 Python 对象；真正的恢复边界是共同的数据库文件和 `run_id`。仓库中的 `demo.py` 为了反复运行后不在项目里留下 `.db` 文件，使用了临时目录；因此它证明的是“同一进程内重建对象也能从同一文件恢复”。如果要亲自测试真实进程重启，请使用像 `agent.db` 这样明确的持久路径，并且不要把数据库文件提交到 Git。
+
+---
+
+### 12.1 可选扩展：让 DeepSeek 提出提案，而不是做决定
+
+离线示例已经足够学习持久化与 HITL。这里接入真实模型的目的更窄：观察模型如何把用户消息变成**退款提案**和 **Memory Candidate**。模型仍然没有写入 Memory 或执行退款的权限。
+
+[`code/deepseek_hitl.py`](code/deepseek_hitl.py) 要求 DeepSeek 返回一个含有 `reply`、`refund`、`memory` 的 JSON 对象。在发生任何写入之前，应用会验证 JSON 结构，确认模型提出的订单号确实来自用户消息，从可信的应用状态写入 `owner_id`，执行 Memory Policy，并保存等待审批的 Checkpoint。退款结果仍必须等人工输入审批后才会记录。
+
+[`code/langgraph_deepseek_hitl.py`](code/langgraph_deepseek_hitl.py) 把相同的准备过程表达为一张图：
+
+```text
+DeepSeek proposal
+    -> 验证并应用 Memory Policy
+    -> 验证退款提案并保存 waiting_approval Checkpoint
+    -> 在图外等待人工审批
+```
+
+LangGraph 版本让这些准备节点和状态更新可观察；SQLite 仍然是持久化 Checkpoint Store，`RefundWorkflow.resume()` 仍负责处理审批后的结果。只运行一张 Graph 并不会自动让人工审批持久化。
+
+先安装这两个可选真实模型示例的依赖，再沿用前面章节的环境变量：
+
+```bash
+python -m pip install -r stages/06-memory-persistence-hitl/code/requirements.txt
+```
+
+Windows CMD：
+
+```bash
+set "DEEPSEEK_API_KEY=your_key_here"
+set "DEEPSEEK_MODEL=deepseek-v4-flash"
+python stages/06-memory-persistence-hitl/code/deepseek_hitl.py
+python stages/06-memory-persistence-hitl/code/langgraph_deepseek_hitl.py
+```
+
+PowerShell：
+
+```powershell
+$env:DEEPSEEK_API_KEY="your_key_here"
+$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+python stages/06-memory-persistence-hitl/code/deepseek_hitl.py
+python stages/06-memory-persistence-hitl/code/langgraph_deepseek_hitl.py
+```
+
+两个程序使用相同的示例请求。可以修改任一文件中的 `user_message`，对照退款请求、只请求记忆、以及没有任何提案的请求。所有持久化写入与副作用仍必须由应用程序控制。
 
 ---
 
@@ -611,7 +831,7 @@ Context Window 是办公桌。
 
 ## 14. 完整运行一次
 
-本章完整代码在 `code/` 中。
+离线版完整代码在 `code/` 中，只使用 Python 标准库，因此不需要安装依赖。
 
 先运行：
 
@@ -619,7 +839,15 @@ Context Window 是办公桌。
 python stages/06-memory-persistence-hitl/code/demo.py
 ```
 
-你会看到流程先暂停等待审批，然后由一个重新创建的 Runtime 从同一个 SQLite 文件恢复并完成执行；之后再经过 Memory Policy 写入一条显式长期偏好。
+新的 Runtime 到达审批边界后，按提示输入其中一种结果：
+
+```text
+approve  # 执行教学退款结果
+edit     # 输入替换后的订单号和金额；两者都会重新验证
+reject   # 不记录退款结果，直接结束本次审批
+```
+
+例如选择 `edit`，再把金额输入为 `-1`，可以看到程序拒绝这次人工编辑。Checkpoint 会保持在 `waiting_approval`，随后程序会再次询问，因此你可以继续输入一个有效结果。
 
 边界检查：
 
@@ -628,6 +856,8 @@ python stages/06-memory-persistence-hitl/code/checks.py
 ```
 
 它覆盖了几个本章真正重要的不变量：Checkpoint 能跨对象重建恢复；Reject 不产生副作用；Edit 后重新验证；教学存储中的 effect key 保持幂等；Memory 默认不保存偶发信息；敏感候选被拒绝；不同 owner 的长期记忆互不串线。
+
+`demo.py` 使用的数据库在程序退出后会被删除。它的目的，是在清理发生前演示第二个 Runtime 能读取同一个 SQLite 文件；这不是生产环境的保留策略。
 
 ---
 
@@ -651,4 +881,4 @@ Durable Resume 可以让新进程继续旧任务，但它不会自动让外部 S
 
 > **现在我们什么都能存了，可每一次调用模型时，到底该从这些东西里拿什么出来？**
 
-这就是 Stage 07：Context Engineering。
+这就是 [Stage 07：Context Engineering](../07-context-engineering/README.zh-CN.md)。
