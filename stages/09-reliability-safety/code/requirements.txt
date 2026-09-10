@@ -1,1 +1,3 @@
-# Standard library only
+# The offline guardrail and idempotency examples use only the Python standard library.
+# Required only by deepseek_guardrails.py:
+openai>=1.0.0

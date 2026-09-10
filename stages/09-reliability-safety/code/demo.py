@@ -37,6 +37,16 @@ def issue_refund(*, context: ExecutionContext, order_id: str, amount: str) -> di
     return {"order_id": order_id, "amount": amount, "status": "refunded"}
 
 
+def show_result(label: str, result) -> None:
+    print(f"\n=== {label} ===")
+    print("ok:", result.ok)
+    print("attempts:", result.attempts)
+    if result.ok:
+        print("value:", result.value)
+    else:
+        print("safe error:", result.error)
+
+
 def main() -> None:
     tools = [
         ToolSpec("lookup_order", {"order_id": str}, lookup_order, safe_to_retry=True),
@@ -53,19 +63,25 @@ def main() -> None:
     support = Principal("alice", frozenset({"support"}))
     budget = ExecutionBudget(max_tool_calls=8, max_retries=2, max_same_call=2)
 
-    print(executor.execute(
+    show_result("valid read-only call", executor.execute(
         principal=support,
         tool_name="lookup_order",
         arguments={"order_id": "ORDER-42"},
         budget=budget,
     ))
-    print(executor.execute(
+    show_result("invalid arguments rejected before execution", executor.execute(
+        principal=support,
+        tool_name="lookup_order",
+        arguments={"order_id": 42},
+        budget=budget,
+    ))
+    show_result("unauthorized side-effect call", executor.execute(
         principal=support,
         tool_name="issue_refund",
         arguments={"order_id": "ORDER-42", "amount": "10.00"},
         budget=budget,
     ))
-    print(executor.execute(
+    show_result("retryable read-only call", executor.execute(
         principal=support,
         tool_name="flaky_catalog",
         arguments={"sku": "BOOK-1"},
@@ -73,7 +89,7 @@ def main() -> None:
     ))
 
     deadline = ExecutionContext(deadline_monotonic=time.monotonic() - 0.01)
-    print(executor.execute(
+    show_result("expired deadline", executor.execute(
         principal=support,
         tool_name="lookup_order",
         arguments={"order_id": "ORDER-99"},

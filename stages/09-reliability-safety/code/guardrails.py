@@ -52,6 +52,7 @@ class ToolSpec:
     required: Mapping[str, type]
     handler: Callable[..., Any]
     safe_to_retry: bool = False
+    idempotency_supported: bool = False
 
     def validate(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         expected = set(self.required)
@@ -174,7 +175,8 @@ class GuardedExecutor:
                 return ExecutionResult(False, error=redact_error(str(exc)), attempts=attempts)
             except ToolFailure as exc:
                 can_retry = exc.retryable and (
-                    tool.safe_to_retry or context.idempotency_key is not None
+                    tool.safe_to_retry
+                    or (tool.idempotency_supported and context.idempotency_key is not None)
                 )
                 if not can_retry:
                     return ExecutionResult(False, error=redact_error(str(exc)), attempts=attempts)
