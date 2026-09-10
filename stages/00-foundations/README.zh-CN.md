@@ -9,7 +9,7 @@
 本章我们不背一串名词，而是顺着程序真正遇到的问题往前走。先让模型回答一句话；接着发现自然语言不适合直接给程序使用，于是引入 Structured Output；然后发现结构化结果仍然不能替你查询外部数据，于是再引入 Tool Calling。到最后，你会完成一次完整的 `model → tool → model` 往返。
 
 <p align="center">
-  <img src="../../assets/stage00-00.png" alt="Agent 简易流程示例" width="100%" />
+  <img src="../../assets/zh/stage00-00.png" alt="Agent 简易流程示例" width="100%" />
 </p>
 
 ---
@@ -41,7 +41,7 @@ Python 读取响应
 把这条边界画出来，大致就是下面这样：
 
 <p align="center">
-  <img src="../../assets/stage00-01.png" alt="模型生成与程序执行的权限边界" width="70%" />
+  <img src="../../assets/zh/stage00-01.png" alt="模型生成与程序执行的权限边界" width="70%" />
 </p>
 
 ### 1.1 先把环境准备好
@@ -524,7 +524,7 @@ final = client.responses.create(
 把 `call_id` 放回这条时间线里，Tool Output 的归属关系会更直观：
 
 <p align="center">
-  <img src="../../assets/stage00-02.png" alt="Tool Calling 从请求到 Observation 的完整流程" width="70%" />
+  <img src="../../assets/zh/stage00-02.png" alt="Tool Calling 从请求到 Observation 的完整流程" width="70%" />
 </p>
 
 到这里，你已经拥有了 Agent 最小循环的一半。

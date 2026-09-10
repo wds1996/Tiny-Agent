@@ -22,6 +22,10 @@ theme:
 plugins:
   - search
 
+extra_javascript:
+  - assets/javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
 extra:
   alternate:
     - name: English
@@ -38,6 +42,8 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.highlight
   - pymdownx.superfences
+  - pymdownx.arithmatex:
+      generic: true
   - tables
 
 nav:

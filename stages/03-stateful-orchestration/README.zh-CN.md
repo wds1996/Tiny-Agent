@@ -39,7 +39,7 @@ Stage 03 就解决这个问题。
 这章不会把 Graph 当成一种“更高级的 Agent”。我们要做的事情更朴素：把执行过程中真正重要的数据显式表示出来，再把“谁修改状态”和“下一步去哪里”分开。
 
 <p align="center">
-  <img src="../../assets/stage03-00.png" alt="Workflow、Routing 与 Planning" width="100%" />
+  <img src="../../assets/zh/stage03-00.png" alt="Workflow、Routing 与 Planning" width="100%" />
 </p>
 
 ---
