@@ -3,11 +3,35 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import math
+from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
 
 
 TOKEN_RE = re.compile(r"\w+", flags=re.UNICODE)
+DATA_DIRECTORY = Path(__file__).with_name("data")
+DEMO_DOCUMENT_SPECS = (
+    (
+        "acme-refund-policy-2026-08",
+        "acme_refund_policy_2026-08.txt",
+        {"source": "acme-refund-policy-2026-08", "kind": "policy"},
+    ),
+    (
+        "faiss",
+        "faiss_notes.txt",
+        {"source": "faiss-notes", "kind": "local-index"},
+    ),
+    (
+        "qdrant",
+        "qdrant_notes.txt",
+        {"source": "qdrant-notes", "kind": "vector-database"},
+    ),
+    (
+        "langgraph",
+        "langgraph_notes.txt",
+        {"source": "langgraph-notes", "kind": "orchestration"},
+    ),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,8 +86,8 @@ def chunk_document(
                     **dict(document.metadata),
                     "document_id": document.id,
                     "chunk_index": index,
-                    "start_token": start,
-                    "end_token": end,
+                    "start_word": start,
+                    "end_word": end,
                 },
             )
         )
@@ -202,35 +226,30 @@ def format_evidence(results: Sequence[SearchResult]) -> str:
     return "\n\n".join(blocks)
 
 
+def load_demo_documents() -> list[Document]:
+    """Load the small, versioned course corpus stored beside this module."""
+
+    documents: list[Document] = []
+    for document_id, filename, metadata in DEMO_DOCUMENT_SPECS:
+        path = DATA_DIRECTORY / filename
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"Course corpus file is missing: {path}") from exc
+        if not text:
+            raise RuntimeError(f"Course corpus file is empty: {path}")
+        documents.append(
+            Document(
+                id=document_id,
+                text=text,
+                metadata={**metadata, "source_file": filename},
+            )
+        )
+    return documents
+
+
 def make_demo_corpus() -> list[Chunk]:
-    documents = [
-        Document(
-            id="faiss",
-            text=(
-                "FAISS is a library for efficient similarity search over dense vectors. "
-                "It provides vector indexes, but application metadata and document policy "
-                "remain the application's responsibility."
-            ),
-            metadata={"source": "faiss-notes", "kind": "local-index"},
-        ),
-        Document(
-            id="qdrant",
-            text=(
-                "Qdrant stores vectors together with payload metadata. Queries can combine "
-                "vector similarity with payload filters, which is useful when retrieval must "
-                "respect fields such as tenant, language, or document type."
-            ),
-            metadata={"source": "qdrant-notes", "kind": "vector-database"},
-        ),
-        Document(
-            id="langgraph",
-            text=(
-                "LangGraph represents application state explicitly and moves execution "
-                "between nodes through fixed or conditional edges."
-            ),
-            metadata={"source": "langgraph-notes", "kind": "orchestration"},
-        ),
-    ]
+    documents = load_demo_documents()
 
     chunks: list[Chunk] = []
     for document in documents:
@@ -241,9 +260,12 @@ def make_demo_corpus() -> list[Chunk]:
 def main() -> None:
     chunks = make_demo_corpus()
     retriever = InMemoryVectorRetriever(chunks, HashEmbeddingModel())
-    candidates = retriever.retrieve("qdrant payload metadata filtering", top_k=3)
+    candidates = retriever.retrieve(
+        "August 2026 refund original payment 45 days",
+        top_k=3,
+    )
     reranked = lexical_rerank(
-        "qdrant payload metadata filtering",
+        "August 2026 refund original payment 45 days",
         candidates,
         top_k=2,
     )

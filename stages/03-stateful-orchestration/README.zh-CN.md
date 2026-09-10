@@ -321,29 +321,74 @@ conditional edges
 reducers
 ```
 
+注册任何出边之前，Builder 会先拒绝不可能的来源，或同一来源的第二条出边：
+
+```python
+def _ensure_no_outgoing_edge(self, source: str) -> None:
+    if source == END:
+        raise ValueError("END cannot have an outgoing edge")
+    if source in self._edges or source in self._conditional_edges:
+        raise ValueError(f"{source!r} already has an outgoing edge")
+```
+
 Node 注册就是一个名字到函数的映射：
 
 ```python
-def add_node(self, name, node):
+def add_node(self, name: str, node: Node) -> None:
+    if not name or name in {START, END}:
+        raise ValueError(f"invalid node name: {name!r}")
     if name in self._nodes:
         raise ValueError(f"duplicate node: {name!r}")
-
     self._nodes[name] = node
 ```
 
-固定 Edge 记录：
+Fixed Edge 是从来源到目的地的映射。它先执行同一份校验，再保存这条映射：
 
 ```python
-source -> destination
+def add_edge(self, source: str, destination: str) -> None:
+    self._ensure_no_outgoing_edge(source)
+    self._edges[source] = destination
 ```
 
-Conditional Edge 则多保存一个 Router：
+例如，`add_edge("draft", "review")` 之后，内部数据是：
 
 ```python
-source
-  -> router(state)
-  -> route name
-  -> destination
+self._edges == {"draft": "review"}
+```
+
+Conditional Edge 则保存一个 Router，以及“路由名称到目的地”的映射。Router 读取 State；允许去哪些目的地则由映射表提前声明，而不是让 Router 任意指定。
+
+```python
+@dataclass(frozen=True, slots=True)
+class ConditionalEdge:
+    router: Router
+    destinations: dict[str, str]
+
+
+def add_conditional_edges(
+    self,
+    source: str,
+    router: Router,
+    destinations: Mapping[str, str],
+) -> None:
+    self._ensure_no_outgoing_edge(source)
+    if not destinations:
+        raise ValueError("conditional edges need at least one destination")
+    self._conditional_edges[source] = ConditionalEdge(
+        router=router,
+        destinations=dict(destinations),
+    )
+```
+
+例如，`add_conditional_edges("review", route_after_review, {"revise": "revise", "accept": "finish"})` 会同时保存决策函数和允许的分支表：
+
+```python
+{
+    "review": ConditionalEdge(
+        router=route_after_review,
+        destinations={"revise": "revise", "accept": "finish"},
+    )
+}
 ```
 
 到这里你应该已经能发现：Graph Runtime 本身并不会“思考”。
@@ -373,13 +418,35 @@ while current != END:
     current = self._next_node(current, state)
 ```
 
+`_next_node()` 正是连接“已保存的边”和执行循环的桥梁：它先检查是否存在 Conditional Edge，调用 Router 并验证返回的路由名称；否则就跟随 Fixed Edge。
+
+```python
+def _next_node(self, source: str, state: State) -> str:
+    branch = self._conditional_edges.get(source)
+    if branch is not None:
+        route = branch.router(dict(state))
+        try:
+            return branch.destinations[route]
+        except KeyError as exc:
+            allowed = ", ".join(sorted(branch.destinations))
+            raise RuntimeError(
+                f"router from {source!r} returned {route!r}; "
+                f"allowed routes: {allowed}"
+            ) from exc
+
+    try:
+        return self._edges[source]
+    except KeyError as exc:
+        raise RuntimeError(f"{source!r} has no outgoing edge") from exc
+```
+
 看到这里，Graph 的神秘感应该下降不少。
 
 Graph Runtime 底层仍然需要不断执行节点、更新状态、寻找下一步。Graph 并不是把 `while` 从宇宙里删除了，而是把**控制流声明**从一个越来越复杂的大循环中提取出来。
 
 普通循环可能长这样：
 
-```python
+```text
 while True:
     if phase == "draft":
         ...
@@ -441,7 +508,7 @@ save()
 
 如果也直接覆盖：
 
-```python
+```text
 ["classified"] -> ["revised"]
 ```
 
@@ -455,7 +522,9 @@ save()
 
 这就是 Reducer 要解决的问题。
 
-Reducer 本质上是：
+可以把 `draft` 想成“一份文档的当前版本”：新版本来了，旧版本就应被替换。把 `events` 想成“值班日志”：新的记录应加在旧记录之后。它们都保存在 State 中，却表示不同的东西，因此合并规则也不同。
+
+Reducer 就是某一个 State 字段的合并规则：
 
 ```python
 new_value = reducer(old_value, update_value)
@@ -468,20 +537,46 @@ def append_events(left, right):
     return [*left, *right]
 ```
 
-于是 Runtime 更新 State 时，可以写成：
+下面把刚才的 State 和 Update 完整合并一次。把这一整个代码块直接运行：
 
 ```python
-reducer = self._reducers.get(key)
+def append_events(left, right):
+    return [*left, *right]
 
-if reducer is None or key not in state:
-    state[key] = right
-else:
-    state[key] = reducer(state[key], right)
+
+def apply_update(state, update, reducers):
+    for key, right in update.items():
+        reducer = reducers.get(key)
+        if reducer is None or key not in state:
+            state[key] = right
+        else:
+            state[key] = reducer(state[key], right)
+
+state = {
+    "draft": "first",
+    "events": ["classified"],
+}
+update = {
+    "draft": "second",
+    "events": ["revised"],
+}
+
+apply_update(state, update, reducers={"events": append_events})
+print(state)
 ```
 
-这件事看起来很小，却是 Graph 里非常重要的一层语义。
+输出是：
 
-因为 Node 返回 `"events": ["revised"]` 时，它自己并没有说明“我要覆盖”还是“我要追加”。**State 的合并规则属于 State 本身的定义，而不是每个 Node 临时决定。**
+```python
+{
+    "draft": "second",
+    "events": ["classified", "revised"],
+}
+```
+
+`draft` 没有配置 Reducer，因此 Runtime 直接用新值覆盖它。`events` 配置了 `append_events`，因此 Runtime 把已有历史和 Node 返回的新记录拼在一起。Node 本身不需要读取、复制再返回完整的历史。
+
+这就是它的意义：每个 Node 只返回自己负责的字段，而 Graph 统一持有合并规则。Node 返回 `"events": ["revised"]` 时，并不由 Node 临时决定“我要覆盖”还是“我要追加”；**State 字段的定义决定更新语义。**
 
 ---
 
@@ -604,10 +699,13 @@ review
 第二次回到 `review`，这次得到：
 
 ```python
-{"review": "accept"}
+{
+    "review": "accept",
+    "events": ["review accepted response"],
+}
 ```
 
-最终进入 `finish`。
+Conditional Edge 因此把流程送到 `finish`。
 
 运行：
 
@@ -623,7 +721,7 @@ classify -> draft -> review -> revise -> review -> finish
 
 这个 Trace 很有价值。
 
-因为现在“程序怎么走到这里”不再需要你从日志里猜，也不需要沿着七层函数调用逆向侦探。执行路径已经是 Graph Runtime 的一等结果。
+因为现在“程序怎么走到这里”不再需要你从日志里猜，也不需要沿着七层函数调用逆向侦探。执行路径已经是 Graph Runtime 的结果。
 
 ---
 
@@ -659,7 +757,7 @@ max_steps
 
 ```python
 if len(trace) >= max_steps:
-    raise RuntimeError(...)
+    raise RuntimeError(f"graph exceeded max_steps={max_steps}")
 ```
 
 这和 Stage 01 的 `max_steps`、Stage 02 的 `max_replans` 是同一种工程思想：**开放式控制必须有应用拥有的 Budget。**
@@ -711,9 +809,9 @@ Graph Compile 的价值之一，就是把一部分运行期惊喜提前变成构
 
 ## 13. 认识 LangGraph，再映射相同的机制
 
-[LangGraph](https://langchain-ai.github.io/langgraph/) 是 LangChain 团队提供的有状态 Agent 与工作流编排框架。它把 State、Node、Edge、条件路由和循环这些概念变成可执行的图，适合需要多步骤、可恢复或可观察执行过程的程序。
+[LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) 是 LangChain 团队提供的有状态 Agent 与工作流编排框架。它把 State、Node、Edge、条件路由和循环这些概念变成可执行的图，适合需要多步骤、可恢复或可观察执行过程的程序。
 
-如果你还没有接触过 LangGraph，先阅读官方的 [概览](https://langchain-ai.github.io/langgraph/) 和 [Workflows and agents 教程](https://langchain-ai.github.io/langgraph/tutorials/workflows/)。它们会系统介绍框架 API、常见工作流模式和更完整的生产能力。
+如果你还没有接触过 LangGraph，先阅读官方的 [概览](https://docs.langchain.com/oss/python/langgraph/overview) 和 [Workflows and agents 指南](https://docs.langchain.com/oss/python/langgraph/workflows-agents)。它们会系统介绍框架 API、常见工作流模式和更完整的生产能力。
 
 本教程不额外重复 LangGraph 的框架教学。前 01，02 节已经用纯 Python 拆开了图运行时的核心机制；从这一节开始，我们只用 LangGraph 把同一套 State、Node、Edge 和路由逻辑重新表达出来，重点是理解 Agent 的状态与控制流如何映射到框架代码。
 
@@ -751,6 +849,8 @@ events: Annotated[list[str], add]
 > `events` 收到新列表时，不要直接覆盖，用 `operator.add` 合并。
 
 而没有显式 Reducer 的字段，默认就是新值覆盖旧值。
+
+`TypedDict` 描述 State 字典可能有哪些字段；`total=False` 允许由后续 Node 产生的字段在初始 State 中缺失，但它不会自动填默认值，也不做运行时验证。因为 `events` 使用 `add`，每个 Node 只能返回本次新增的事件；如果返回完整历史，旧事件会被再追加一次。
 
 这正是我们刚刚手写过的逻辑。
 
@@ -865,7 +965,7 @@ graph = builder.compile()
 
 ### 把前面的片段连起来运行
 
-第 14–15 节的 `draft`、`review`、`revise`、`finish` 和 `route_after_review` 来自 `langgraph_workflow.py`。只复制注册语句会缺少这些定义。先在该文件所在目录尝试这个完整入口：
+第 14–15 节的 `draft`、`review`、`revise`、`finish` 和 `route_after_review` 来自 `langgraph_workflow.py`。只复制注册语句会缺少这些定义。先在该文件所在的 `code/` 目录启动 Python 交互环境，再尝试这个完整入口：
 
 ```python
 from langgraph_workflow import build_graph, initial_state
@@ -876,8 +976,6 @@ print(result["answer"])
 assert result["revisions"] == 1
 assert len(result["events"]) == 6
 ```
-
-`TypedDict` 描述字典有哪些字段；`total=False` 允许初始时省略由后续节点产生的字段，并不自动填默认值或做运行时验证。`Annotated[list[str], add]` 在类型之外附上合并规则：LangGraph 用列表相加累积事件。节点只能返回本次新增事件；返回整个历史会导致重复累加。
 
 ## 16. `invoke()` 给你最终 State，`stream()` 让你看到过程
 
@@ -1155,12 +1253,12 @@ API 错误、非法 JSON、未知工具和无效参数会直接终止，不自�
 
 这是本章非常容易被忽略的一点。
 
-在 Agent Graph 里：
+在 Agent Graph 里，只展示“产生提案”的这一部分：
 
 ```python
 def model_node(state):
     turn = model.generate(state["messages"])
-    ...
+    return {"pending_tool_calls": list(turn.tool_calls)}
 ```
 
 模型只是返回下一步提案。
@@ -1227,7 +1325,7 @@ Graph 改变的是**编排表达方式**，不是权限归属。
 
 最简单的 ReAct Loop：
 
-```python
+```text
 while True:
     turn = model.generate(...)
     ...

@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 from agent import ApprovalDecision, SupportAgent
+from deepseek_decision import parse_decision, validate_order_id_from_question
 from domain import TrustedIdentity
 from store import SupportStore
 
@@ -125,6 +126,30 @@ class Stage15Checks(unittest.TestCase):
                     tenant_id="acme",
                     user_id="bob",
                 )
+
+    def test_deepseek_decision_json_is_validated(self):
+        decision = parse_decision(
+            '{"kind": "refund_action", "order_id": "order-42"}'
+        )
+        self.assertEqual(decision.kind, "refund_action")
+        self.assertEqual(decision.order_id, "ORDER-42")
+
+    def test_deepseek_decision_rejects_unexpected_shape(self):
+        with self.assertRaises(RuntimeError):
+            parse_decision(
+                '{"kind": "refund_action", "order_id": "ORDER-42", '
+                '"amount": "49"}'
+            )
+
+    def test_deepseek_order_id_must_come_from_question(self):
+        decision = parse_decision(
+            '{"kind": "refund_question", "order_id": "ORDER-99"}'
+        )
+        with self.assertRaises(RuntimeError):
+            validate_order_id_from_question(
+                decision=decision,
+                question="Can ORDER-42 be refunded?",
+            )
 
 
 if __name__ == "__main__":

@@ -70,6 +70,10 @@ def evaluate(
 def main() -> None:
     retriever = InMemoryVectorRetriever(make_demo_corpus(), HashEmbeddingModel())
     cases = [
+        RetrievalCase(
+            "August 2026 refund original payment 45 calendar days",
+            {"acme-refund-policy-2026-08"},
+        ),
         RetrievalCase("faiss similarity vector index", {"faiss"}),
         RetrievalCase("qdrant payload metadata filtering", {"qdrant"}),
         RetrievalCase("langgraph state conditional edges", {"langgraph"}),

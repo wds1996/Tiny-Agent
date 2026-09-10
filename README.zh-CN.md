@@ -5,6 +5,8 @@
 # Tiny-Agent：从一次模型调用，到真正的 Agent 系统
 
 > Language: [English](README.md) | **简体中文**
+>
+> 在线阅读：[English](https://wds1996.github.io/Tiny-Agent/) | [简体中文](https://wds1996.github.io/Tiny-Agent/zh/)
 
 很多 Agent 教程从安装框架开始，然后很快写出 `create_agent()`。代码能跑，但当 Agent 第一次重复调用 Tool、把检索结果当成事实、在审批前产生副作用，或者因为 Context 越塞越长开始行为异常时，往往很难回答：这一层到底是谁负责？
 

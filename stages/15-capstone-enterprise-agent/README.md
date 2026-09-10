@@ -137,7 +137,7 @@ class DecisionModel(Protocol):
 
 The offline course implementation uses `DeterministicDecisionModel` as a **Model Double**. It produces stable decisions without network access or API keys.
 
-A production adapter can replace it with a real LLM using Structured Output.
+`code/deepseek_decision.py` supplies the live `DeepSeekDecisionModel`. It asks DeepSeek for one JSON decision, validates the exact shape, and returns the same `SupportDecision` value to the runtime.
 
 The authority boundary remains unchanged:
 
@@ -520,7 +520,7 @@ Use complexity when the domain earns it.
 
 ---
 
-## 22. Run the capstone
+## 22. Run the offline capstone
 
 ```bash
 python stages/15-capstone-enterprise-agent/code/demo.py
@@ -532,13 +532,30 @@ The second request asks to refund it. The Run enters `waiting_approval`, and onl
 
 ---
 
-## 23. Run the capstone checks
+## 23. Run the DeepSeek decision version
+
+Install the stage dependency and set the two DeepSeek variables in the same PowerShell window:
+
+```powershell
+python -m pip install -r stages/15-capstone-enterprise-agent/code/requirements.txt
+$env:DEEPSEEK_API_KEY="your-api-key"
+$env:DEEPSEEK_MODEL="deepseek-chat"
+python stages/15-capstone-enterprise-agent/code/deepseek_demo.py
+```
+
+`deepseek_demo.py` keeps the same order, retrieval, approval, and refund code as the offline entry. It replaces only the decision-model instance. After each runtime trace, it prints the actual system instruction, user request, and JSON decision returned by the model.
+
+The application still validates the JSON before it accepts a decision. A model response cannot access the order store, retrieve policy, approve a refund, or execute its effect.
+
+---
+
+## 24. Run the capstone checks
 
 ```bash
 python stages/15-capstone-enterprise-agent/code/checks.py
 ```
 
-The checks verify nine invariants:
+The checks verify twelve invariants:
 
 Policy answers carry evidence IDs.
 
@@ -558,13 +575,19 @@ Repeated resume does not duplicate the effect.
 
 One identity cannot read another identity's durable Run.
 
+DeepSeek JSON is converted to a valid `SupportDecision` only when both required fields have an allowed shape.
+
+Malformed or unexpected decision JSON is rejected before it enters the runtime.
+
+A decision cannot name an order ID that was absent from the user's request.
+
 Those invariants say much more than “the demo looked good.”
 
 ---
 
-## 24. Where a real LLM belongs
+## 25. The DeepSeek decision boundary
 
-A production model adapter naturally implements:
+`DeepSeekDecisionModel` implements the existing boundary:
 
 ```python
 class DecisionModel(Protocol):
@@ -575,7 +598,7 @@ class DecisionModel(Protocol):
         ...
 ```
 
-It can use Structured Output to return a constrained decision such as:
+Its request is deliberately limited to the current question and a constrained JSON response:
 
 ```json
 {
@@ -584,15 +607,15 @@ It can use Structured Output to return a constrained decision such as:
 }
 ```
 
-Everything after that remains application-owned.
+The adapter validates the two-key shape, the permitted values, and that any order ID actually appears in the request before it creates `SupportDecision`. Everything after that remains application-owned.
 
 Do not let the provider adapter quietly become the database client, policy engine, approver, and payment executor.
 
-Provider-specific wire format should stay behind a narrow adapter.
+DeepSeek-specific request and response handling stays in `deepseek_decision.py`; `agent.py` remains responsible for the support workflow.
 
 ---
 
-## 25. What a production deployment still needs
+## 26. What a production deployment still needs
 
 The teaching capstone is not a bank-ready deployment.
 
@@ -604,7 +627,7 @@ They do not require turning the architecture back into one large `agent.py`.
 
 ---
 
-## 26. Walk from Stage 00 one more time
+## 27. Walk from Stage 00 one more time
 
 Stage 00 gave model output a contract and introduced Tool proposals.
 
@@ -642,7 +665,7 @@ That is the difference between using an Agent framework and engineering an Agent
 
 ---
 
-## 27. The final architecture
+## 28. The final architecture
 
 ```text
                    Trusted Identity
@@ -690,7 +713,7 @@ If those questions have precise answers, an Agent has started to become an engin
 
 ---
 
-## 28. What to keep learning after graduation
+## 29. What to keep learning after graduation
 
 Models will change. Frameworks will change. Protocols will change. Product names certainly will.
 

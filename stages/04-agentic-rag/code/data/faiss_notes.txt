@@ -1,0 +1,16 @@
+FAISS is a library for efficient similarity search over dense vectors. An
+application first converts each document chunk into a numeric vector, then adds
+those vectors to a FAISS index. At query time, the same embedding model converts
+the query into a vector and the index returns the nearest stored vectors.
+
+IndexFlatIP is a useful baseline because it compares a query with every indexed
+vector. When document and query vectors are L2-normalized, inner-product ranking
+has the same order as cosine similarity. This exact search is simple to inspect,
+but its cost grows with the number of vectors. Larger collections may use an
+approximate FAISS index to reduce latency at the cost of occasionally missing a
+near neighbor.
+
+FAISS provides vector indexes and search algorithms. It does not decide which
+documents a caller may access, store a policy version, or enforce tenant
+isolation for the application. Keep chunk IDs and metadata outside or alongside
+the index so that a retrieved vector can still be traced to its source text.

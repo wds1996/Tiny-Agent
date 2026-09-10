@@ -20,13 +20,35 @@ Do not promote MCP into a magical “Agent operating system” in your head. It 
 
 ## 1. Start with the Tool abstraction we already understand
 
+Stage 04 used local, versioned files as external evidence. This stage moves one boundary outward: an MCP Server can supply external Tools, Resources, and Prompts through a standard connection. It does not make those inputs trusted automatically; the Host still applies the evidence and permission rules from the earlier stages.
+
 A Stage 01 Tool looked roughly like this:
 
 ```python
-Tool(
+from dataclasses import dataclass
+from typing import Any, Callable
+
+
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    description: str
+    parameters: dict[str, Any]
+    handler: Callable[..., Any]
+
+
+def get_weather(city: str) -> dict[str, str]:
+    return {"city": city, "forecast": "sunny"}
+
+
+weather_tool = Tool(
     name="get_weather",
     description="Get teaching weather data.",
-    parameters={...},
+    parameters={
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    },
     handler=get_weather,
 )
 ```
@@ -129,6 +151,8 @@ The Server advertises what it can provide. The Host decides what the application
 
 ## 4. MCP is not only a remote Tool protocol
 
+The following three declarations come from the complete teaching Server in the next section. Read them first as three different meanings, then run the full Server rather than copying one decorator in isolation.
+
 The three MCP Server primitives you need first are **Tools, Resources, and Prompts**. They are intentionally different.
 
 A useful informal memory aid is:
@@ -208,6 +232,78 @@ One pleasant detail is that your type hints participate in the Tool contract. Th
 
 That does **not** mean “decorate every Python function and let discovery sort it out.” Schema generation is mechanical. Deciding which capabilities deserve to cross a protocol boundary is architecture.
 
+The complete teaching Server is [`code/mcp_server.py`](code/mcp_server.py). It is the source for every Tool, Resource, and Prompt used below:
+
+```python
+from __future__ import annotations
+
+from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+
+
+HANDBOOK = {
+    "refunds": (
+        "For orders placed on or after 2026-08-01, refunds to the original "
+        "payment method are available within 45 calendar days. This replaces "
+        "the earlier 30-day policy."
+    ),
+    "shipping": (
+        "Standard shipping normally takes 3-5 business days after dispatch."
+    ),
+}
+
+mcp = MCPServer(
+    "Tiny-Agent Stage 05",
+    instructions=(
+        "Teaching server for MCP Tools, Resources, and Prompts. "
+        "The host remains responsible for deciding which capabilities are trusted and exposed."
+    ),
+)
+
+
+@mcp.tool()
+def add(a: int, b: int) -> dict[str, int]:
+    """Add two integers and return structured data."""
+    return {"result": a + b}
+
+
+@mcp.tool()
+def lookup_policy(topic: str) -> dict[str, str]:
+    """Return one handbook policy by topic."""
+    normalized = topic.strip().lower()
+    if normalized not in HANDBOOK:
+        raise ToolError(f"unknown policy topic: {topic}")
+    return {"topic": normalized, "policy": HANDBOOK[normalized]}
+
+
+@mcp.resource("tiny-agent://about")
+def about() -> str:
+    """Describe the teaching server."""
+    return "Tiny-Agent Stage 05 demonstrates MCP interoperability boundaries."
+
+
+@mcp.resource("tiny-agent://handbook/{topic}")
+def handbook(topic: str) -> str:
+    """Read a handbook entry by URI."""
+    normalized = topic.strip().lower()
+    if normalized not in HANDBOOK:
+        raise ValueError(f"unknown handbook topic: {topic}")
+    return HANDBOOK[normalized]
+
+
+@mcp.prompt()
+def explain_mcp(topic: str, audience: str = "beginner") -> str:
+    """Create a reusable model-facing instruction about MCP."""
+    return (
+        f"Explain {topic} to a {audience}. "
+        "Start from the concrete problem, then give one MCP example and one non-example."
+    )
+
+
+if __name__ == "__main__":
+    mcp.run()
+```
+
 ---
 
 ## 6. Learn the protocol without letting networking steal the lesson
@@ -241,6 +337,67 @@ With the current Python SDK v2 talking to our own v2 Server, the negotiated prot
 ```
 
 We did not hard-code that version into the teaching Client. It is the result of the SDK's protocol negotiation.
+
+Install the Stage 05 dependency once before running any example:
+
+```bash
+python -m pip install -r stages/05-mcp/code/requirements.txt
+```
+
+The complete first Client is [`code/in_memory_client.py`](code/in_memory_client.py). It discovers every primitive, then reads one Resource and renders one Prompt:
+
+```python
+from __future__ import annotations
+
+import asyncio
+
+from mcp import Client
+import mcp.types as types
+
+from mcp_server import mcp
+
+
+async def main() -> None:
+    async with Client(mcp) as client:
+        print("protocol:", client.protocol_version)
+
+        tools = await client.list_tools()
+        print("tools:", [tool.name for tool in tools.tools])
+
+        resources = await client.list_resources()
+        templates = await client.list_resource_templates()
+        print("resources:", [str(resource.uri) for resource in resources.resources])
+        print("resource templates:", [template.uri_template for template in templates.resource_templates])
+
+        prompts = await client.list_prompts()
+        print("prompts:", [prompt.name for prompt in prompts.prompts])
+
+        tool_result = await client.call_tool("add", {"a": 20, "b": 22})
+        print("structured tool result:", tool_result.structured_content)
+
+        resource_result = await client.read_resource("tiny-agent://handbook/refunds")
+        first_resource = resource_result.contents[0]
+        if isinstance(first_resource, types.TextResourceContents):
+            print("resource text:", first_resource.text)
+
+        prompt_result = await client.get_prompt(
+            "explain_mcp",
+            {"topic": "Tools versus Resources", "audience": "beginner"},
+        )
+        first_message = prompt_result.messages[0]
+        if isinstance(first_message.content, types.TextContent):
+            print("prompt text:", first_message.content.text)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Run it now:
+
+```bash
+python stages/05-mcp/code/in_memory_client.py
+```
 
 ---
 
@@ -352,6 +509,8 @@ Tool execution failure
 ```
 
 The distinction changes what sensible recovery looks like. A temporary network problem may justify reconnecting. A Tool saying “order does not exist” is unlikely to be cured by reconnecting three times with extra confidence.
+
+`lookup_policy()` raises the SDK's `ToolError` for an unknown topic. That produces `is_error=True` as a normal MCP Tool result without turning an expected business failure into a server crash.
 
 ---
 
@@ -509,72 +668,193 @@ The high-level SDK earns its keep after the mechanism is clear.
 
 ---
 
-## 15. Three connection shapes, three different boundaries
+## 15. Three connection shapes: first locate the boundary
 
-For this chapter, three Client connection forms are worth knowing.
+An MCP Client always sends protocol requests to an MCP Server. What changes between the three forms is **where the Server runs** and therefore which boundary the message crosses.
 
-### In-process: isolate the protocol concepts
+| Form | Where the Server runs | What carries MCP messages | Best first use |
+| --- | --- | --- | --- |
+| In-process | The same Python process as the Host | An in-memory SDK connection | Learn Tools, Resources, Prompts, and tests. |
+| stdio | A child process on the same machine | The child process's stdin and stdout | A local integration such as an IDE launching a helper. |
+| Streamable HTTP | A separately started service, local or remote | HTTP requests to an MCP URL | A service shared by multiple Hosts. |
+
+The Tool, Resource, and Prompt semantics do not change between these forms. Only the transport boundary changes.
+
+### In-process: learn the protocol meaning first
+
+Here `mcp` is the `MCPServer` object created in `mcp_server.py`. Client and Server are regular objects in one Python process; no child process, TCP port, or HTTP request is involved.
 
 ```python
-async with Client(mcp) as client:
-    ...
+import asyncio
+
+from mcp import Client
+from mcp_server import mcp
+
+
+async def inspect_in_memory_server() -> None:
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        print([tool.name for tool in tools.tools])
+
+
+asyncio.run(inspect_in_memory_server())
 ```
 
-The Client and Server live in the same Python process. It is fast, deterministic, and excellent for tests.
+This still exercises MCP discovery and Tool calls. It does **not** test process startup, pipe handling, HTTP, or network authorization. That is why it is the right first step, not a substitute for the other two forms.
 
 ### stdio: cross a local process boundary
 
-A Host can spawn a Server subprocess and communicate over stdin/stdout:
-
-```python
-parameters = StdioServerParameters(
-    command=sys.executable,
-    args=[str(server_path)],
-)
-
-transport = stdio_client(parameters)
-
-async with Client(transport) as client:
-    ...
-```
-
-Conceptually:
+With stdio, the Host starts a second Python process. In this example the Host runs `stdio_client.py`, then starts `mcp_server.py` as its child.
 
 ```text
-Host process
-    │
-    │ stdin / stdout
-    ▼
-MCP Server subprocess
+Host process: stdio_client.py                  Server subprocess: mcp_server.py
++----------------------------+                 +------------------------------+
+| MCP Client                 | -- request -->  | MCP Server                   |
+|                            |  child stdin    |                              |
+|                            | <-- response -- |                              |
++----------------------------+  child stdout   +------------------------------+
 ```
 
-One practical rule matters immediately: **stdout belongs to the protocol stream.**
+The sequence is concrete:
 
-A cheerful debugging statement such as:
+1. `sys.executable` selects the same Python interpreter that started the Client.
+2. `args=[str(server_path)]` asks that interpreter to run `mcp_server.py`.
+3. The operating system creates pipes between the parent and child process.
+4. `stdio_client(parameters)` wraps those pipes as an MCP transport.
+5. `Client(transport)` writes MCP requests to the child process's **stdin** and reads MCP responses from its **stdout**.
 
 ```python
-print("made it to line 42")
+import asyncio
+from pathlib import Path
+import sys
+
+from mcp import Client, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+
+async def call_over_stdio() -> None:
+    server_path = Path(__file__).with_name("mcp_server.py")
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=[str(server_path)],
+    )
+    transport = stdio_client(parameters)
+
+    async with Client(transport) as client:
+        result = await client.call_tool("add", {"a": 6, "b": 7})
+        print(result.structured_content)
+
+
+asyncio.run(call_over_stdio())
 ```
 
-can corrupt the message channel. Use stderr or proper logging for Server diagnostics.
+#### Why a Server must not print to stdout
 
-### Streamable HTTP: cross a network/service boundary
-
-A remote Client can simply receive a URL:
+For this transport, stdout is not a human-facing console. It is the byte stream the Client is trying to parse as MCP messages. A stray debug line emitted **by the Server process** can appear before or between protocol messages and make the Client unable to decode the stream.
 
 ```python
-async with Client("http://127.0.0.1:8000/mcp") as client:
-    ...
+# Inside mcp_server.py: do not do this for a stdio Server.
+print("starting lookup_policy")
+
+# Send diagnostics somewhere outside the protocol stream instead.
+import sys
+print("starting lookup_policy", file=sys.stderr)
 ```
 
-and the teaching Server can be launched with:
+The Client program may print its own result normally: its stdout is its user's terminal. The restriction applies to the Server subprocess whose stdout was assigned as the MCP channel.
+
+The complete stdio Client keeps the imports, subprocess parameters, and async boundary together:
 
 ```python
-mcp.run(
-    "streamable-http",
-    host="127.0.0.1",
-    port=8000,
-)
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+import sys
+
+from mcp import Client, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+
+async def main() -> None:
+    server_path = Path(__file__).with_name("mcp_server.py")
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=[str(server_path)],
+    )
+
+    transport = stdio_client(parameters)
+    async with Client(transport) as client:
+        print("protocol:", client.protocol_version)
+        tools = await client.list_tools()
+        print("tools:", [tool.name for tool in tools.tools])
+        result = await client.call_tool("add", {"a": 6, "b": 7})
+        print("result:", result.structured_content)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Streamable HTTP: cross a service boundary
+
+With HTTP, the Client does **not** launch the Server. Start the Server independently; it may be another local process, a container, or a remote service. The Client only knows its MCP URL.
+
+```text
+Host process                         HTTP                         MCP Server service
++----------------+   POST /mcp   +--------+   request/response   +----------------+
+| MCP Client     | ------------> | network| -------------------> | MCP Server     |
+|                | <------------ |        | <------------------- |                |
++----------------+               +--------+                      +----------------+
+```
+
+The teaching example uses `127.0.0.1:8765`, which means ?this same computer.? Replacing that URL with a deployed HTTPS endpoint changes where the boundary sits; it does not remove the need for authentication, authorization, timeouts, or Host policy.
+
+The HTTP Server and Client are separate complete programs:
+
+```python
+from __future__ import annotations
+
+from mcp_server import mcp
+
+
+if __name__ == "__main__":
+    mcp.run("streamable-http", host="127.0.0.1", port=8765)
+```
+
+```python
+from __future__ import annotations
+
+import asyncio
+
+from mcp import Client
+
+
+async def main() -> None:
+    async with Client("http://127.0.0.1:8765/mcp") as client:
+        print("protocol:", client.protocol_version)
+        result = await client.call_tool("lookup_policy", {"topic": "shipping"})
+        print("result:", result.structured_content)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Run the stdio Client:
+
+```bash
+python stages/05-mcp/code/stdio_client.py
+```
+
+Run the HTTP Server in one terminal and keep it running. Then open a second terminal and run the Client:
+
+```bash
+python stages/05-mcp/code/streamable_http_server.py
+```
+
+```bash
+python stages/05-mcp/code/streamable_http_client.py
 ```
 
 Older material often treats standalone SSE as the default remote transport. Current MCP keeps compatibility paths, but SSE is on the deprecation path. New designs should start with stdio for local subprocesses and Streamable HTTP for remote services.
@@ -665,6 +945,120 @@ MCP Server
 Notice what did **not** happen: introducing MCP did not require us to redesign the model loop around MCP-specific objects. The provider boundary stays behind an adapter, exactly like we did for model providers earlier in the course.
 
 That is a strong sign that the abstraction is doing useful work.
+
+The complete bridge keeps the local Tool shape, async Registry, namespace, and remote error handling together:
+
+```python
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass
+import inspect
+from typing import Any, Awaitable, Callable
+
+from mcp import Client
+
+from mcp_server import mcp
+
+
+ToolHandler = Callable[..., Any | Awaitable[Any]]
+
+
+@dataclass(slots=True)
+class Tool:
+    name: str
+    description: str
+    parameters: dict[str, Any]
+    handler: ToolHandler
+
+    async def ainvoke(self, arguments: dict[str, Any]) -> Any:
+        result = self.handler(**arguments)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+
+class AsyncToolRegistry:
+    def __init__(self) -> None:
+        self._tools: dict[str, Tool] = {}
+
+    def register(self, tool: Tool) -> None:
+        if tool.name in self._tools:
+            raise ValueError(f"duplicate tool: {tool.name}")
+        self._tools[tool.name] = tool
+
+    def schemas(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            }
+            for tool in self._tools.values()
+        ]
+
+    async def execute(self, name: str, arguments: dict[str, Any]) -> Any:
+        if name not in self._tools:
+            raise KeyError(f"unknown tool: {name}")
+        return await self._tools[name].ainvoke(arguments)
+
+
+class MCPToolBridge:
+    def __init__(self, client: Client, *, namespace: str) -> None:
+        normalized = namespace.strip()
+        if not normalized:
+            raise ValueError("namespace must not be blank")
+        self._client = client
+        self._namespace = normalized
+
+    async def populate(self, registry: AsyncToolRegistry) -> None:
+        catalog = await self._client.list_tools()
+        for remote in catalog.tools:
+            remote_name = remote.name
+            local_name = f"{self._namespace}__{remote_name}"
+
+            async def call_remote(
+                _remote_name: str = remote_name,
+                **arguments: Any,
+            ) -> Any:
+                result = await self._client.call_tool(_remote_name, arguments)
+                if result.is_error:
+                    raise RuntimeError(f"remote MCP tool failed: {_remote_name}")
+                if result.structured_content is not None:
+                    return result.structured_content
+                return [block.model_dump(mode="json") for block in result.content]
+
+            registry.register(
+                Tool(
+                    name=local_name,
+                    description=remote.description or f"MCP tool {remote_name}",
+                    parameters=dict(remote.input_schema),
+                    handler=call_remote,
+                )
+            )
+
+
+async def main() -> None:
+    registry = AsyncToolRegistry()
+
+    async with Client(mcp) as client:
+        bridge = MCPToolBridge(client, namespace="handbook")
+        await bridge.populate(registry)
+
+        print("local tool names:", [item["name"] for item in registry.schemas()])
+        result = await registry.execute("handbook__add", {"a": 19, "b": 23})
+        print("bridged result:", result)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Run the bridge:
+
+```bash
+python stages/05-mcp/code/tiny_agent_mcp_bridge.py
+```
 
 ---
 
@@ -877,49 +1271,13 @@ The architecture is becoming more interesting, but the design rule is staying su
 
 ## 26. Run the chapter
 
-Install the MCP SDK used by the examples:
-
-```bash
-python -m pip install -r stages/05-mcp/code/requirements.txt
-```
-
-Start with the in-process Client:
-
-```bash
-python stages/05-mcp/code/in_memory_client.py
-```
-
-Then cross a subprocess boundary with stdio:
-
-```bash
-python stages/05-mcp/code/stdio_client.py
-```
-
-Run the MCP Tool bridge:
-
-```bash
-python stages/05-mcp/code/tiny_agent_mcp_bridge.py
-```
-
-The HTTP example uses two terminals. In the first:
-
-```bash
-python stages/05-mcp/code/streamable_http_server.py
-```
-
-and in the second:
-
-```bash
-python stages/05-mcp/code/streamable_http_client.py
-```
-
-Finally run the deterministic checks:
+All runnable mechanisms appear immediately after their explanation. Run the deterministic checks after changing the Server or bridge:
 
 ```bash
 python stages/05-mcp/code/checks.py
 ```
 
-They cover the current protocol version, separation of the three primitives, Resource Templates, structured Tool results, Tool errors, namespacing, and asynchronous bridge execution.
+The checks verify discovery, the three primitive kinds, Resource templates, structured Tool results, Tool errors, and namespaced async bridging.
 
 ---
 

@@ -169,6 +169,38 @@ class DeepSeekResponsesModel:
         return calls
 
 
+def format_conversation(
+    *,
+    instructions: str,
+    messages: tuple[dict[str, Any], ...],
+) -> str:
+    """Render the provider-neutral runtime history after the debug trace."""
+
+    lines = ["=== reconstructed model conversation ===", "system (instructions):"]
+    lines.append(f"  {instructions}")
+
+    for message in messages:
+        role = message["role"]
+        if role == "assistant" and message.get("tool_calls"):
+            lines.append("assistant (tool calls):")
+            for call in message["tool_calls"]:
+                arguments = json.dumps(
+                    call["arguments"], ensure_ascii=False, sort_keys=True
+                )
+                lines.append(
+                    f"  {call['name']}({arguments}) "
+                    f"[call_id={call['call_id']}]"
+                )
+        elif role == "tool":
+            lines.append(
+                f"tool ({message['tool_call_id']}): {message['content']}"
+            )
+        else:
+            lines.append(f"{role}: {message.get('content', '')}")
+
+    return "\n".join(lines)
+
+
 def main() -> None:
     model = DeepSeekResponsesModel(model=required_env("DEEPSEEK_MODEL"))
     runtime = AgentRuntime(
@@ -181,6 +213,8 @@ def main() -> None:
         "Read Tokyo's teaching weather and convert its temperature to Fahrenheit."
     )
     print("\nfinal_answer:", result.answer)
+    print()
+    print(format_conversation(instructions=model.instructions, messages=result.messages))
 
 
 if __name__ == "__main__":

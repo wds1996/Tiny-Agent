@@ -1,0 +1,13 @@
+Version 2026-08-01. Effective 2026-08-01. For orders placed on or after
+2026-08-01, customers may request original-payment refunds within 45 calendar
+days. A support approval is required before a refund is issued.
+
+For paid orders placed before 2026-08-01, the earlier 30-calendar-day refund
+window remains in effect. The new 45-day rule replaces the old 30-day rule only
+for orders placed on or after the policy effective date.
+
+After the applicable window, original-payment refunds are unavailable. Support
+may review a request for store credit under a separate process.
+
+This course document is fictional. It represents an internal policy that a model
+cannot safely know unless the application supplies it at answer time.

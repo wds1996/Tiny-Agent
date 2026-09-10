@@ -1,0 +1,18 @@
+Qdrant stores vectors together with payload metadata. A point can contain a
+chunk vector, the original chunk ID, source information, document version,
+tenant ID, language, and document type. Keeping this payload near the vector
+lets a retrieval result carry both a similarity score and enough identity to
+explain where the evidence came from.
+
+Queries can combine vector similarity with payload filters. For example, a
+support assistant can search only chunks whose tenant ID matches the trusted
+caller, whose language is Chinese, and whose policy version is current. The
+filter defines which chunks are eligible candidates before similarity ranks the
+remaining candidates. A model should never be allowed to remove an
+application-owned tenant or access filter merely by asking for it in text.
+
+Qdrant is useful when vectors, metadata, filtering, and persistence need to be
+managed by a dedicated service. Similarity still does not prove that a passage
+is current, authoritative, or sufficient for an answer. The application must
+choose which sources to ingest, preserve version metadata, and decide whether
+the retrieved evidence supports the requested conclusion.

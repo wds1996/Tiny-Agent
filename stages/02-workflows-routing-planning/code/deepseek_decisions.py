@@ -16,6 +16,15 @@ from planning import (
 from routing import HybridRouter, RouteDecision, SemanticRouter, dispatch
 
 
+ROUTER_INSTRUCTIONS = (
+    "Classify the user's request into exactly one route. "
+    "weather: weather or forecast questions. "
+    "account: invoices, billing, refunds, or account records. "
+    "general: everything else. "
+    "Return a short reason based only on the request."
+)
+
+
 def required_env(name: str) -> str:
     value = os.getenv(name)
     if value is None or not value.strip():
@@ -43,17 +52,12 @@ class DeepSeekSemanticRouter(SemanticRouter):
     def __init__(self, *, client: Any, model: str) -> None:
         self.client = client
         self.model = model
+        self.last_interaction: tuple[str, str, RouteDecision] | None = None
 
     def decide(self, request: str) -> RouteDecision:
         response = self.client.responses.parse(
             model=self.model,
-            instructions=(
-                "Classify the user's request into exactly one route. "
-                "weather: weather or forecast questions. "
-                "account: invoices, billing, refunds, or account records. "
-                "general: everything else. "
-                "Return a short reason based only on the request."
-            ),
+            instructions=ROUTER_INSTRUCTIONS,
             input=request,
             text_format=RouteDecision,
         )
@@ -61,6 +65,7 @@ class DeepSeekSemanticRouter(SemanticRouter):
         if response.status != "completed" or response.output_parsed is None:
             raise RuntimeError("The router did not return a valid RouteDecision.")
 
+        self.last_interaction = (ROUTER_INSTRUCTIONS, request, response.output_parsed)
         return response.output_parsed
 
 
@@ -68,6 +73,7 @@ class DeepSeekPlanner(Planner):
     def __init__(self, *, client: Any, model: str) -> None:
         self.client = client
         self.model = model
+        self.last_interaction: tuple[str, str, Plan] | None = None
 
     def make_plan(
         self,
@@ -126,16 +132,46 @@ class DeepSeekPlanner(Planner):
 
             if response.status != "completed" or response.output_parsed is None:
                 raise RuntimeError("The planner did not return a valid Plan.")
+            self.last_interaction = (
+                instructions + retry_note,
+                input_text,
+                response.output_parsed,
+            )
             return response.output_parsed
 
         raise AssertionError("unreachable")
+
+
+def format_structured_interaction(
+    *,
+    label: str,
+    instructions: str,
+    user_input: str,
+    output: Any,
+) -> str:
+    """Render a validated structured-output turn without provider internals."""
+
+    if not hasattr(output, "model_dump_json"):
+        raise TypeError("output must be a Pydantic model")
+    return "\n".join(
+        [
+            f"=== {label} model interaction ===",
+            "system (instructions):",
+            f"  {instructions}",
+            "user:",
+            f"  {user_input}",
+            "assistant (validated structured output):",
+            output.model_dump_json(indent=2),
+        ]
+    )
 
 
 def main() -> None:
     client = create_client()
     model = required_env("DEEPSEEK_MODEL")
 
-    router = HybridRouter(DeepSeekSemanticRouter(client=client, model=model))
+    semantic_router = DeepSeekSemanticRouter(client=client, model=model)
+    router = HybridRouter(semantic_router)
     request = "I was charged twice and I do not know which team should handle it."
     routing = router.route(request)
 
@@ -146,14 +182,39 @@ def main() -> None:
     print("dispatch:", dispatch(request, routing))
 
     print("\n=== planning ===")
+    task = "Read Tokyo's teaching weather and report Celsius and Fahrenheit."
+    planner = DeepSeekPlanner(client=client, model=model)
     answer = run_with_replanning(
-        "Read Tokyo's teaching weather and report Celsius and Fahrenheit.",
-        planner=DeepSeekPlanner(client=client, model=model),
+        task,
+        planner=planner,
         executor=PlanExecutor(primary_available=False),
         max_replans=1,
     )
     print("\nfinal answer:")
     print(answer)
+
+    print()
+    if semantic_router.last_interaction is not None:
+        instructions, user_input, output = semantic_router.last_interaction
+        print(
+            format_structured_interaction(
+                label="routing",
+                instructions=instructions,
+                user_input=user_input,
+                output=output,
+            )
+        )
+    if planner.last_interaction is not None:
+        instructions, user_input, output = planner.last_interaction
+        print()
+        print(
+            format_structured_interaction(
+                label="planning",
+                instructions=instructions,
+                user_input=user_input,
+                output=output,
+            )
+        )
 
 
 if __name__ == "__main__":

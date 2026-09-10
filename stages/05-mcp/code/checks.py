@@ -64,7 +64,7 @@ class Stage05Checks(unittest.TestCase):
                 first = result.contents[0]
                 self.assertIsInstance(first, types.TextResourceContents)
                 assert isinstance(first, types.TextResourceContents)
-                self.assertIn("30 days", first.text)
+                self.assertIn("45 calendar days", first.text)
 
         asyncio.run(scenario())
 

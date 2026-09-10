@@ -22,13 +22,35 @@ MCP，也就是 Model Context Protocol，主要就是来解决这层互操作问
 
 ## 1. 先回到我们已经有的 Tool
 
+Stage 04 用本地、有版本的文件作为外部证据。本章再向外移动一层边界：MCP Server 可以通过标准连接提供外部 Tool、Resource 与 Prompt。这不会让这些输入自动变得可信；Host 仍要执行前几章的证据与权限规则。
+
 Stage 01 里的 Tool 大概长这样：
 
 ```python
-Tool(
+from dataclasses import dataclass
+from typing import Any, Callable
+
+
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    description: str
+    parameters: dict[str, Any]
+    handler: Callable[..., Any]
+
+
+def get_weather(city: str) -> dict[str, str]:
+    return {"city": city, "forecast": "sunny"}
+
+
+weather_tool = Tool(
     name="get_weather",
     description="Get teaching weather data.",
-    parameters={...},
+    parameters={
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    },
     handler=get_weather,
 )
 ```
@@ -133,6 +155,8 @@ MCP Server 则负责暴露能力和上下文。例如文件系统 Server、GitHu
 
 ## 4. MCP 不只有 Tool
 
+下面三个声明都来自下一节的完整教学 Server。先用它们区分三种含义，然后运行完整 Server，而不是只复制其中一个 decorator。
+
 很多人第一次接触 MCP，会自然地把它理解成“远程 Tool 协议”。这样理解只对了一部分。
 
 MCP 最核心的三种 Server Primitive 是 **Tools、Resources、Prompts**。它们解决的是三个不同问题。
@@ -190,7 +214,7 @@ Prompt 不是“Server 直接替模型回答”。它提供的是一段可以交
 
 ## 5. 写一个最小 MCP Server
 
-当前 Python SDK v2 的高层 Server 类叫 `MCPServer`：
+导入mcp的包，当前 Python SDK v2 的高层 Server 类叫 `MCPServer`：
 
 ```python
 from mcp.server import MCPServer
@@ -217,6 +241,78 @@ def explain_mcp(topic: str, audience: str = "beginner") -> str:
 这里你应该留意一件很舒服的事情：Python 类型标注不只是给编辑器看的。SDK 会根据函数签名生成 Tool 的输入 schema。也就是说，Server 端不用再手写一份完全独立的 JSON Schema，然后祈祷它和函数参数永远同步。
 
 但“SDK 能生成 schema”不等于“Server 可以随便暴露函数”。什么函数应该公开，仍然是应用设计问题。
+
+完整的教学 Server 在 [`code/mcp_server.py`](code/mcp_server.py)。下面各个 Tool、Resource 与 Prompt 都来自这个文件：
+
+```python
+from __future__ import annotations
+
+from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+
+
+HANDBOOK = {
+    "refunds": (
+        "For orders placed on or after 2026-08-01, refunds to the original "
+        "payment method are available within 45 calendar days. This replaces "
+        "the earlier 30-day policy."
+    ),
+    "shipping": (
+        "Standard shipping normally takes 3-5 business days after dispatch."
+    ),
+}
+
+mcp = MCPServer(
+    "Tiny-Agent Stage 05",
+    instructions=(
+        "Teaching server for MCP Tools, Resources, and Prompts. "
+        "The host remains responsible for deciding which capabilities are trusted and exposed."
+    ),
+)
+
+
+@mcp.tool()
+def add(a: int, b: int) -> dict[str, int]:
+    """Add two integers and return structured data."""
+    return {"result": a + b}
+
+
+@mcp.tool()
+def lookup_policy(topic: str) -> dict[str, str]:
+    """Return one handbook policy by topic."""
+    normalized = topic.strip().lower()
+    if normalized not in HANDBOOK:
+        raise ToolError(f"unknown policy topic: {topic}")
+    return {"topic": normalized, "policy": HANDBOOK[normalized]}
+
+
+@mcp.resource("tiny-agent://about")
+def about() -> str:
+    """Describe the teaching server."""
+    return "Tiny-Agent Stage 05 demonstrates MCP interoperability boundaries."
+
+
+@mcp.resource("tiny-agent://handbook/{topic}")
+def handbook(topic: str) -> str:
+    """Read a handbook entry by URI."""
+    normalized = topic.strip().lower()
+    if normalized not in HANDBOOK:
+        raise ValueError(f"unknown handbook topic: {topic}")
+    return HANDBOOK[normalized]
+
+
+@mcp.prompt()
+def explain_mcp(topic: str, audience: str = "beginner") -> str:
+    """Create a reusable model-facing instruction about MCP."""
+    return (
+        f"Explain {topic} to a {audience}. "
+        "Start from the concrete problem, then give one MCP example and one non-example."
+    )
+
+
+if __name__ == "__main__":
+    mcp.run()
+```
 
 ---
 
@@ -251,6 +347,67 @@ client.protocol_version == "2026-07-28"
 ```
 
 这不是我们在代码里硬写死版本，而是 Client 和 Server 的协议行为决定的。
+
+在运行本章任何示例之前，先安装一次依赖：
+
+```bash
+python -m pip install -r stages/05-mcp/code/requirements.txt
+```
+
+第一个完整 Client 在 [`code/in_memory_client.py`](code/in_memory_client.py)。它会发现所有 Primitive，再读取一个 Resource 并渲染一个 Prompt：
+
+```python
+from __future__ import annotations
+
+import asyncio
+
+from mcp import Client
+import mcp.types as types
+
+from mcp_server import mcp
+
+
+async def main() -> None:
+    async with Client(mcp) as client:
+        print("protocol:", client.protocol_version)
+
+        tools = await client.list_tools()
+        print("tools:", [tool.name for tool in tools.tools])
+
+        resources = await client.list_resources()
+        templates = await client.list_resource_templates()
+        print("resources:", [str(resource.uri) for resource in resources.resources])
+        print("resource templates:", [template.uri_template for template in templates.resource_templates])
+
+        prompts = await client.list_prompts()
+        print("prompts:", [prompt.name for prompt in prompts.prompts])
+
+        tool_result = await client.call_tool("add", {"a": 20, "b": 22})
+        print("structured tool result:", tool_result.structured_content)
+
+        resource_result = await client.read_resource("tiny-agent://handbook/refunds")
+        first_resource = resource_result.contents[0]
+        if isinstance(first_resource, types.TextResourceContents):
+            print("resource text:", first_resource.text)
+
+        prompt_result = await client.get_prompt(
+            "explain_mcp",
+            {"topic": "Tools versus Resources", "audience": "beginner"},
+        )
+        first_message = prompt_result.messages[0]
+        if isinstance(first_message.content, types.TextContent):
+            print("prompt text:", first_message.content.text)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+现在运行：
+
+```bash
+python stages/05-mcp/code/in_memory_client.py
+```
 
 ---
 
@@ -314,7 +471,7 @@ result.structured_content
 result.is_error
 ```
 
-`content` 是面向模型或人类消费的内容块；`structured_content` 更适合应用程序继续处理结构化结果；`is_error` 表示 Tool 执行是否作为 MCP Tool error 返回。
+`content` 是面向模型或人类识别的内容块；`structured_content` 更适合应用程序继续处理结构化结果；`is_error` 表示 Tool 执行是否作为 MCP Tool error 返回。
 
 比如我们的 `add` 返回：
 
@@ -365,6 +522,8 @@ Tool execution failure
 
 为什么要分？因为处理方式不同。网络断了也许值得重连；`refund_order` 因为订单不存在而失败，就不应该假装重连三次能让订单凭空出现。
 
+`lookup_policy()` 遇到未知 topic 时会抛出 SDK 的 `ToolError`。它以正常的 MCP Tool result 返回 `is_error=True`，不会把预期内的业务失败变成 Server crash。
+
 ---
 
 ## 10. Resource 为什么用 URI，而不是函数名？
@@ -379,7 +538,7 @@ result = await client.read_resource(
 
 因为 Resource 的心智模型是“读某个地址上的内容”。
 
-我们还可以定义模板：
+我们还可以定义模板（Resource Template）：
 
 ```python
 @mcp.resource("tiny-agent://handbook/{topic}")
@@ -403,7 +562,7 @@ await client.list_resources()
 await client.list_resource_templates()
 ```
 
-一个 Template 不是一个已经存在的具体 URI。它更像“这类地址我会处理”。
+一个 Resource Template 不是一个已经存在的具体 URI。它更像“这类地址我会处理”。
 
 这和 Web 路由很像：`/users/42` 是一个具体地址，`/users/{id}` 是一个匹配模板。别把路线图当成某个具体门牌号。
 
@@ -531,77 +690,175 @@ MCP 使用 JSON-RPC 风格的方法调用。例如现代 HTTP Tool call 可以�
 
 ---
 
-## 15. 三种连接方式，先分清“边界在哪里”
+## 15. 三种连接方式：先弄清消息跨过哪一层边界
 
-Python SDK v2 的高层 `Client` 可以连接不同形态的 Server。对这一章来说，最值得掌握的是三种。
+MCP Client 始终要向 MCP Server 发送协议请求。三种方式的区别在于：**Server 运行在哪里**，因此消息需要跨过哪一种边界。
+
+| 方式 | Server 在哪里运行 | MCP 消息通过什么传递 | 最适合先学什么 |
+| --- | --- | --- | --- |
+| 进程内 | 与 Host 在同一个 Python 进程 | SDK 的内存连接 | Tool、Resource、Prompt 的语义与测试。 |
+| stdio | 同一台机器上的子进程 | 子进程的 stdin 与 stdout | IDE 启动本地辅助程序这类集成。 |
+| Streamable HTTP | 独立启动的本地或远程服务 | 发往 MCP URL 的 HTTP 请求 | 多个 Host 共用的服务。 |
+
+这三种方式不会改变 Tool、Resource、Prompt 的含义；改变的只是 transport 边界。
 
 ### 进程内：先学语义
 
+这里的 `mcp` 是 `mcp_server.py` 中创建的 `MCPServer` 对象。Client 与 Server 是同一个 Python 进程里的普通对象：没有子进程、TCP 端口或 HTTP 请求。
+
 ```python
-async with Client(mcp) as client:
-    ...
+import asyncio
+
+from mcp import Client
+from mcp_server import mcp
+
+
+async def inspect_in_memory_server() -> None:
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        print([tool.name for tool in tools.tools])
+
+
+asyncio.run(inspect_in_memory_server())
 ```
 
-Client 和 Server 在同一个 Python 进程里。没有真实 I/O，非常适合测试和理解 Primitive。
+它仍然会经历 MCP 的 discovery 和 Tool call；它不测试子进程启动、管道处理、HTTP 或网络授权。因此它适合先理解语义，却不能代替后面两种连接方式。
 
 ### stdio：本地进程边界
 
-如果 Server 是一个独立子进程，可以使用 stdio：
+stdio 中，Host 会启动第二个 Python 进程。本例中 Host 运行 `stdio_client.py`，再把 `mcp_server.py` 启动为它的子进程。
 
 ```python
-parameters = StdioServerParameters(
-    command=sys.executable,
-    args=[str(server_path)],
-)
+from __future__ import annotations
 
-transport = stdio_client(parameters)
+import asyncio
+from pathlib import Path
+import sys
 
-async with Client(transport) as client:
-    ...
+from mcp import Client, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+
+async def main() -> None:
+    server_path = Path(__file__).with_name("mcp_server.py")
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=[str(server_path)],
+    )
+
+    transport = stdio_client(parameters)
+    async with Client(transport) as client:
+        print("protocol:", client.protocol_version)
+        tools = await client.list_tools()
+        print("tools:", [tool.name for tool in tools.tools])
+        result = await client.call_tool("add", {"a": 6, "b": 7})
+        print("result:", result.structured_content)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 这时大致是：
 
 ```text
-Host process
-    │
-    │ stdin / stdout
-    ▼
-MCP Server subprocess
+Host process: stdio_client.py                  Server subprocess: mcp_server.py
++----------------------------+                 +------------------------------+
+| MCP Client                 | -- request -->  | MCP Server                   |
+|                            |  child stdin    |                              |
+|                            | <-- response -- |                              |
++----------------------------+  child stdout   +------------------------------+
 ```
 
-这里有一条很实用的规则：**stdio Server 的 stdout 是协议通道。**
+这几行代码实际发生的事是：
 
-所以不要顺手：
+1. `sys.executable` 选择启动 Client 时所使用的同一个 Python 解释器。
+2. `args=[str(server_path)]` 要求该解释器运行 `mcp_server.py`。
+3. 操作系统在父进程与子进程之间创建两条管道。
+4. `stdio_client(parameters)` 把这两条管道包装成 MCP transport。
+5. `Client(transport)` 把 MCP 请求写入子进程的 **stdin**，再从子进程的 **stdout** 读取 MCP 响应。
+
+#### 为什么 stdio Server 不能向 stdout 打印调试文字？
+
+在这种 transport 中，stdout 不是给人看的终端；它是 Client 正在按 MCP 消息解析的字节流。**Server 进程**写出的一条调试文字，可能插在协议消息之前或中间，导致 Client 无法正确解码整条流。
 
 ```python
-print("我看看程序跑到哪了")
+# 写在 mcp_server.py 中时，不要这样做：
+print("starting lookup_policy")
+
+# 诊断信息应离开协议通道：
+import sys
+print("starting lookup_policy", file=sys.stderr)
 ```
 
-然后把调试文字塞进 JSON-RPC 消息流里。真要打日志，用 stderr 或 logging。
+Client 程序当然可以正常 `print` 自己的结果，因为 Client 的 stdout 就是给用户看的终端。限制只作用于 stdout 已经被分配为 MCP 通道的 Server 子进程。
+
+运行 stdio Client：
+
+```bash
+python stages/05-mcp/code/stdio_client.py
+```
 
 ### Streamable HTTP：远程服务边界
 
-远程服务最直接：
+HTTP 模式下，Client **不会**启动 Server。你要先独立启动 Server；它可以是本地进程、容器或远程服务。Client 只知道 MCP 的 URL。
+
+```text
+Host process                         HTTP                         MCP Server service
++----------------+   POST /mcp   +--------+   request/response   +----------------+
+| MCP Client     | ------------> | network| -------------------> | MCP Server     |
+|                | <------------ |        | <------------------- |                |
++----------------+               +--------+                      +----------------+
+```
+
+教学示例使用 `127.0.0.1:8765`，即“当前这台电脑”。把 URL 换成已部署的 HTTPS 地址，只是改变边界的位置；认证、授权、超时与 Host policy 仍然必须由系统设计。
+
+HTTP Server 与 Client 是两个独立的完整程序：
+
+Client 的连接代码是：
 
 ```python
-async with Client("http://127.0.0.1:8000/mcp") as client:
-    ...
+from __future__ import annotations
+
+from mcp_server import mcp
+
+
+if __name__ == "__main__":
+    mcp.run("streamable-http", host="127.0.0.1", port=8765)
 ```
 
 Server 端可以：
-
 ```python
-mcp.run(
-    "streamable-http",
-    host="127.0.0.1",
-    port=8000,
-)
+from __future__ import annotations
+
+import asyncio
+
+from mcp import Client
+
+
+async def main() -> None:
+    async with Client("http://127.0.0.1:8765/mcp") as client:
+        print("protocol:", client.protocol_version)
+        result = await client.call_tool("lookup_policy", {"topic": "shipping"})
+        print("result:", result.structured_content)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-这时 MCP Server 已经跨越网络边界。
+这时 MCP Server 已经跨越服务边界。HTTP 的响应体负责传输协议消息，不再复用 Server 的 stdout。
 
-老教程里常见的 standalone SSE transport 仍可能出现在兼容代码里，但在当前架构中已经进入淘汰路线。新项目优先理解 stdio 和 Streamable HTTP，不需要先把历史包袱背在身上。
+
+运行HTTP 需要两个终端。先在第一个终端运行 Server，并让它保持运行；再打开第二个终端运行 Client：
+
+```bash
+python stages/05-mcp/code/streamable_http_server.py
+```
+
+```bash
+python stages/05-mcp/code/streamable_http_client.py
+```
 
 ---
 
@@ -693,6 +950,120 @@ MCP Server
 最重要的是：MCP 没有把我们前四章的架构推倒。它只是接到了已经存在的 Tool abstraction 后面。
 
 好的协议集成往往就是这样：新能力进入系统，但旧边界不用集体搬家。
+
+完整 Bridge 同时保留了本地 Tool 形状、async Registry、namespace 与远程错误处理：
+
+```python
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass
+import inspect
+from typing import Any, Awaitable, Callable
+
+from mcp import Client
+
+from mcp_server import mcp
+
+
+ToolHandler = Callable[..., Any | Awaitable[Any]]
+
+
+@dataclass(slots=True)
+class Tool:
+    name: str
+    description: str
+    parameters: dict[str, Any]
+    handler: ToolHandler
+
+    async def ainvoke(self, arguments: dict[str, Any]) -> Any:
+        result = self.handler(**arguments)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+
+class AsyncToolRegistry:
+    def __init__(self) -> None:
+        self._tools: dict[str, Tool] = {}
+
+    def register(self, tool: Tool) -> None:
+        if tool.name in self._tools:
+            raise ValueError(f"duplicate tool: {tool.name}")
+        self._tools[tool.name] = tool
+
+    def schemas(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            }
+            for tool in self._tools.values()
+        ]
+
+    async def execute(self, name: str, arguments: dict[str, Any]) -> Any:
+        if name not in self._tools:
+            raise KeyError(f"unknown tool: {name}")
+        return await self._tools[name].ainvoke(arguments)
+
+
+class MCPToolBridge:
+    def __init__(self, client: Client, *, namespace: str) -> None:
+        normalized = namespace.strip()
+        if not normalized:
+            raise ValueError("namespace must not be blank")
+        self._client = client
+        self._namespace = normalized
+
+    async def populate(self, registry: AsyncToolRegistry) -> None:
+        catalog = await self._client.list_tools()
+        for remote in catalog.tools:
+            remote_name = remote.name
+            local_name = f"{self._namespace}__{remote_name}"
+
+            async def call_remote(
+                _remote_name: str = remote_name,
+                **arguments: Any,
+            ) -> Any:
+                result = await self._client.call_tool(_remote_name, arguments)
+                if result.is_error:
+                    raise RuntimeError(f"remote MCP tool failed: {_remote_name}")
+                if result.structured_content is not None:
+                    return result.structured_content
+                return [block.model_dump(mode="json") for block in result.content]
+
+            registry.register(
+                Tool(
+                    name=local_name,
+                    description=remote.description or f"MCP tool {remote_name}",
+                    parameters=dict(remote.input_schema),
+                    handler=call_remote,
+                )
+            )
+
+
+async def main() -> None:
+    registry = AsyncToolRegistry()
+
+    async with Client(mcp) as client:
+        bridge = MCPToolBridge(client, namespace="handbook")
+        await bridge.populate(registry)
+
+        print("local tool names:", [item["name"] for item in registry.schemas()])
+        result = await registry.execute("handbook__add", {"a": 19, "b": 23})
+        print("bridged result:", result)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+运行 Bridge：
+
+```bash
+python stages/05-mcp/code/tiny_agent_mcp_bridge.py
+```
 
 ---
 
@@ -811,64 +1182,7 @@ not = proof of safety
 
 ---
 
-## 22. 当前协议为什么更适合服务化部署？
-
-`2026-07-28` 的无会话核心还有一个很实际的工程收益：现代 Streamable HTTP 请求不再依赖某个长期 Session ID 才能继续。
-
-这意味着服务更容易放到普通负载均衡后面：请求可以落到不同副本，而不必因为 MCP 协议本身强制做 sticky session。
-
-另外，现代 HTTP 请求还会暴露 `Mcp-Method`、`Mcp-Name` 等头部。网关可以更容易知道：
-
-```text
-这是 tools/call
-Tool name 是 lookup_policy
-```
-
-从而做路由、限流和观测。
-
-但别把这理解成“MCP 2.0 已经替你解决生产部署”。TLS、进程管理、超时、真实 OAuth 策略、主机 allowlist、容量规划仍然是你的系统问题。
-
-协议让边界更清楚，不会把 DevOps 部门蒸发掉。
-
----
-
-## 23. 看到旧教程时，怎样判断自己是不是穿越了？
-
-当前 Python SDK 的稳定主线是 v2。几个很明显的旧代码信号包括：
-
-```python
-from mcp.server.fastmcp import FastMCP
-```
-
-当前高层类已经改成：
-
-```python
-from mcp.server import MCPServer
-```
-
-另一个信号是业务代码自己管理：
-
-```python
-ClientSession(...)
-await session.initialize()
-```
-
-低层 `ClientSession` 仍然存在，但对于当前 v2 的普通应用，优先使用高层：
-
-```python
-async with Client(...) as client:
-    ...
-```
-
-它会自动处理现代协议和旧 Server fallback。
-
-第三个信号是把 standalone SSE 当作新项目的默认远程 transport。SSE 仍然可能为了兼容存在，但新设计优先看 Streamable HTTP。
-
-旧教程不是“错”，它们只是回答了旧版本的问题。技术学习里最危险的不是旧知识，而是没看日期的旧知识。
-
----
-
-## 24. MCP 不负责什么？
+## 22. MCP 不负责什么？
 
 学到这里，最重要的不是把 MCP 能力越想越大，而是知道它在哪停下来。
 
@@ -898,7 +1212,7 @@ Tool 执行失败该不该重试
 
 ---
 
-## 25. 把这一章和前面四章真正串起来
+## 23. 把这一章和前面四章真正串起来
 
 现在我们可以把从 Stage 00 到 Stage 05 的主线画出来：
 
@@ -926,55 +1240,19 @@ Stage 05
 
 ---
 
-## 26. 运行本章代码
+## 24. 运行本章代码
 
-安装当前 MCP Python SDK：
-
-```bash
-python -m pip install -r stages/05-mcp/code/requirements.txt
-```
-
-先跑进程内示例：
-
-```bash
-python stages/05-mcp/code/in_memory_client.py
-```
-
-然后跑 stdio 子进程：
-
-```bash
-python stages/05-mcp/code/stdio_client.py
-```
-
-再看 Tool Bridge：
-
-```bash
-python stages/05-mcp/code/tiny_agent_mcp_bridge.py
-```
-
-HTTP 示例需要两个终端。第一个：
-
-```bash
-python stages/05-mcp/code/streamable_http_server.py
-```
-
-第二个：
-
-```bash
-python stages/05-mcp/code/streamable_http_client.py
-```
-
-最后运行离线检查：
+可运行的机制都放在对应讲解之后。修改 Server 或 Bridge 后，运行确定性检查：
 
 ```bash
 python stages/05-mcp/code/checks.py
 ```
 
-这些检查会验证当前协议版本、三种 Primitive 的区分、Resource Template、结构化 Tool result、Tool error，以及 MCP Tool 到异步本地 Registry 的桥接行为。
+这些检查验证 discovery、三种 Primitive、Resource Template、结构化 Tool result、Tool error 与带 namespace 的异步 Bridge。
 
 ---
 
-## 27. 动手练习
+## 25. 动手练习
 
 先给 `mcp_server.py` 增加一个 `tiny-agent://handbook/{topic}` 之外的新 Resource，例如 `tiny-agent://faq/{question}`。不要顺手把它写成 Tool。然后解释：为什么这个能力的语义是“读取数据”，而不是“执行动作”？
 
@@ -992,7 +1270,7 @@ convert_temperature
 
 ---
 
-## 28. 本章收尾：插座统一以后，下一个问题是“东西该不该留下来”
+## 26. 本章收尾：插座统一以后，下一个问题是“东西该不该留下来”
 
 到这里，我们的 Agent 已经不只是会调用几段写死在本地 Python 里的函数。Host 可以通过一个标准协议发现外部 Tools、读取 Resources、取得 Prompts，再把真正允许的能力接回自己的 Runtime。
 

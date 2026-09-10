@@ -74,7 +74,10 @@ def main() -> None:
         answer_generator=EvidenceBoundAnswerer(),
     )
 
-    result = rag.run("Which backend supports payload metadata filtering?", top_k=2)
+    result = rag.run(
+        "Order 2026-08-03 original payment refund current policy",
+        top_k=2,
+    )
 
     print("status:", result.status)
     print("answer:", result.answer)

@@ -315,23 +315,75 @@ conditional edges
 reducers
 ```
 
-Node registration is just a name-to-function mapping:
+Before registering any outgoing edge, the builder rejects an impossible source or a second outgoing transition from the same source:
 
 ```python
-def add_node(self, name, node):
+def _ensure_no_outgoing_edge(self, source: str) -> None:
+    if source == END:
+        raise ValueError("END cannot have an outgoing edge")
+    if source in self._edges or source in self._conditional_edges:
+        raise ValueError(f"{source!r} already has an outgoing edge")
+```
+
+Node registration is a name-to-function mapping:
+
+```python
+def add_node(self, name: str, node: Node) -> None:
+    if not name or name in {START, END}:
+        raise ValueError(f"invalid node name: {name!r}")
     if name in self._nodes:
         raise ValueError(f"duplicate node: {name!r}")
-
     self._nodes[name] = node
 ```
 
-A fixed edge stores:
+A fixed edge is a source-to-destination mapping. Its registration method stores that mapping after the shared validation:
 
-```text
-source -> destination
+```python
+def add_edge(self, source: str, destination: str) -> None:
+    self._ensure_no_outgoing_edge(source)
+    self._edges[source] = destination
 ```
 
-A conditional edge stores one extra piece: a router that reads state and returns a route name.
+For example, `add_edge("draft", "review")` produces:
+
+```python
+self._edges == {"draft": "review"}
+```
+
+A conditional edge stores a router and a route-name-to-destination mapping. The router reads state; the mapping, rather than the router, defines the destinations that the graph permits.
+
+```python
+@dataclass(frozen=True, slots=True)
+class ConditionalEdge:
+    router: Router
+    destinations: dict[str, str]
+
+
+def add_conditional_edges(
+    self,
+    source: str,
+    router: Router,
+    destinations: Mapping[str, str],
+) -> None:
+    self._ensure_no_outgoing_edge(source)
+    if not destinations:
+        raise ValueError("conditional edges need at least one destination")
+    self._conditional_edges[source] = ConditionalEdge(
+        router=router,
+        destinations=dict(destinations),
+    )
+```
+
+For example, `add_conditional_edges("review", route_after_review, {"revise": "revise", "accept": "finish"})` stores both the decision function and this allowed route table:
+
+```python
+{
+    "review": ConditionalEdge(
+        router=route_after_review,
+        destinations={"revise": "revise", "accept": "finish"},
+    )
+}
+```
 
 At this point, the graph runtime should look much less mystical.
 
@@ -362,13 +414,35 @@ while current != END:
     current = self._next_node(current, state)
 ```
 
+`_next_node()` is the missing bridge between those stored structures and the loop. It first checks for a conditional edge, validates the route name, and otherwise follows the fixed edge:
+
+```python
+def _next_node(self, source: str, state: State) -> str:
+    branch = self._conditional_edges.get(source)
+    if branch is not None:
+        route = branch.router(dict(state))
+        try:
+            return branch.destinations[route]
+        except KeyError as exc:
+            allowed = ", ".join(sorted(branch.destinations))
+            raise RuntimeError(
+                f"router from {source!r} returned {route!r}; "
+                f"allowed routes: {allowed}"
+            ) from exc
+
+    try:
+        return self._edges[source]
+    except KeyError as exc:
+        raise RuntimeError(f"{source!r} has no outgoing edge") from exc
+```
+
 So graphs did not abolish `while`.
 
 They move control-flow declarations out of one increasingly complicated loop and into explicit topology.
 
 A conventional loop might eventually become:
 
-```python
+```text
 while True:
     if phase == "draft":
         ...
@@ -430,7 +504,7 @@ But what about `events`?
 
 If we replace it too:
 
-```python
+```text
 ["classified"] -> ["revised"]
 ```
 
@@ -444,7 +518,9 @@ If `events` represents accumulated history, we probably want:
 
 That is what reducers define.
 
-A reducer is conceptually:
+Think of `draft` as the current version of one document: the new version replaces the old one. Think of `events` as a logbook: a new entry belongs after the earlier entries. Both are stored in State, but they answer different questions and therefore need different merge rules.
+
+A reducer is the rule for one State field:
 
 ```python
 new_value = reducer(old_value, update_value)
@@ -457,20 +533,46 @@ def append_events(left, right):
     return [*left, *right]
 ```
 
-The runtime can then apply updates like this:
+Here is the complete merge for this exact State and update. Run it as one block:
 
 ```python
-reducer = self._reducers.get(key)
+def append_events(left, right):
+    return [*left, *right]
 
-if reducer is None or key not in state:
-    state[key] = right
-else:
-    state[key] = reducer(state[key], right)
+
+def apply_update(state, update, reducers):
+    for key, right in update.items():
+        reducer = reducers.get(key)
+        if reducer is None or key not in state:
+            state[key] = right
+        else:
+            state[key] = reducer(state[key], right)
+
+state = {
+    "draft": "first",
+    "events": ["classified"],
+}
+update = {
+    "draft": "second",
+    "events": ["revised"],
+}
+
+apply_update(state, update, reducers={"events": append_events})
+print(state)
 ```
 
-This tiny mechanism carries a lot of meaning.
+It prints:
 
-When a node returns `"events": ["revised"]`, the node does not decide whether that means “replace” or “append.” The update semantics belong to the definition of that state channel.
+```python
+{
+    "draft": "second",
+    "events": ["classified", "revised"],
+}
+```
+
+`draft` has no reducer, so the runtime replaces it. `events` is configured with `append_events`, so the runtime combines the old history with the node's new entry. The node never has to read, copy, and return the old event history itself.
+
+This is the practical value: every Node can return only the fields it owns, while the graph owns the consistent merge rule. When a node returns `"events": ["revised"]`, it does not decide whether that means “replace” or “append”; the update semantics belong to the definition of that State field.
 
 ---
 
@@ -593,7 +695,16 @@ That node returns:
 }
 ```
 
-Execution returns to `review`, which now chooses `accept`, and the graph reaches `finish`.
+Execution returns to `review`, which now accepts the draft:
+
+```python
+{
+    "review": "accept",
+    "events": ["review accepted response"],
+}
+```
+
+The conditional edge sends the graph to `finish`.
 
 Run it:
 
@@ -643,6 +754,13 @@ and stops when the trace reaches that budget.
 
 This is the same engineering idea we used in Stage 01 with `max_steps` and Stage 02 with `max_replans`: dynamic control needs an external bound.
 
+The check is deliberately outside every node:
+
+```python
+if len(trace) >= max_steps:
+    raise RuntimeError(f"graph exceeded max_steps={max_steps}")
+```
+
 Do not ask a node to promise that it will “probably stop soon.”
 
 A component that is already looping is not the ideal authority for deciding whether it is looping.
@@ -677,11 +795,11 @@ That distinction matters.
 
 ## 13. Meet LangGraph, then map the same mechanism
 
-[LangGraph](https://langchain-ai.github.io/langgraph/) is LangChain's stateful agent and workflow orchestration framework. It turns State, Nodes, Edges, conditional routing, and cycles into an executable graph, which suits programs that need multi-step, resumable, or observable execution.
+[LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) is LangChain's stateful agent and workflow orchestration framework. It turns State, Nodes, Edges, conditional routing, and cycles into an executable graph, which suits programs that need multi-step, resumable, or observable execution.
 
-If LangGraph is new to you, start with the official [overview](https://langchain-ai.github.io/langgraph/) and [Workflows and agents tutorial](https://langchain-ai.github.io/langgraph/tutorials/workflows/). They cover the framework API, common workflow patterns, and broader production features.
+If LangGraph is new to you, start with the official [overview](https://docs.langchain.com/oss/python/langgraph/overview) and [Workflows and agents guide](https://docs.langchain.com/oss/python/langgraph/workflows-agents). They cover the framework API, common workflow patterns, and broader production features.
 
-This tutorial does not repeat a general LangGraph course. Sections 01, 02 already unpacked the graph-runtime mechanism in pure Python. From here, we express the same State, Nodes, Edges, and routing logic with LangGraph, focusing on how agent state and control flow map to framework code.
+This tutorial does not repeat a general LangGraph course. Sections 1–12 already unpacked the graph-runtime mechanism in pure Python. From here, we express the same State, Nodes, Edges, and routing logic with LangGraph, focusing on how agent state and control flow map to framework code.
 
 Install the Stage 03 dependency:
 
@@ -715,6 +833,8 @@ events: Annotated[list[str], add]
 It tells LangGraph to combine new `events` updates with `operator.add`.
 
 Fields without an explicit reducer use replacement semantics by default.
+
+`TypedDict` describes the fields a state dictionary may contain. `total=False` lets fields produced by later nodes be absent from the initial state; it does not create defaults or perform runtime validation. Because `events` uses `add`, each node must return only its new events. Returning the entire event history would add the old entries a second time.
 
 That is the same problem we just solved in our miniature runtime.
 
@@ -821,7 +941,7 @@ Now the methods are easier to remember because each one corresponds to a mechani
 
 ### Run the connected pieces
 
-The `draft`, `review`, `revise`, `finish`, and `route_after_review` definitions used in sections 14–15 live in `langgraph_workflow.py`. Registration statements alone need those definitions. From that file's directory, this is a complete entry point:
+The `draft`, `review`, `revise`, `finish`, and `route_after_review` definitions used in sections 14–15 live in `langgraph_workflow.py`. Registration statements alone need those definitions. Start a Python shell in that file's `code/` directory, then run this complete entry point:
 
 ```python
 from langgraph_workflow import build_graph, initial_state
@@ -832,8 +952,6 @@ print(result["answer"])
 assert result["revisions"] == 1
 assert len(result["events"]) == 6
 ```
-
-`TypedDict` describes dictionary fields; `total=False` allows fields produced by later nodes to be absent initially. It does not supply defaults or runtime validation. `Annotated[list[str], add]` attaches a merge rule to the type: LangGraph concatenates event lists. Nodes must return only new events; returning the entire history duplicates earlier entries.
 
 ## 16. `invoke()` returns the accumulated state; `stream()` exposes the path as it runs
 
@@ -1095,12 +1213,12 @@ API errors, malformed JSON, unknown tools, and invalid arguments stop execution 
 
 ## 20. Converting a while loop into a graph does not change authority
 
-Inside the graph:
+Inside the graph, the proposal-only part of the node is:
 
 ```python
 def model_node(state):
     turn = model.generate(state["messages"])
-    ...
+    return {"pending_tool_calls": list(turn.tool_calls)}
 ```
 
 The model still only proposes what should happen next.
@@ -1165,7 +1283,7 @@ Because graphs have a cost too.
 
 A small ReAct loop:
 
-```python
+```text
 while True:
     turn = model.generate(...)
     ...

@@ -6,7 +6,7 @@ from mcp import Client
 
 
 async def main() -> None:
-    async with Client("http://127.0.0.1:8000/mcp") as client:
+    async with Client("http://127.0.0.1:8765/mcp") as client:
         print("protocol:", client.protocol_version)
         result = await client.call_tool("lookup_policy", {"topic": "shipping"})
         print("result:", result.structured_content)

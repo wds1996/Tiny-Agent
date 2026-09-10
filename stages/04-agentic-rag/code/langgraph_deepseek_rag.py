@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Sequence
+from typing import Any, Literal, Protocol, Sequence
 
-from basic_rag import BasicRAG
+from langgraph.graph import END, START, StateGraph
+from typing_extensions import TypedDict
+
 from retrieval import (
     HashEmbeddingModel,
     InMemoryVectorRetriever,
@@ -20,6 +22,18 @@ ANSWER_INSTRUCTIONS = (
 )
 
 
+class AnswerGenerator(Protocol):
+    def answer(self, *, question: str, evidence: Sequence[SearchResult]) -> str:
+        ...
+
+
+class LiveRAGState(TypedDict, total=False):
+    question: str
+    evidence: list[SearchResult]
+    status: str
+    answer: str
+
+
 def required_env(name: str) -> str:
     value = os.getenv(name)
     if value is None or not value.strip():
@@ -29,6 +43,7 @@ def required_env(name: str) -> str:
 
 def create_client() -> Any:
     """Create the OpenAI-compatible SDK client for DeepSeek's API."""
+
     try:
         from openai import OpenAI
     except ImportError as exc:
@@ -64,10 +79,59 @@ class DeepSeekAnswerer:
                 "</retrieved_evidence>"
             ),
         )
-
         if response.status != "completed" or not response.output_text.strip():
             raise RuntimeError("The DeepSeek model did not return completed text output.")
         return response.output_text.strip()
+
+
+def build_graph(
+    *,
+    retriever: InMemoryVectorRetriever,
+    answer_generator: AnswerGenerator,
+    top_k: int = 2,
+):
+    """Use LangGraph for retrieve -> answer while preserving the RAG boundary."""
+
+    if top_k <= 0:
+        raise ValueError("top_k must be positive")
+
+    def retrieve(state: LiveRAGState) -> dict:
+        evidence = retriever.retrieve(state["question"], top_k=top_k)
+        if not evidence or evidence[0].score <= 0.0:
+            return {
+                "evidence": evidence,
+                "status": "insufficient_evidence",
+                "answer": "I do not have enough retrieved evidence to answer reliably.",
+            }
+        return {"evidence": evidence}
+
+    def route_after_retrieval(state: LiveRAGState) -> Literal["answer", "end"]:
+        return "end" if state.get("status") == "insufficient_evidence" else "answer"
+
+    def answer(state: LiveRAGState) -> dict:
+        return {
+            "status": "grounded_answer",
+            "answer": answer_generator.answer(
+                question=state["question"],
+                evidence=state["evidence"],
+            ),
+        }
+
+    builder = StateGraph(LiveRAGState)
+    builder.add_node("retrieve", retrieve)
+    builder.add_node("answer", answer)
+    builder.add_edge(START, "retrieve")
+    builder.add_conditional_edges(
+        "retrieve",
+        route_after_retrieval,
+        {"answer": "answer", "end": END},
+    )
+    builder.add_edge("answer", END)
+    return builder.compile()
+
+
+def initial_state(question: str) -> LiveRAGState:
+    return {"question": question}
 
 
 def format_conversation(
@@ -76,8 +140,6 @@ def format_conversation(
     evidence: Sequence[SearchResult],
     answer: str,
 ) -> str:
-    """Show the bounded evidence context and answer after the RAG result."""
-
     return "\n".join(
         [
             "=== reconstructed model conversation ===",
@@ -94,27 +156,26 @@ def format_conversation(
 
 
 def main() -> None:
-    retriever = InMemoryVectorRetriever(make_demo_corpus(), HashEmbeddingModel())
-    rag = BasicRAG(
-        retriever=retriever,
+    question = "Order 2026-08-03 original payment refund current policy"
+    graph = build_graph(
+        retriever=InMemoryVectorRetriever(make_demo_corpus(), HashEmbeddingModel()),
         answer_generator=DeepSeekAnswerer(
             client=create_client(),
             model=required_env("DEEPSEEK_MODEL"),
         ),
     )
+    result = graph.invoke(initial_state(question), config={"recursion_limit": 5})
 
-    question = "Order 2026-08-03 original payment refund current policy"
-    result = rag.run(question, top_k=2)
-    print("status:", result.status)
-    print("answer:", result.answer)
+    print("status:", result["status"])
+    print("answer:", result["answer"])
     print("\nevidence given to DeepSeek:")
-    print(format_evidence(result.evidence))
+    print(format_evidence(result.get("evidence", [])))
     print()
     print(
         format_conversation(
             question=question,
-            evidence=result.evidence,
-            answer=result.answer,
+            evidence=result.get("evidence", []),
+            answer=result["answer"],
         )
     )
 

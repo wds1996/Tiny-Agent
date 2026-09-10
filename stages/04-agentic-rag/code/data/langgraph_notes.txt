@@ -1,0 +1,17 @@
+LangGraph represents application state explicitly and moves execution between
+nodes through fixed or conditional edges. A node receives the current state and
+returns only the update it is responsible for. The graph runtime applies the
+state's merge rules, so a message history can accumulate while a current status
+field is replaced by its newest value.
+
+A fixed edge always moves from one named node to another named node. A
+conditional edge calls a router function, reads a route name from the current
+state, and selects the next destination from an explicit mapping. This makes
+the control path inspectable: a learner can see which node ran, which update it
+returned, and why the graph selected the next step.
+
+In an Agent workflow, a model response remains a proposal. Application code
+validates proposed tool calls, executes allowed tools, records their outputs in
+state, and then decides whether another model step is needed. Explicit state and
+bounded transitions make this loop easier to test than a single function that
+hides planning, tool execution, and final answers together.

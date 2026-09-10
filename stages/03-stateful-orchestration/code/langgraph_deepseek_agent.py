@@ -77,6 +77,11 @@ MULTIPLY_TOOL = {
     "strict": True,
 }
 
+MODEL_INSTRUCTIONS = (
+    "Use multiply for multiplication. Answer only from returned tool output. "
+    "Do not invent results or repeat completed calls."
+)
+
 
 class DeepSeekModel:
     """Translate graph state into stateless DeepSeek Responses API requests."""
@@ -90,10 +95,7 @@ class DeepSeekModel:
     def generate(self, messages: list[dict[str, Any]]) -> ModelTurn:
         response = self.client.responses.create(
             model=self.model,
-            instructions=(
-                "Use multiply for multiplication. Answer only from returned tool "
-                "output. Do not invent results or repeat completed calls."
-            ),
+            instructions=MODEL_INSTRUCTIONS,
             input=self._to_input(messages),
             tools=[MULTIPLY_TOOL],
         )
@@ -244,20 +246,60 @@ def initial_state(question: str) -> AgentState:
     }
 
 
+def format_conversation(
+    *,
+    instructions: str,
+    messages: list[dict[str, Any]],
+) -> str:
+    """Render the provider-neutral messages as a readable model conversation."""
+
+    lines = ["=== reconstructed model conversation ===", "system (instructions):"]
+    lines.append(f"  {instructions}")
+
+    for message in messages:
+        role = message["role"]
+        if role == "assistant" and message.get("tool_calls"):
+            lines.append("assistant (tool calls):")
+            for call in message["tool_calls"]:
+                arguments = json.dumps(
+                    call["arguments"], ensure_ascii=False, sort_keys=True
+                )
+                lines.append(
+                    f"  {call['name']}({arguments}) "
+                    f"[call_id={call['id']}]"
+                )
+        elif role == "tool":
+            lines.append(
+                f"tool ({message['tool_call_id']}): {message['content']}"
+            )
+        else:
+            lines.append(f"{role}: {message.get('content', '')}")
+
+    return "\n".join(lines)
+
+
 def main() -> None:
     model = DeepSeekModel(client=create_client(), model=required_env("DEEPSEEK_MODEL"))
     graph = build_agent_graph(model=model, max_model_steps=4)
+    state = initial_state("What is 6 * 7? Use the multiply tool.")
+    messages = list(state["messages"])
+
+    print("=== graph updates (debug trace) ===")
     for update in graph.stream(
-        initial_state("What is 6 * 7? Use the multiply tool."),
+        state,
         stream_mode="updates",
         config={"recursion_limit": 20},
     ):
         print(update)
         for values in update.values():
+            messages.extend(values.get("messages", []))
             if values.get("error"):
                 raise RuntimeError(values["error"])
             if values.get("final_answer"):
                 print("final_answer:", values["final_answer"])
+
+    print()
+    print(format_conversation(instructions=MODEL_INSTRUCTIONS, messages=messages))
 
 
 if __name__ == "__main__":

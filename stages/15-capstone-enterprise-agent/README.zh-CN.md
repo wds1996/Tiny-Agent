@@ -183,7 +183,7 @@ DeterministicDecisionModel()
 
 它用规则稳定地产生 `SupportDecision`，方便我们在没有 API Key、没有网络、没有随机性的情况下检查整个 Agent Runtime。
 
-真实系统可以把这个 Adapter 换成一个基于 LLM Structured Output 的实现。
+`code/deepseek_decision.py` 提供真实的 `DeepSeekDecisionModel`。它让 DeepSeek 只返回一个 JSON 决策，验证字段结构后，再把相同的 `SupportDecision` 交给 Runtime。
 
 但是无论换成什么模型，下面这件事不能变：
 
@@ -856,7 +856,7 @@ Stage 06 的 Durable Run 已经足够承载它。
 
 ---
 
-## 22. 运行毕业项目
+## 22. 运行离线毕业项目
 
 先运行：
 
@@ -898,13 +898,30 @@ waiting_approval
 
 ---
 
-## 23. 运行毕业检查
+## 23. 运行 DeepSeek 决策版本
+
+先安装本章依赖，并在同一个 PowerShell 窗口设置两个 DeepSeek 环境变量：
+
+```powershell
+python -m pip install -r stages/15-capstone-enterprise-agent/code/requirements.txt
+$env:DEEPSEEK_API_KEY="your-api-key"
+$env:DEEPSEEK_MODEL="deepseek-chat"
+python stages/15-capstone-enterprise-agent/code/deepseek_demo.py
+```
+
+`deepseek_demo.py` 与离线入口使用相同的订单、检索、审批和退款代码，只替换决策模型。每次 Runtime Trace 后，它会输出真实的 system instruction、用户请求和模型返回的 JSON 决策。
+
+应用仍会先验证 JSON，才接受这个决策。模型输出不能读取订单库、检索政策、批准退款或执行退款副作用。
+
+---
+
+## 24. 运行毕业检查
 
 ```bash
 python stages/15-capstone-enterprise-agent/code/checks.py
 ```
 
-检查覆盖九个关键不变量。
+检查覆盖十二个关键不变量。
 
 第一，Policy Answer 必须带 Evidence ID。
 
@@ -924,13 +941,19 @@ python stages/15-capstone-enterprise-agent/code/checks.py
 
 第九，一个用户不能读取另一个用户的 Durable Run。
 
-这九条比“Demo 看起来挺顺”更能说明系统做对了什么。
+第十，DeepSeek JSON 只有在两个必填字段和值都符合约束时，才能转换成 `SupportDecision`。
+
+第十一，格式错误或字段意外的决策 JSON 会在进入 Runtime 前被拒绝。
+
+第十二，决策不能引用用户请求中不存在的订单 ID。
+
+这些检查比“Demo 看起来挺顺”更能说明系统做对了什么。
 
 ---
 
-## 24. 真实 LLM 应该接在哪里？
+## 25. DeepSeek 决策边界
 
-如果把 Model Double 换成真实模型，最自然的位置就是：
+`DeepSeekDecisionModel` 实现的正是现有边界：
 
 ```python
 class DecisionModel(Protocol):
@@ -941,7 +964,7 @@ class DecisionModel(Protocol):
         ...
 ```
 
-真实 Adapter 使用 Structured Output 返回受约束的：
+它的请求只包含当前问题，并要求返回受约束的 JSON：
 
 ```json
 {
@@ -950,7 +973,7 @@ class DecisionModel(Protocol):
 }
 ```
 
-然后 Application 继续执行后面的流程。
+Adapter 会先验证两个字段的结构和值，并确认订单 ID 确实来自用户请求，再创建 `SupportDecision`。然后 Application 继续执行后面的流程。
 
 不要让 Provider Adapter 顺手：
 
@@ -961,7 +984,7 @@ class DecisionModel(Protocol):
 写 Effect
 ```
 
-Provider Adapter 的职责只是：
+DeepSeek 请求和响应格式只留在 `deepseek_decision.py`；`agent.py` 仍负责 Support Workflow。
 
 ```text
 Provider-specific response
@@ -973,7 +996,7 @@ Application-owned decision model
 
 ---
 
-## 25. 真正的 Production 版本还缺什么？
+## 26. 真正的 Production 版本还缺什么？
 
 毕业并不意味着“这个 Demo 可以明天接银行生产流量”。
 
@@ -993,7 +1016,7 @@ Application-owned decision model
 
 ---
 
-## 26. 从 Stage 00 再走一次，你会看到什么？
+## 27. 从 Stage 00 再走一次，你会看到什么？
 
 最开始：
 
@@ -1043,7 +1066,7 @@ Stage 14 让长期任务脱离某一个 Worker，能够靠 Ledger / Lease / Arti
 
 ---
 
-## 27. 最后一张架构图
+## 28. 最后一张架构图
 
 我们的 Support Agent 最终可以画成：
 
@@ -1097,7 +1120,7 @@ User Question --> DecisionModel
 
 ---
 
-## 28. 毕业以后继续学什么？
+## 29. 毕业以后继续学什么？
 
 Agent 技术还会继续变化。
 

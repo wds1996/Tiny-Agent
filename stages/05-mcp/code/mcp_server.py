@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 
 HANDBOOK = {
     "refunds": (
-        "Orders may be refunded to the original payment method within 30 days. "
-        "After 30 days, support may offer store credit after review."
+        "For orders placed on or after 2026-08-01, refunds to the original "
+        "payment method are available within 45 calendar days. This replaces "
+        "the earlier 30-day policy."
     ),
     "shipping": (
         "Standard shipping normally takes 3-5 business days after dispatch."
@@ -33,7 +35,7 @@ def lookup_policy(topic: str) -> dict[str, str]:
     """Return one handbook policy by topic."""
     normalized = topic.strip().lower()
     if normalized not in HANDBOOK:
-        raise ValueError(f"unknown policy topic: {topic}")
+        raise ToolError(f"unknown policy topic: {topic}")
     return {"topic": normalized, "policy": HANDBOOK[normalized]}
 
 

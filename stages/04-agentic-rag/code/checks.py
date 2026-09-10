@@ -8,6 +8,17 @@ from agentic_rag import (
     RetrievalDecision,
     ScriptedPolicy,
 )
+from langgraph_agentic_rag import (
+    EvidenceDecision as GraphEvidenceDecision,
+    RetrievalDecision as GraphRetrievalDecision,
+    ScriptedPolicy as GraphScriptedPolicy,
+    build_graph as build_langgraph_rag,
+    initial_state as langgraph_initial_state,
+)
+from langgraph_deepseek_rag import (
+    build_graph as build_langgraph_deepseek_rag,
+    initial_state as langgraph_deepseek_initial_state,
+)
 from basic_rag import BasicRAG, EvidenceBoundAnswerer
 from evaluation import recall_at_k, reciprocal_rank
 from deepseek_rag import DeepSeekAnswerer
@@ -20,6 +31,7 @@ from retrieval import (
     chunk_document,
     cosine_similarity,
     lexical_rerank,
+    load_demo_documents,
     make_demo_corpus,
 )
 
@@ -36,11 +48,17 @@ class Stage04Checks(unittest.TestCase):
             ["one two three four", "three four five six", "five six seven"],
         )
         self.assertEqual(chunks[1].metadata["source"], "notes")
-        self.assertEqual(chunks[1].metadata["start_token"], 2)
+        self.assertEqual(chunks[1].metadata["start_word"], 2)
 
     def test_invalid_overlap_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             chunk_document(Document("doc", "hello"), chunk_size=4, overlap=4)
+
+    def test_course_corpus_is_loaded_from_versioned_text_files(self) -> None:
+        documents = load_demo_documents()
+        policy = next(document for document in documents if document.id.startswith("acme-"))
+        self.assertEqual(policy.metadata["source_file"], "acme_refund_policy_2026-08.txt")
+        self.assertIn("45 calendar days", " ".join(policy.text.split()))
 
     def test_cosine_similarity_has_expected_extremes(self) -> None:
         self.assertAlmostEqual(cosine_similarity([1.0, 0.0], [1.0, 0.0]), 1.0)
@@ -127,6 +145,46 @@ class Stage04Checks(unittest.TestCase):
         state = workflow.run("What is not in this corpus?")
         self.assertEqual(state.status, "insufficient_evidence")
         self.assertEqual(state.rewrites, 0)
+
+    def test_langgraph_agentic_rag_rewrites_once_then_answers(self) -> None:
+        graph = build_langgraph_rag(
+            policy=GraphScriptedPolicy(
+                retrieval_decision=GraphRetrievalDecision(True, "database backend"),
+                evidence_decisions=[
+                    GraphEvidenceDecision(False, "qdrant payload metadata filtering"),
+                    GraphEvidenceDecision(True),
+                ],
+            ),
+            retriever=InMemoryVectorRetriever(make_demo_corpus(), HashEmbeddingModel()),
+            max_rewrites=1,
+        )
+        result = graph.invoke(
+            langgraph_initial_state(
+                "Which backend supports payload metadata filtering?"
+            ),
+            config={"recursion_limit": 10},
+        )
+        self.assertEqual(result["status"], "grounded_answer")
+        self.assertEqual(result["rewrites"], 1)
+        self.assertEqual(
+            result["query_history"],
+            ["database backend", "qdrant payload metadata filtering"],
+        )
+
+    def test_langgraph_deepseek_rag_keeps_evidence_boundary(self) -> None:
+        graph = build_langgraph_deepseek_rag(
+            retriever=InMemoryVectorRetriever(make_demo_corpus(), HashEmbeddingModel()),
+            answer_generator=EvidenceBoundAnswerer(),
+        )
+        result = graph.invoke(
+            langgraph_deepseek_initial_state(
+                "Order 2026-08-03 original payment refund current policy"
+            ),
+            config={"recursion_limit": 5},
+        )
+        self.assertEqual(result["status"], "grounded_answer")
+        self.assertTrue(result["evidence"])
+        self.assertIn("source:", result["answer"])
 
     def test_deepseek_answerer_sends_evidence_as_bounded_input(self) -> None:
         class FakeResponses:
