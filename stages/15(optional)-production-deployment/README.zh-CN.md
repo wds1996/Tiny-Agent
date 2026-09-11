@@ -161,8 +161,8 @@ Durable asynchronous job
 从仓库根目录运行：
 
 ```bash
-python stages/15-production-deployment-optional/code/demo.py
-python stages/15-production-deployment-optional/code/checks.py
+python stages/15(optional)-production-deployment/code/demo.py
+python stages/15(optional)-production-deployment/code/checks.py
 ```
 
 Demo 会提交一条 Run、用相同幂等键再次提交、领取并完成该 Run、重新创建 Service，并从同一 SQLite 文件读取 completed record。检查覆盖可信身份、Tenant 作用域的查询和幂等、复用 Key 时的内容冲突、每个 Tenant 的背压、重启后的持久性、合法状态迁移和 Readiness。

@@ -161,8 +161,8 @@ Finally, `run_one()` returns a deterministic string rather than calling a DeepSe
 Run each command from the repository root:
 
 ```bash
-python stages/15-production-deployment-optional/code/demo.py
-python stages/15-production-deployment-optional/code/checks.py
+python stages/15(optional)-production-deployment/code/demo.py
+python stages/15(optional)-production-deployment/code/checks.py
 ```
 
 The demo submits a Run, repeats the submission with the same idempotency key, claims and completes it, recreates the service, and reads the completed record from the same SQLite file. The checks cover trusted identity, Tenant-scoped lookup and idempotency, mismatch rejection for reused keys, per-Tenant backpressure, durable restart, valid state transitions, and readiness.

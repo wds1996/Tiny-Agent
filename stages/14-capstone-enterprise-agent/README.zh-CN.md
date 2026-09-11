@@ -1162,4 +1162,4 @@ Agent 技术还会继续变化。
 
 至此，Tiny-Agent 的核心课程主线结束。
 
-如果你现在需要把 Agent 作为多用户生产服务运行，再继续学习 [Stage 15（选修）：Production Service](../15-production-deployment-optional/README.zh-CN.md)。
+如果你现在需要把 Agent 作为多用户生产服务运行，再继续学习 [Stage 15（选修）：Production Service](../15(optional)-production-deployment/README.zh-CN.md)。

@@ -142,7 +142,7 @@ Tiny-Agent/
     ├── 00-foundations/
     ├── 01-react-runtime/
     ├── ...
-    └── 15-production-deployment-optional/
+    └── 15(optional)-production-deployment/
 ```
 
 每一章都拥有自己的完整教学实现和可执行检查。没有第二套全局 `src/` 或 `tests/` 需要学生与章节代码来回对照。

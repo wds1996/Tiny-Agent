@@ -142,7 +142,7 @@ Tiny-Agent/
     ├── 00-foundations/
     ├── 01-react-runtime/
     ├── ...
-    └── 15-production-deployment-optional/
+    └── 15(optional)-production-deployment/
 ```
 
 Each Stage owns its complete teaching implementation and executable checks. There is no second global implementation or test tree that students must reconcile with chapter code.

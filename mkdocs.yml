@@ -65,7 +65,7 @@ nav:
       - "12 Workspace and Sandbox": stages/12-agent-workspace-sandbox/README.md
       - "13 Long-Horizon Harness": stages/13-long-horizon-harness/README.md
       - "14 Capstone": stages/14-capstone-enterprise-agent/README.md
-      - "15 Optional: Production Service": stages/15-production-deployment-optional/README.md
+      - "15 Optional: Production Service": stages/15(optional)-production-deployment/README.md
   - 课程（中文）:
       - "00 基础": stages/00-foundations/README.zh-CN.md
       - "01 ReAct Runtime": stages/01-react-runtime/README.zh-CN.md
@@ -82,4 +82,4 @@ nav:
       - "12 工作区与沙箱": stages/12-agent-workspace-sandbox/README.zh-CN.md
       - "13 长任务 Harness": stages/13-long-horizon-harness/README.zh-CN.md
       - "14 综合项目": stages/14-capstone-enterprise-agent/README.zh-CN.md
-      - "15 选修：生产部署": stages/15-production-deployment-optional/README.zh-CN.md
+      - "15 选修：生产部署": stages/15(optional)-production-deployment/README.zh-CN.md
