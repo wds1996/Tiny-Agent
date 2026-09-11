@@ -1,26 +1,54 @@
+"""A local, transaction-backed task ledger for trusted workers on one host."""
 from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import hashlib
 import json
+import math
 from pathlib import Path
 import sqlite3
 import time
-from typing import Any
+from typing import Any, Callable, Iterator
 from uuid import uuid4
 
 
-@dataclass(frozen=True, slots=True)
+SCHEMA_VERSION = 2
+
+
+def encode(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
+
+
+def positive_seconds(value: float) -> None:
+    if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+        raise ValueError("duration must be finite and positive")
+
+
+@dataclass(frozen=True)
 class TaskRecord:
     task_id: str
+    workflow: str
     status: str
     step_index: int
     total_steps: int
-    lease_owner: str | None
-    lease_until: float | None
+    inputs: dict[str, Any]
+    progress: dict[str, Any]
     repair_count: int
     max_repairs: int
-    progress: dict[str, Any]
+    claim_count: int
+    max_claims: int
+    lease_owner: str | None
+    lease_token: str | None
+    lease_until: float | None
+    failure: str | None
+
+
+@dataclass(frozen=True)
+class StepResult:
+    data: dict[str, Any]
+    restart_step: int | None = None
+    artifact: str | None = None
 
 
 class LeaseError(RuntimeError):
@@ -28,261 +56,208 @@ class LeaseError(RuntimeError):
 
 
 class TaskLedger:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, clock: Callable[[], float] = time.time):
+        if str(path) == ":memory:":
+            raise ValueError("use a database file that survives a worker process")
         self.path = str(path)
-        self._init_db()
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        self.clock = clock
+        with self._session(write=True) as conn:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            if version != SCHEMA_VERSION and (version != 0 or tables):
+                raise RuntimeError("incompatible ledger schema; choose a new database path")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    task_id TEXT PRIMARY KEY, workflow TEXT NOT NULL,
+                    status TEXT NOT NULL, step_index INTEGER NOT NULL,
+                    total_steps INTEGER NOT NULL, inputs_json TEXT NOT NULL,
+                    progress_json TEXT NOT NULL, repair_count INTEGER NOT NULL,
+                    max_repairs INTEGER NOT NULL, claim_count INTEGER NOT NULL,
+                    max_claims INTEGER NOT NULL, lease_owner TEXT,
+                    lease_token TEXT, lease_until REAL, failure TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS step_outputs (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+                    lease_token TEXT NOT NULL UNIQUE, worker_id TEXT NOT NULL,
+                    repair_count INTEGER NOT NULL, step_index INTEGER NOT NULL,
+                    output_json TEXT NOT NULL, restart_step INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    task_id TEXT PRIMARY KEY REFERENCES tasks(task_id),
+                    content TEXT NOT NULL, sha256 TEXT NOT NULL
+                )
+            """)
+            conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager
-    def _session(self):
-        conn = self._connect()
+    def _session(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.path, isolation_level=None, timeout=1.0)
+        conn.row_factory = sqlite3.Row
         try:
-            with conn:
-                yield conn
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA synchronous=FULL")
+            conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
-    def _init_db(self) -> None:
-        with self._session() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS tasks (
-                    task_id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    step_index INTEGER NOT NULL,
-                    total_steps INTEGER NOT NULL,
-                    lease_owner TEXT,
-                    lease_until REAL,
-                    repair_count INTEGER NOT NULL,
-                    max_repairs INTEGER NOT NULL,
-                    progress_json TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS step_outputs (
-                    task_id TEXT NOT NULL,
-                    attempt INTEGER NOT NULL,
-                    step_index INTEGER NOT NULL,
-                    output_json TEXT NOT NULL,
-                    PRIMARY KEY (task_id, attempt, step_index)
-                )
-                """
-            )
+    @staticmethod
+    def _read(conn: sqlite3.Connection, task_id: str) -> TaskRecord:
+        row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown task: {task_id}")
+        fields = dict(row)
+        fields["inputs"] = json.loads(fields.pop("inputs_json"))
+        fields["progress"] = json.loads(fields.pop("progress_json"))
+        return TaskRecord(**fields)
 
-    def create_task(self, *, total_steps: int, max_repairs: int = 1) -> TaskRecord:
-        if total_steps <= 0:
-            raise ValueError("total_steps must be positive")
-        if max_repairs < 0:
-            raise ValueError("max_repairs must not be negative")
-        task_id = str(uuid4())
-        with self._session() as conn:
-            conn.execute(
-                """
-                INSERT INTO tasks(
-                    task_id, status, step_index, total_steps,
-                    lease_owner, lease_until, repair_count, max_repairs, progress_json
-                ) VALUES (?, 'queued', 0, ?, NULL, NULL, 0, ?, '{}')
-                """,
-                (task_id, total_steps, max_repairs),
-            )
-        return self.get(task_id)
+    def create_task(self, *, task_id: str, workflow: str, inputs: dict[str, Any],
+                    total_steps: int = 3, max_repairs: int = 1,
+                    max_claims: int = 12) -> TaskRecord:
+        if not task_id.strip() or not workflow.strip() or not isinstance(inputs, dict):
+            raise ValueError("task ID, workflow and input object are required")
+        for name, value, minimum in (("total_steps", total_steps, 1),
+                                     ("max_repairs", max_repairs, 0),
+                                     ("max_claims", max_claims, 1)):
+            if type(value) is not int or value < minimum:
+                raise ValueError(f"{name} must be an integer >= {minimum}")
+        with self._session(write=True) as conn:
+            # A duplicate ID is an error, never a request to overwrite old progress.
+            conn.execute("""
+                INSERT INTO tasks VALUES (
+                    ?, ?, 'queued', 0, ?, ?, '{}', 0, ?, 0, ?, NULL, NULL, NULL, NULL
+                )
+            """, (task_id, workflow, total_steps, encode(inputs), max_repairs, max_claims))
+            return self._read(conn, task_id)
 
     def get(self, task_id: str) -> TaskRecord:
         with self._session() as conn:
-            row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-        if row is None:
-            raise KeyError(task_id)
-        return self._record(row)
+            return self._read(conn, task_id)
 
-    def claim(self, *, worker_id: str, lease_seconds: float, now: float | None = None) -> TaskRecord | None:
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be positive")
-        now = time.time() if now is None else now
-        with self._session() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                """
-                SELECT * FROM tasks
-                WHERE status='queued'
-                   OR (status='running' AND lease_until IS NOT NULL AND lease_until <= ?)
-                ORDER BY task_id
-                LIMIT 1
-                """,
-                (now,),
-            ).fetchone()
-            if row is None:
+    def claim(self, task_id: str, *, worker_id: str, workflow: str,
+              lease_seconds: float = 10) -> TaskRecord | None:
+        positive_seconds(lease_seconds)
+        if not worker_id.strip():
+            raise ValueError("worker_id must not be blank")
+        with self._session(write=True) as conn:
+            task = self._read(conn, task_id)
+            now = self.clock()  # Read the clock after acquiring the write lock.
+            if task.workflow != workflow:
+                raise ValueError("worker workflow does not match the saved task")
+            if task.status in {"completed", "failed"}:
                 return None
-            conn.execute(
-                "UPDATE tasks SET status='running', lease_owner=?, lease_until=? WHERE task_id=?",
-                (worker_id, now + lease_seconds, row["task_id"]),
-            )
-            row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (row["task_id"],)).fetchone()
-        return self._record(row)
-
-    def heartbeat(self, task_id: str, *, worker_id: str, lease_seconds: float, now: float | None = None) -> TaskRecord:
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be positive")
-        now = time.time() if now is None else now
-        with self._session() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            self._require_active_lease(conn, task_id, worker_id, now)
-            conn.execute("UPDATE tasks SET lease_until=? WHERE task_id=?", (now + lease_seconds, task_id))
-        return self.get(task_id)
-
-    def record_step_output(
-        self,
-        task_id: str,
-        *,
-        worker_id: str,
-        step_index: int,
-        output: dict[str, Any],
-        now: float | None = None,
-    ) -> None:
-        now = time.time() if now is None else now
-        encoded = json.dumps(output, ensure_ascii=False, sort_keys=True)
-        with self._session() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            task = self._require_active_lease(conn, task_id, worker_id, now)
-            conn.execute(
-                """
-                INSERT INTO step_outputs(task_id, attempt, step_index, output_json)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(task_id, attempt, step_index)
-                DO UPDATE SET output_json=excluded.output_json
-                """,
-                (task_id, task.repair_count, step_index, encoded),
-            )
-
-    def advance(
-        self,
-        task_id: str,
-        *,
-        worker_id: str,
-        progress: dict[str, Any],
-        now: float | None = None,
-    ) -> TaskRecord:
-        now = time.time() if now is None else now
-        with self._session() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            task = self._require_active_lease(conn, task_id, worker_id, now)
-            next_step = task.step_index + 1
-            status = "completed" if next_step >= task.total_steps else "queued"
-            conn.execute(
-                """
-                UPDATE tasks
-                SET status=?, step_index=?, lease_owner=NULL, lease_until=NULL, progress_json=?
-                WHERE task_id=?
-                """,
-                (status, next_step, json.dumps(progress, ensure_ascii=False, sort_keys=True), task_id),
-            )
-        return self.get(task_id)
-
-    def request_repair(
-        self,
-        task_id: str,
-        *,
-        worker_id: str,
-        restart_step: int,
-        progress: dict[str, Any],
-        now: float | None = None,
-    ) -> TaskRecord:
-        now = time.time() if now is None else now
-        with self._session() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            task = self._require_active_lease(conn, task_id, worker_id, now)
-            if not 0 <= restart_step < task.total_steps:
-                raise ValueError("invalid restart_step")
-            if task.repair_count >= task.max_repairs:
-                conn.execute(
-                    """
-                    UPDATE tasks
-                    SET status='failed', lease_owner=NULL, lease_until=NULL, progress_json=?
+            if task.status == "running" and task.lease_until is not None:
+                if task.lease_until > now:
+                    return None
+            if task.claim_count >= task.max_claims:
+                conn.execute("""
+                    UPDATE tasks SET status='failed', failure='claim budget exhausted',
+                        lease_owner=NULL, lease_token=NULL, lease_until=NULL
                     WHERE task_id=?
-                    """,
-                    (json.dumps(progress, ensure_ascii=False, sort_keys=True), task_id),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE tasks
-                    SET status='queued', step_index=?, lease_owner=NULL, lease_until=NULL,
-                        repair_count=repair_count+1, progress_json=?
-                    WHERE task_id=?
-                    """,
-                    (restart_step, json.dumps(progress, ensure_ascii=False, sort_keys=True), task_id),
-                )
-        return self.get(task_id)
+                """, (task_id,))
+                return None
+            conn.execute("""
+                UPDATE tasks SET status='running', lease_owner=?, lease_token=?,
+                    lease_until=?, claim_count=claim_count+1 WHERE task_id=?
+            """, (worker_id, uuid4().hex, now + lease_seconds, task_id))
+            return self._read(conn, task_id)
 
-    def step_output(
-        self, task_id: str, step_index: int, *, attempt: int | None = None
-    ) -> dict[str, Any] | None:
-        with self._session() as conn:
-            if attempt is None:
-                row = conn.execute(
-                    """
-                    SELECT output_json FROM step_outputs
-                    WHERE task_id=? AND step_index=?
-                    ORDER BY attempt DESC
-                    LIMIT 1
-                    """,
-                    (task_id, step_index),
-                ).fetchone()
+    def _require_active(self, conn: sqlite3.Connection, claim: TaskRecord) -> TaskRecord:
+        current = self._read(conn, claim.task_id)
+        if (current.status != "running"
+                or current.lease_owner != claim.lease_owner
+                or current.lease_token != claim.lease_token
+                or current.step_index != claim.step_index
+                or current.repair_count != claim.repair_count
+                or current.lease_until is None
+                or current.lease_until <= self.clock()):
+            raise LeaseError("claim is no longer the active lease")
+        return current
+
+    def heartbeat(self, claim: TaskRecord, *, lease_seconds: float) -> None:
+        positive_seconds(lease_seconds)
+        with self._session(write=True) as conn:
+            current = self._require_active(conn, claim)
+            conn.execute("UPDATE tasks SET lease_until=? WHERE task_id=?", (
+                max(current.lease_until, self.clock() + lease_seconds), claim.task_id,
+            ))
+
+    def commit_step(self, claim: TaskRecord, result: StepResult) -> TaskRecord:
+        if not isinstance(result, StepResult) or not isinstance(result.data, dict):
+            raise ValueError("a step must return StepResult with a data object")
+        output_json = encode(result.data)
+        with self._session(write=True) as conn:
+            task = self._require_active(conn, claim)
+            restart = result.restart_step
+            if restart is not None and (
+                    type(restart) is not int or not 0 <= restart <= task.step_index):
+                raise ValueError("repair must target an existing, already reached step")
+            if result.artifact is not None and (
+                    not isinstance(result.artifact, str) or not result.artifact.strip()
+                    or restart is not None or task.step_index != task.total_steps - 1):
+                raise ValueError("only the final forward step can publish non-empty text")
+
+            progress = {**task.progress, **json.loads(output_json)}
+            repair_count = task.repair_count
+            failure = None
+            if restart is None:
+                next_step = task.step_index + 1
+                status = "completed" if next_step == task.total_steps else "queued"
+            elif repair_count >= task.max_repairs:
+                next_step, status, failure = task.step_index, "failed", "repair budget exhausted"
             else:
-                row = conn.execute(
-                    """
-                    SELECT output_json FROM step_outputs
-                    WHERE task_id=? AND attempt=? AND step_index=?
-                    """,
-                    (task_id, attempt, step_index),
-                ).fetchone()
-        return None if row is None else json.loads(row["output_json"])
+                next_step, status = restart, "queued"
+                repair_count += 1
+
+            conn.execute("""
+                INSERT INTO step_outputs (
+                    task_id, lease_token, worker_id, repair_count,
+                    step_index, output_json, restart_step
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (task.task_id, task.lease_token, task.lease_owner, task.repair_count,
+                  task.step_index, output_json, restart))
+            if result.artifact is not None:
+                digest = hashlib.sha256(result.artifact.encode("utf-8")).hexdigest()
+                conn.execute("INSERT INTO artifacts VALUES (?, ?, ?)",
+                             (task.task_id, result.artifact, digest))
+                progress["artifact_ref"] = f"sqlite:artifacts/{task.task_id}"
+            # History, artifact and next-step state share this ONE transaction.
+            conn.execute("""
+                UPDATE tasks SET status=?, step_index=?, progress_json=?,
+                    repair_count=?, failure=?, lease_owner=NULL,
+                    lease_token=NULL, lease_until=NULL WHERE task_id=?
+            """, (status, next_step, encode(progress), repair_count, failure, task.task_id))
+            return self._read(conn, task.task_id)
 
     def step_outputs(self, task_id: str) -> tuple[dict[str, Any], ...]:
         with self._session() as conn:
-            rows = conn.execute(
-                """
-                SELECT attempt, step_index, output_json FROM step_outputs
-                WHERE task_id=?
-                ORDER BY attempt, step_index
-                """,
-                (task_id,),
-            ).fetchall()
-        return tuple(
-            {
-                "attempt": int(row["attempt"]),
-                "step_index": int(row["step_index"]),
-                "output": json.loads(row["output_json"]),
-            }
-            for row in rows
-        )
+            rows = conn.execute("""
+                SELECT repair_count, step_index, worker_id, output_json, restart_step
+                FROM step_outputs WHERE task_id=? ORDER BY sequence
+            """, (task_id,)).fetchall()
+        return tuple({"repair_count": row["repair_count"], "step_index": row["step_index"],
+                      "worker_id": row["worker_id"], "output": json.loads(row["output_json"]),
+                      "restart_step": row["restart_step"]} for row in rows)
 
-    def _require_active_lease(
-        self, conn: sqlite3.Connection, task_id: str, worker_id: str, now: float
-    ) -> TaskRecord:
-        row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    def artifact(self, task_id: str) -> str:
+        with self._session() as conn:
+            if self._read(conn, task_id).status != "completed":
+                raise ValueError("task has no completed artifact")
+            row = conn.execute("SELECT * FROM artifacts WHERE task_id=?", (task_id,)).fetchone()
         if row is None:
-            raise KeyError(task_id)
-        task = self._record(row)
-        if (
-            task.status != "running"
-            or task.lease_owner != worker_id
-            or task.lease_until is None
-            or task.lease_until <= now
-        ):
-            raise LeaseError("worker does not own an active task lease")
-        return task
-
-    @staticmethod
-    def _record(row: sqlite3.Row) -> TaskRecord:
-        return TaskRecord(
-            task_id=row["task_id"], status=row["status"], step_index=int(row["step_index"]),
-            total_steps=int(row["total_steps"]), lease_owner=row["lease_owner"],
-            lease_until=row["lease_until"], repair_count=int(row["repair_count"]),
-            max_repairs=int(row["max_repairs"]), progress=json.loads(row["progress_json"]),
-        )
+            raise KeyError("artifact is missing")
+        digest = hashlib.sha256(row["content"].encode("utf-8")).hexdigest()
+        if digest != row["sha256"]:
+            raise ValueError("artifact checksum mismatch")
+        return row["content"]
