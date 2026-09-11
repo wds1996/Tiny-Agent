@@ -1,1 +1,3 @@
-# Standard library only
+# demo.py and checks.py use only the Python standard library.
+# Required only by deepseek_observability.py:
+openai>=1.0.0

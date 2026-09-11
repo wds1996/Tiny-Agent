@@ -20,6 +20,7 @@ class AgentRun:
     retrieved_ids: tuple[str, ...] = ()
     abstained: bool = False
     latency_ms: float = 0.0
+    estimated_cost_usd: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +40,9 @@ class EvalReport:
     scores: tuple[CaseScore, ...]
     pass_rate: float
     unnecessary_tool_rate: float
+    average_tool_calls: float
     average_latency_ms: float
+    average_estimated_cost_usd: float
 
 
 def score_case(case: EvalCase, run: AgentRun) -> CaseScore:
@@ -55,11 +58,13 @@ def evaluate(cases: Sequence[EvalCase], runner: Callable[[EvalCase], AgentRun]) 
     unnecessary = 0
     total_tool_calls = 0
     total_latency = 0.0
+    total_estimated_cost = 0.0
 
     for case in cases:
         run = runner(case)
         scores.append(score_case(case, run))
         total_latency += run.latency_ms
+        total_estimated_cost += run.estimated_cost_usd
         total_tool_calls += len(run.tools)
         if not case.expected_tools:
             unnecessary += len(run.tools)
@@ -68,8 +73,17 @@ def evaluate(cases: Sequence[EvalCase], runner: Callable[[EvalCase], AgentRun]) 
 
     pass_rate = sum(score.passed for score in scores) / len(scores) if scores else 0.0
     unnecessary_tool_rate = unnecessary / total_tool_calls if total_tool_calls else 0.0
+    average_tool_calls = total_tool_calls / len(cases) if cases else 0.0
     average_latency_ms = total_latency / len(cases) if cases else 0.0
-    return EvalReport(tuple(scores), pass_rate, unnecessary_tool_rate, average_latency_ms)
+    average_estimated_cost_usd = total_estimated_cost / len(cases) if cases else 0.0
+    return EvalReport(
+        tuple(scores),
+        pass_rate,
+        unnecessary_tool_rate,
+        average_tool_calls,
+        average_latency_ms,
+        average_estimated_cost_usd,
+    )
 
 
 def recall_at_k(ranked_ids: Sequence[str], relevant_ids: set[str], *, k: int) -> float:
