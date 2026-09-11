@@ -67,9 +67,10 @@ class TaskLedger:
                 """
                 CREATE TABLE IF NOT EXISTS step_outputs (
                     task_id TEXT NOT NULL,
+                    attempt INTEGER NOT NULL,
                     step_index INTEGER NOT NULL,
                     output_json TEXT NOT NULL,
-                    PRIMARY KEY (task_id, step_index)
+                    PRIMARY KEY (task_id, attempt, step_index)
                 )
                 """
             )
@@ -77,6 +78,8 @@ class TaskLedger:
     def create_task(self, *, total_steps: int, max_repairs: int = 1) -> TaskRecord:
         if total_steps <= 0:
             raise ValueError("total_steps must be positive")
+        if max_repairs < 0:
+            raise ValueError("max_repairs must not be negative")
         task_id = str(uuid4())
         with self._session() as conn:
             conn.execute(
@@ -107,7 +110,7 @@ class TaskLedger:
                 """
                 SELECT * FROM tasks
                 WHERE status='queued'
-                   OR (status='running' AND lease_until IS NOT NULL AND lease_until < ?)
+                   OR (status='running' AND lease_until IS NOT NULL AND lease_until <= ?)
                 ORDER BY task_id
                 LIMIT 1
                 """,
@@ -123,39 +126,53 @@ class TaskLedger:
         return self._record(row)
 
     def heartbeat(self, task_id: str, *, worker_id: str, lease_seconds: float, now: float | None = None) -> TaskRecord:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
         now = time.time() if now is None else now
         with self._session() as conn:
-            row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-            if row is None:
-                raise KeyError(task_id)
-            if row["status"] != "running" or row["lease_owner"] != worker_id:
-                raise LeaseError("worker does not own the task lease")
+            conn.execute("BEGIN IMMEDIATE")
+            self._require_active_lease(conn, task_id, worker_id, now)
             conn.execute("UPDATE tasks SET lease_until=? WHERE task_id=?", (now + lease_seconds, task_id))
         return self.get(task_id)
 
-    def record_step_output(self, task_id: str, *, worker_id: str, step_index: int, output: dict[str, Any]) -> None:
-        task = self.get(task_id)
-        if task.status != "running" or task.lease_owner != worker_id:
-            raise LeaseError("worker does not own the task lease")
+    def record_step_output(
+        self,
+        task_id: str,
+        *,
+        worker_id: str,
+        step_index: int,
+        output: dict[str, Any],
+        now: float | None = None,
+    ) -> None:
+        now = time.time() if now is None else now
         encoded = json.dumps(output, ensure_ascii=False, sort_keys=True)
         with self._session() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            task = self._require_active_lease(conn, task_id, worker_id, now)
             conn.execute(
                 """
-                INSERT INTO step_outputs(task_id, step_index, output_json)
-                VALUES (?, ?, ?)
-                ON CONFLICT(task_id, step_index)
+                INSERT INTO step_outputs(task_id, attempt, step_index, output_json)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(task_id, attempt, step_index)
                 DO UPDATE SET output_json=excluded.output_json
                 """,
-                (task_id, step_index, encoded),
+                (task_id, task.repair_count, step_index, encoded),
             )
 
-    def advance(self, task_id: str, *, worker_id: str, progress: dict[str, Any]) -> TaskRecord:
-        task = self.get(task_id)
-        if task.status != "running" or task.lease_owner != worker_id:
-            raise LeaseError("worker does not own the task lease")
-        next_step = task.step_index + 1
-        status = "completed" if next_step >= task.total_steps else "queued"
+    def advance(
+        self,
+        task_id: str,
+        *,
+        worker_id: str,
+        progress: dict[str, Any],
+        now: float | None = None,
+    ) -> TaskRecord:
+        now = time.time() if now is None else now
         with self._session() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            task = self._require_active_lease(conn, task_id, worker_id, now)
+            next_step = task.step_index + 1
+            status = "completed" if next_step >= task.total_steps else "queued"
             conn.execute(
                 """
                 UPDATE tasks
@@ -166,33 +183,100 @@ class TaskLedger:
             )
         return self.get(task_id)
 
-    def request_repair(self, task_id: str, *, worker_id: str, restart_step: int, progress: dict[str, Any]) -> TaskRecord:
-        task = self.get(task_id)
-        if task.status != "running" or task.lease_owner != worker_id:
-            raise LeaseError("worker does not own the task lease")
-        if task.repair_count >= task.max_repairs:
-            raise RuntimeError("repair budget exhausted")
-        if not 0 <= restart_step < task.total_steps:
-            raise ValueError("invalid restart_step")
+    def request_repair(
+        self,
+        task_id: str,
+        *,
+        worker_id: str,
+        restart_step: int,
+        progress: dict[str, Any],
+        now: float | None = None,
+    ) -> TaskRecord:
+        now = time.time() if now is None else now
         with self._session() as conn:
-            conn.execute(
-                """
-                UPDATE tasks
-                SET status='queued', step_index=?, lease_owner=NULL, lease_until=NULL,
-                    repair_count=repair_count+1, progress_json=?
-                WHERE task_id=?
-                """,
-                (restart_step, json.dumps(progress, ensure_ascii=False, sort_keys=True), task_id),
-            )
+            conn.execute("BEGIN IMMEDIATE")
+            task = self._require_active_lease(conn, task_id, worker_id, now)
+            if not 0 <= restart_step < task.total_steps:
+                raise ValueError("invalid restart_step")
+            if task.repair_count >= task.max_repairs:
+                conn.execute(
+                    """
+                    UPDATE tasks
+                    SET status='failed', lease_owner=NULL, lease_until=NULL, progress_json=?
+                    WHERE task_id=?
+                    """,
+                    (json.dumps(progress, ensure_ascii=False, sort_keys=True), task_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE tasks
+                    SET status='queued', step_index=?, lease_owner=NULL, lease_until=NULL,
+                        repair_count=repair_count+1, progress_json=?
+                    WHERE task_id=?
+                    """,
+                    (restart_step, json.dumps(progress, ensure_ascii=False, sort_keys=True), task_id),
+                )
         return self.get(task_id)
 
-    def step_output(self, task_id: str, step_index: int) -> dict[str, Any] | None:
+    def step_output(
+        self, task_id: str, step_index: int, *, attempt: int | None = None
+    ) -> dict[str, Any] | None:
         with self._session() as conn:
-            row = conn.execute(
-                "SELECT output_json FROM step_outputs WHERE task_id=? AND step_index=?",
-                (task_id, step_index),
-            ).fetchone()
+            if attempt is None:
+                row = conn.execute(
+                    """
+                    SELECT output_json FROM step_outputs
+                    WHERE task_id=? AND step_index=?
+                    ORDER BY attempt DESC
+                    LIMIT 1
+                    """,
+                    (task_id, step_index),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT output_json FROM step_outputs
+                    WHERE task_id=? AND attempt=? AND step_index=?
+                    """,
+                    (task_id, attempt, step_index),
+                ).fetchone()
         return None if row is None else json.loads(row["output_json"])
+
+    def step_outputs(self, task_id: str) -> tuple[dict[str, Any], ...]:
+        with self._session() as conn:
+            rows = conn.execute(
+                """
+                SELECT attempt, step_index, output_json FROM step_outputs
+                WHERE task_id=?
+                ORDER BY attempt, step_index
+                """,
+                (task_id,),
+            ).fetchall()
+        return tuple(
+            {
+                "attempt": int(row["attempt"]),
+                "step_index": int(row["step_index"]),
+                "output": json.loads(row["output_json"]),
+            }
+            for row in rows
+        )
+
+    def _require_active_lease(
+        self, conn: sqlite3.Connection, task_id: str, worker_id: str, now: float
+    ) -> TaskRecord:
+        row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        if row is None:
+            raise KeyError(task_id)
+        task = self._record(row)
+        if (
+            task.status != "running"
+            or task.lease_owner != worker_id
+            or task.lease_until is None
+            or task.lease_until <= now
+        ):
+            raise LeaseError("worker does not own an active task lease")
+        return task
 
     @staticmethod
     def _record(row: sqlite3.Row) -> TaskRecord:

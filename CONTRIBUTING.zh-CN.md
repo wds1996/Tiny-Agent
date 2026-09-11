@@ -30,7 +30,7 @@ Tiny-Agent 不是一组互相独立的技术文章，而是一门按顺序展开
 15
 ```
 
-不要新增 `06A`、`09B` 之类的旁支。如果新主题真的值得成为一章，应重新审视整体知识依赖，并调整整数顺序。
+不要新增 `06A` 之类的旁支。如果新主题真的值得成为一章，应重新审视整体知识依赖，并调整整数顺序。
 
 章节编号代表学习顺序，不只是目录名字。
 
@@ -40,7 +40,7 @@ Tiny-Agent 不是一组互相独立的技术文章，而是一门按顺序展开
 
 不要从未来章节倒灌知识。
 
-Stage 03 可以讲 Graph 的循环边界，但 Checkpoint / HITL 留给 Stage 06；Stage 08 可以说明 Skill Script 没有自动执行权，但真正的 Sandbox 留给 Stage 12；Stage 13 可以指出 Worker 可能消失，但 Lease / Heartbeat 的完整机制留给 Stage 14。
+Stage 03 可以讲 Graph 的循环边界，但 Checkpoint / HITL 留给 Stage 06；Stage 08 可以说明 Skill Script 没有自动执行权，但真正的 Sandbox 留给 Stage 12；Stage 15（选修）可以指出 Worker 可能消失，但 Lease / Heartbeat 的完整机制已在 Stage 13 讲解。
 
 允许在章节末尾提出下一章的问题，不允许提前把下一章答案讲完。
 

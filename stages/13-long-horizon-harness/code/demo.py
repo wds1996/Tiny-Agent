@@ -37,6 +37,7 @@ def main() -> None:
         ledger_b = TaskLedger(path)
         print("final:", ledger_b.get(task.task_id))
         print("artifact:", ledger_b.step_output(task.task_id, 2))
+        print("durable outputs:", ledger_b.step_outputs(task.task_id))
 
 
 if __name__ == "__main__":

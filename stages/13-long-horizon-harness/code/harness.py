@@ -29,17 +29,30 @@ class LongHorizonHarness:
         step = self.steps[task.step_index]
         output = step(dict(task.progress))
         self.ledger.record_step_output(
-            task.task_id, worker_id=worker_id, step_index=task.step_index, output=output
+            task.task_id,
+            worker_id=worker_id,
+            step_index=task.step_index,
+            output=output,
+            now=now,
         )
         if output.get("needs_repair"):
+            repair_progress = {**task.progress, **output}
+            # This output remains in step-output history, but it is a Host control
+            # directive rather than a fact that later model calls should carry forever.
+            repair_progress.pop("needs_repair", None)
+            repair_progress.pop("restart_step", None)
             restarted = self.ledger.request_repair(
                 task.task_id,
                 worker_id=worker_id,
                 restart_step=int(output.get("restart_step", 0)),
-                progress={**task.progress, **output},
+                progress=repair_progress,
+                now=now,
             )
             return WorkResult(restarted, output)
         advanced = self.ledger.advance(
-            task.task_id, worker_id=worker_id, progress={**task.progress, **output}
+            task.task_id,
+            worker_id=worker_id,
+            progress={**task.progress, **output},
+            now=now,
         )
         return WorkResult(advanced, output)

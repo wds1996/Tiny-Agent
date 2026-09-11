@@ -35,6 +35,14 @@ class BackpressureError(RuntimeError):
     pass
 
 
+class IdempotencyConflictError(RuntimeError):
+    """The caller reused a key for a different submission."""
+
+
+class InvalidRunTransitionError(RuntimeError):
+    """A status change does not match the run's current state."""
+
+
 class RunStore:
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
@@ -93,6 +101,8 @@ class RunStore:
     ) -> RunRecord:
         if not thread_id.strip() or not input_text.strip():
             raise ValueError("thread_id and input_text are required")
+        if idempotency_key is not None and not idempotency_key.strip():
+            raise ValueError("idempotency_key must not be blank")
 
         with self._session() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -105,7 +115,16 @@ class RunStore:
                     (identity.tenant_id, idempotency_key),
                 ).fetchone()
                 if row is not None:
-                    return self._record(row)
+                    existing = self._record(row)
+                    if (
+                        existing.user_id != identity.user_id
+                        or existing.thread_id != thread_id
+                        or existing.input_text != input_text
+                    ):
+                        raise IdempotencyConflictError(
+                            "idempotency key was already used for a different submission"
+                        )
+                    return existing
 
             queued = conn.execute(
                 "SELECT COUNT(*) AS n FROM runs WHERE tenant_id=? AND status='queued'",
@@ -175,7 +194,7 @@ class RunStore:
     def complete(self, run_id: str, output_text: str) -> RunRecord:
         now = utc_now()
         with self._session() as conn:
-            conn.execute(
+            updated = conn.execute(
                 """
                 UPDATE runs
                 SET status='completed', output_text=?, updated_at=?
@@ -183,11 +202,18 @@ class RunStore:
                 """,
                 (output_text, now, run_id),
             )
+            if updated.rowcount != 1:
+                existing = conn.execute(
+                    "SELECT status FROM runs WHERE run_id=?", (run_id,)
+                ).fetchone()
+                if existing is None:
+                    raise KeyError(run_id)
+                raise InvalidRunTransitionError(
+                    f"cannot complete run in status={existing['status']!r}"
+                )
             row = conn.execute(
                 "SELECT * FROM runs WHERE run_id=?", (run_id,)
             ).fetchone()
-        if row is None:
-            raise KeyError(run_id)
         return self._record(row)
 
     def ready(self) -> bool:
@@ -215,6 +241,8 @@ class RunStore:
 
 class AgentService:
     def __init__(self, store: RunStore, *, max_queued_per_tenant: int = 4) -> None:
+        if max_queued_per_tenant <= 0:
+            raise ValueError("max_queued_per_tenant must be positive")
         self.store = store
         self.max_queued_per_tenant = max_queued_per_tenant
 

@@ -1,0 +1,3 @@
+# demo.py and checks.py use only the Python standard library.
+# Required only by deepseek_long_horizon.py:
+openai>=1.0.0

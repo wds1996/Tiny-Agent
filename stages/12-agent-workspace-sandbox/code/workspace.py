@@ -23,8 +23,10 @@ class AgentWorkspace:
         if relative.is_absolute():
             raise WorkspaceEscapeError("absolute paths are not allowed")
         target = (self.root / relative).resolve()
-        if target != self.root and self.root not in target.parents:
-            raise WorkspaceEscapeError("path escapes workspace")
+        try:
+            target.relative_to(self.root)
+        except ValueError as exc:
+            raise WorkspaceEscapeError("path escapes workspace") from exc
         return target
 
     def write_text(self, relative_path: str, content: str) -> Path:

@@ -2,47 +2,33 @@
 
 > Language: [English](README.md) | **简体中文**
 
-Stage 11 结束时，我们已经能让多个 Agent 分工。但真实任务很快会从“大家聊一聊”变成：把文件改一下、生成报告、运行测试、执行脚本、把结果保存成 Artifact。Stage 08 的 Skill 甚至允许目录里带 Script。
+Stage 11 解决了多个 Agent 中“谁做什么”。真实任务很快会变成读取资料、修改文件、生成报告、运行测试和执行 Skill Script。此时问题变成：
 
-到这里，一个不能再拖的问题出现了：
+> **Agent 在做这些事时，究竟能碰到机器上的哪些文件、程序、网络和凭证？**
 
-> **Agent 如果真的能读写文件、运行程序，它究竟能碰到这台机器的多少东西？**
+本章先建立明确的 **Workspace**，再建立受限 Command Runner，最后严格区分“减少意外操作的本地包装器”和“可以运行不可信代码的 Security Sandbox”。
 
-最危险的答案是：“反正都是 Python，直接 `subprocess.run()` 吧。”
-
-这就像给实习生一张临时办公桌，然后顺手把机房、财务室和 CEO 抽屉的钥匙串一起挂在桌角。
-
-Stage 12 要做两件事。第一，建立 **Workspace**：让一次 Run 有明确的文件边界和 Artifact 区域。第二，建立一个**受限 Command Runner**，用它讨论执行目录、可执行程序、环境变量、Timeout 和输出上限。
-
-但必须先说清楚：
-
-> **本章的标准库 Subprocess Runner 不是安全 Sandbox。**
-
-它是用来理解 Sandbox 需要哪些边界，而不是用几行 Python 宣布自己已经隔离了恶意代码。
-
----
-
-## 1. 为什么 Agent 需要 Workspace？
-
-普通聊天程序的主要状态可能都在 Message 里。长一点的 Agent 任务却经常有输入文件、中间草稿、下载资料、生成代码、测试结果和最终 Artifact。
-
-如果所有东西都散在当前进程工作目录，很快就回答不了：哪些文件属于这次 Run？下一个 Run 能不能看到它们？用户能下载哪一个？Agent 可以修改仓库里的什么？清理时哪些可以删？
-
-Workspace 的第一层价值，就是把“一次任务的工作区”变成明确对象。
-
----
-
-## 2. 一次 Run 一个 Root，是一个很好的起点
-
-本章创建：
-
-```python
-workspace = AgentWorkspace.create(
-    "/tmp/runs/run-001"
-)
+```text
+Host chooses a Workspace root
+    ↓
+Agent reads and writes bounded workspace paths
+    ↓
+Host chooses registered command aliases
+    ↓
+Runner bounds cwd, environment, duration, and returned output
+    ↓
+Artifact is exported; temporary work is cleaned up
 ```
 
-之后所有文件都相对这个 Root：
+本章代码只使用标准库。若要逐段复制运行，先执行 `cd stages/12-agent-workspace-sandbox/code`；完整示例命令放在对应知识点后。
+
+---
+
+## 1. 从“谁做”走到“在哪里做”：Workspace 的文件边界
+
+一个短聊天的主要状态在 Message 中。长任务还会有输入文件、下载资料、中间脚本、测试输出和最终报告。若它们散落在服务当前目录，就很难回答：哪些文件属于这次 Run？下个 Run 能否看见？用户可以下载哪一个？清理时删什么？
+
+Workspace 把“一次 Run 的文件工作区”变成明确对象。`root` 是 Host 创建的目录；Agent 只能请求相对于它的路径：
 
 ```text
 run-001/
@@ -53,346 +39,193 @@ run-001/
     └── result.txt
 ```
 
-这不代表所有生产系统都必须用本地目录。Workspace 完全可以映射到对象存储、远程 Sandbox 或持久卷。
+`work/` 存放中间草稿、下载和测试脚本；`artifacts/` 存放准备交付或导出的结果。这不是目录名的魔法，而是应用的语义约定：只有 Host 明确导出的 Artifact 才应离开本次 Run。
 
-但抽象应该先存在：
-
-> **Agent 操作的是自己的 Workspace，不是“这台机器随便哪个 Path”。**
-
----
-
-## 3. Path Traversal：`../` 是一只很小但很有战斗力的字符串
-
-假设你提供：
+下面代码在 Host 已决定根目录后创建 Workspace。`Path` 是 Python 表示文件路径的对象；根目录不能由模型给出任意绝对路径：
 
 ```python
-workspace.read_text(path)
+from pathlib import Path
+import tempfile
+
+from workspace import AgentWorkspace
+
+with tempfile.TemporaryDirectory() as tmp:
+    workspace = AgentWorkspace.create(Path(tmp) / "run-001")
+    workspace.write_text("input.txt", "tiny agent workspace")
+    workspace.write_text("work/check.py", "print('checked')\n")
+    workspace.write_text("artifacts/result.txt", "approved summary\n")
+
+    print(workspace.list_files())
 ```
 
-如果 `path` 可以是 `../../../../etc/passwd`，那所谓 Workspace Root 就只是墙上贴的一张“请勿越界”海报。
+`TemporaryDirectory` 会在 `with` 代码块结束时删除这个教学用 Workspace。真实服务可以改用持久化目录或隔离环境，但也应明确何时导出 Artifact、何时清理临时文件。
 
-所以本章所有路径都经过：
+---
+
+## 2. 文件边界不是字符串检查：Path Traversal 与 Symlink
+
+如果 Agent 可以请求 `../../secret.txt`，Workspace Root 只是墙上的“请勿越界”标志。这个技巧叫 **Path Traversal**：`..` 表示父目录，连续使用能逐层走出工作区。
+
+本章的 `resolve()` 先拒绝绝对路径，再把相对路径与 Root 合并并调用 `Path.resolve()`；`resolve()` 得到的是文件系统实际指向的规范路径。最后检查该路径仍在 Root 内：
 
 ```python
-target = (root / relative).resolve()
+from pathlib import Path
+import tempfile
+
+from workspace import AgentWorkspace, WorkspaceEscapeError
+
+with tempfile.TemporaryDirectory() as tmp:
+    workspace = AgentWorkspace.create(Path(tmp) / "run-001")
+    assert workspace.resolve("notes/a.txt").is_relative_to(workspace.root)
+
+    try:
+        workspace.write_text("../secret.txt", "no")
+    except WorkspaceEscapeError:
+        print("path escape rejected")
 ```
 
-然后检查真实目标是否仍在 Root 内。绝对路径也直接拒绝。
+为什么不只检查字符串里有没有 `..`？因为 **Symlink（符号链接）** 可以让一个看似普通的工作区路径指向外部文件：
 
 ```text
-notes/a.txt
-    -> allowed
-
-../secret.txt
-    -> rejected
-
-/etc/passwd
-    -> rejected
+workspace/outside-link  ->  /somewhere/private.txt
 ```
 
-这叫 Path Confinement。它不是整个 Sandbox，但它是文件边界最基本的一层。
+读取 `outside-link` 时路径字符串没有 `..`，真实目标却在外面。因此代码检查规范路径，而不是字符串外观。测试会在系统允许创建 Symlink 时验证这一点；某些 Windows 环境没有创建 Symlink 的权限，测试会标记为跳过，而不是把权限限制误报成实现成功。
+
+这份本地 Path Confinement 适合防止普通路径逃逸，却不是对抗同机恶意进程的完整方案：另一个进程仍可能在“检查路径”和“打开文件”之间篡改文件系统。运行不可信代码时，应依赖后文的 OS/虚拟化隔离，而不是把这段路径检查当成全部防线。
 
 ---
 
-## 4. Symlink 为什么让路径问题更有意思？
+## 3. Workspace、Artifact、Checkpoint 与 Cleanup 是四件事
 
-你可能会想：“我禁止 `..` 不就行了？”
+这些概念都和“保存东西”有关，却解决不同问题：
 
-不够。
+| 对象 | 保存什么 | 生命周期 |
+| --- | --- | --- |
+| Workspace | 当前计算的输入、中间文件和临时脚本 | 通常随 Run 结束清理 |
+| Artifact | 值得交付的报告、补丁、测试结果 | 应由应用明确导出和保留 |
+| Checkpoint | 继续执行所需的状态 | Stage 06 的 Durable Store |
+| Task Ledger | Run 状态、重试和审计记录 | 由服务长期管理 |
 
-因为 Workspace 里可以出现 Symlink：
+把 Workspace 做成持久卷是可能的实现选择，但不要因此混淆语义：Worker 消失后，Checkpoint 告诉系统如何恢复；Artifact 是用户或后续流程要获取的结果；临时工作文件大多数应清理。
+
+完整生命周期是：
 
 ```text
-workspace/link -> /etc
+create workspace
+    ↓
+write / execute / inspect
+    ↓
+export selected artifacts
+    ↓
+cleanup temporary workspace
 ```
 
-然后用户读取 `link/passwd`，字符串里根本没有 `..`。
-
-这也是为什么本章先 `resolve()`，再检查真实目标是否仍在 Root 内。文件系统边界最好基于 Canonical Path，而不是字符串长相。
+如果每次 Run 都留下下载文件、缓存、生成脚本和大日志，磁盘会替你发现生命周期设计缺了一步。
 
 ---
 
-## 5. Artifact 和临时工作文件最好不是一个概念
+## 4. 执行命令时，先把“能运行什么”交回 Host
 
-Agent 做任务时可能产生一大堆中间文件，例如下载页、Scratch Script、Notes 和 Debug JSON。用户真正关心的也许只有 `artifacts/report.pdf`。
-
-所以推荐在 Workspace 内至少区分：
-
-```text
-work/
-artifacts/
-```
-
-`work/` 是 Agent 干活的地方，`artifacts/` 是准备交付、保存或导出的结果。
-
-这和 Stage 14 的长时任务会再次连接：Artifact 应该能脱离模型 Context 和当前进程继续存在。
-
----
-
-## 6. 现在才轮到 Command Runner
-
-文件边界有了以后，我们才谈执行。
-
-本章 Runner 接受：
+文件能写到哪里解决以后，下一步才是“能执行什么”。不要把一段由模型或脚本拼出的命令字符串直接交给 shell：
 
 ```python
-runner.run(
-    [python, "work/check.py"],
-    timeout_seconds=2,
-)
+# 不要把未验证内容这样交给 shell：它会重新解释整段字符串。
+import subprocess
+
+untrusted_argument = "work/check.py && echo unexpected-shell-command"
+subprocess.run(f"python {untrusted_argument}", shell=True, check=False)
 ```
 
-注意是参数数组，不是 `shell=True`。
-
-`["python", "check.py"]` 和 `"python check.py; rm -rf ..."` 属于完全不同的解析边界。默认 `shell=False` 可以少一层 Shell 字符串解释。
-
-这并不意味着命令因此“安全”，但少给一个解释器通常是好事。
-
----
-
-## 7. Executable Allowlist：不是所有程序都值得提供
-
-本章创建 Runner 时声明：
+`shell=True` 会让 shell 解释空格、引号、重定向和 `&&` 等语法；如果命令中混入了未验证的内容，边界很难判断。本章的 Runner 接受一个参数列表，并固定 `shell=False`：
 
 ```python
-CommandRunner(
-    workspace,
-    allowed_executables={"python3"},
-)
+from pathlib import Path
+import sys
+import tempfile
+
+from runner import CommandRunner
+from workspace import AgentWorkspace
+
+with tempfile.TemporaryDirectory() as tmp:
+    workspace = AgentWorkspace.create(Path(tmp) / "demo-run")
+    workspace.write_text("work/check.py", "print('checked')\n")
+
+    runner = CommandRunner(
+        workspace,
+        allowed_executables={"python": sys.executable},
+    )
+    result = runner.run(["python", "work/check.py"], timeout_seconds=2)
+    print(result.stdout)
 ```
 
-如果模型尝试 `sh`、`curl`、`ssh`，不在 Allowlist 就拒绝。
+这里的 `"python"` 不是让模型在 `PATH` 中自行寻找的任意程序，而是 Host 在启动时注册的**命令别名**。Runner 会将它替换为 `sys.executable`，也就是当前 Python 解释器的确定路径。模型即使在 Workspace 中写了一个叫 `python` 的文件，或者请求 `./python`，也不会匹配这个别名。
 
-这和 Stage 09 的 Tool Permission 是同一个思路：
+这是一种很小但很实用的能力设计：Host 提供哪些别名，调用方就只能请求哪些程序；它不能借“命令参数”偷偷改掉可执行文件本身。
 
-```text
-机器上安装了
-!=
-Agent 有权执行
-```
+Runner 还固定 `cwd=workspace.root`。因此 `work/check.py` 是相对于本次 Run 的工作目录，而不是相对于启动服务的项目根目录。这样既让产物集中，也减少了脚本误读宿主机文件的机会。
 
-当然，允许 Python 本身已经是一项很强的能力。Python 可以读文件、开网络、启动子进程，所以 Executable Allowlist 只是能力面的一层，不是完整隔离。
+## 5. 命令能启动以后，还要限制运行时资源
 
----
+允许一个已知解释器，并不等于可以把宿主机的完整环境交给它。本章只传入最小环境：`PATH` 和 `PYTHONIOENCODING`，再由 Host 按需通过 `extra_env` 传入额外变量。数据库密码、云凭证和部署令牌不应因为“子进程也许用得到”而默认继承。
 
-## 8. `cwd` 很重要
+三个运行时限制分别解决不同问题：
 
-Runner 强制：
+| 限制 | Runner 的做法 | 它防止什么 |
+| --- | --- | --- |
+| 超时 | 到达 `timeout_seconds` 后终止直接子进程 | 卡住的命令无限占用 Worker |
+| 输出预算 | 同时持续读取 stdout、stderr，只保留各流前 `max_output_chars` 个字符 | 大量日志撑满父进程内存 |
+| 输入 | 子进程的 stdin 连接到 `DEVNULL` | 脚本等待人工输入，导致 Run 悬挂 |
 
-```python
-cwd=workspace.root
-```
+“持续读取”很关键。若等子进程结束后才执行 `output[:4000]`，虽然最后展示的文字短了，Python 进程在此之前仍可能已经把几百 MB 日志放进内存。Runner 为 stdout 和 stderr 分别启动读取线程：超过预算后继续丢弃后续内容，避免管道写满，同时在结果末尾标记 `...[truncated]`。
 
-这样 Script 使用相对路径时自然落在当前 Run Workspace。
+这仍有边界：超时只终止直接启动的进程，不保证清理它派生出的全部子进程，也不能撤销已经写出的文件或已经发出的网络请求。更强的进程组控制和资源配额应由后面的隔离运行环境提供。
 
-如果不固定 CWD，同一份 Script 在不同启动位置可能读写完全不同的文件。可重复执行需要明确工作目录。
-
----
-
-## 9. 环境变量不要默认整包继承
-
-你的服务进程可能有：
-
-```text
-DATABASE_URL
-DEEPSEEK_API_KEY
-GITHUB_TOKEN
-AWS_SECRET_ACCESS_KEY
-```
-
-如果 `subprocess.run()` 默认继承全部 Environment，那么刚获得脚本执行能力的 Agent 子进程可能顺便获得服务进程所有 Credential。
-
-本章 Runner 从很小的 Environment 开始：
-
-```python
-env = {
-    "PATH": ...,
-    "PYTHONIOENCODING": "utf-8",
-}
-```
-
-需要额外值时显式传入。
-
-原则是：
-
-> **Credential 不是“运行环境的一部分”，而是需要明确授予的 Capability。**
-
----
-
-## 10. Timeout 这次比 Stage 09 更强，但仍不是完美终止
-
-Stage 09 的 Python Handler 使用 Cooperative Deadline，因为在线程里很难安全杀死任意工作。
-
-Stage 12 进入了 Subprocess 边界。`subprocess.run(..., timeout=...)` 可以在超时后终止直接子进程，这比“我不等线程了”更强。
-
-但仍然别宣布“现在所有子孙进程都会被完美清理”。复杂 Process Tree、Daemon、外部服务副作用仍然需要更系统的 Process Group、Container 或 Sandbox 生命周期管理。
-
-准确说法是：
-
-> **独立进程给了我们比普通函数更清晰的终止边界，但还不是完整安全隔离。**
-
----
-
-## 11. Output 也需要 Budget
-
-一个程序可以打印一千万个字符。如果 Runtime 把完整 stdout 塞回模型 Context，你刚刚用一行代码创造了自己的 Context DDoS。
-
-所以 Runner 有：
-
-```python
-max_output_chars
-```
-
-超出后追加 `...[truncated]`。
-
-这和 Stage 07 的 Context Budget 是同一类问题：
-
-> **任何会进入模型或持久化系统的数据流，都需要上限。**
-
----
-
-## 12. Workspace 不是 Security Sandbox
-
-这是本章最需要严谨的一点。
-
-我们的 Runner 做了 Path Confinement、Executable Allowlist、Controlled CWD、Reduced Environment、Timeout、Output Limit 和 `shell=False`。
-
-很好。
-
-但允许执行 Python 时，代码仍然可能 `import socket`、`import subprocess` 或直接调用操作系统能力。如果 OS 权限允许，它仍然可能访问 Workspace 外的资源。
-
-所以：
-
-```text
-bounded subprocess wrapper
-!=
-security sandbox
-```
-
-真正更强的隔离通常还需要独立 OS 用户、Namespace、Container/VM、Filesystem Mount Policy、Network Policy、Syscall Controls、Resource Limits 和 Credential Isolation。
-
-具体技术会因部署环境变化。这章的价值是让你知道一个 Sandbox 需要回答哪些问题，而不是背某个云产品名字。
-
----
-
-## 13. Container 也不是“完美 Sandbox”同义词
-
-Container 能提供很有价值的 Filesystem View、Process Namespace、Resource Limit 和 Network Configuration。
-
-但安全强度取决于配置、Runtime、Kernel、Mount、Capability 和 Credential。
-
-例如把 `/var/run/docker.sock` 直接挂进 Container，很多“隔离感”会立刻变得很哲学。
-
-所以：
-
-> **Container 是隔离工具，不是自动安全证明。**
-
-同样的原则也适用于托管 Sandbox 产品：要看它真正隔离什么。
-
----
-
-## 14. Network 应该是显式策略
-
-有些 Agent 任务需要网络，有些完全不需要。
-
-如果一个只做本地代码格式检查的 Script 默认可以访问互联网，攻击面被无意义地放大。
-
-真正 Sandbox 常会有 `network = off` 或 Destination Allowlist。
-
-本章标准库 Runner 没有能力可靠实现 OS 级 Network Isolation，所以不会伪造一个 `network=False` 参数然后假装它真的管用了。
-
-这就是技术严谨性：
-
-> 没实现的隔离，不要写成配置项 cosplay。
-
----
-
-## 15. Skill Script 到这里才终于有执行位置
-
-Stage 08 我们故意没有执行 Skill 中的任意 Script。
-
-现在可以把关系接起来：
-
-```text
-Skill
-    ↓ procedure says run script
-Host Policy
-    ↓ decides whether script is allowed
-Workspace
-    ↓ provides bounded files
-Runner / Sandbox
-    ↓ executes under environment policy
-Artifact
-    ↓ result
-```
-
-Skill 自己仍然不拥有执行权。它只是程序性指导和资源包。
-
----
-
-## 16. Workspace 和 Durable State 也不是一回事
-
-一个临时 Workspace 可以随着 Compute 消失。Checkpoint 和 Task Ledger 则应该保存在 Durable Store。
-
-所以：
-
-```text
-Workspace
-    -> current compute's working files
-
-Checkpoint
-    -> resumable execution state
-
-Artifact Store
-    -> durable outputs worth keeping
-```
-
-有些系统会把 Workspace 本身做成持久卷，那只是实现选择，语义仍然值得分开。
-
-Stage 14 会处理“Worker 消失以后怎么根据 Durable State 重建工作环境”。
-
----
-
-## 17. Cleanup 也是生命周期的一部分
-
-创建临时 Workspace 很容易，清理很容易被忘。
-
-如果每个 Run 都留下下载文件、依赖缓存、模型生成脚本和大日志，磁盘迟早会用一种非常直接的方式提醒你生命周期设计不完整。
-
-所以 Workspace 应该有：
-
-```text
-create
-use
-export artifacts
-cleanup
-```
-
-哪些 Artifact 需要长期保留，应该由应用明确决定。
-
----
-
-## 18. 运行完整代码
+此时可以运行完整的本地演示：
 
 ```bash
 python stages/12-agent-workspace-sandbox/code/demo.py
-python stages/12-agent-workspace-sandbox/code/checks.py
 ```
 
-Demo 会在临时 Workspace 里创建 Input 和 Script，用受限 Runner 执行，再生成 `artifacts/result.txt`。
-
-检查覆盖相对路径、`../` Escape、Absolute Path、Executable Allowlist、CWD、Timeout、Output Truncation，以及服务进程的额外环境变量不会自动传进子进程。
+它写入一个固定的教学脚本、通过 `python` 别名运行它，再显式导出一个结果文件。这里没有让模型生成任意代码；该示例关注的是 Host 如何执行已经允许的命令。
 
 ---
 
-## 19. 下一章为什么是 Production Service？
+## 6. Workspace 和 Runner 不是安全 Sandbox
 
-到这里，我们的 Agent 已经不只是 Notebook Demo。它有 Durable State、External Tools、Memory、Context、Skills、Guardrails、Eval、Multi-Agent、Workspace 和 Subprocess。
+到这里我们已经有了路径检查、命令别名、受限环境、超时和输出预算。这些都是防护层，却不足以把不可信代码安全地放在主机上运行。
 
-真正部署时，一个更现实的问题出现了：
+| 要隔离的对象 | 本章的 Workspace / Runner 能做什么 | 真正 Sandbox 还需要什么 |
+| --- | --- | --- |
+| 文件 | 限制本章 API 解析的 Workspace 路径 | 独立文件系统或挂载、只读输入、最小权限 |
+| 进程 | 固定入口、限制直接子进程的时间 | 容器/虚拟机、进程组、CPU 和内存配额 |
+| 网络 | 本章不提供网络策略 | 默认拒绝出网，或只允许明确的目标 |
+| 系统调用与身份 | 无法阻止当前用户权限下的任意 Python 代码 | 低权限身份、seccomp 等 OS 级限制 |
+| 清理 | 清理 Workspace 文件 | 隔离实例销毁、可审计的资源回收 |
 
-> **多个用户同时发请求怎么办？**
+容器常被用于增加这层隔离，但“用了 Docker”本身不是答案。把 Docker socket 挂进容器，或把宿主机目录以可写方式挂载进去，都会重新扩大权限。网络策略也必须由容器、虚拟机或基础设施实际执行；本章的 `CommandRunner` 没有实现它，所以不能声称它已经阻断网络。
 
-谁创建 Run？Request、Thread、Run、User、Tenant 怎么区分？任务太长不能一直占着 HTTP 连接怎么办？如何 Backpressure？进程重启以后 Run Status 去哪找？服务什么时候算 Ready？
+运行离线检查可以看到这些已经实现的边界：
 
-所以下一章 Stage 13，我们把 Agent 从“程序”变成“服务”。真正麻烦，也从这里开始变得很像普通分布式系统工程。
+```bash
+python stages/12-agent-workspace-sandbox/code/checks.py
+```
+
+检查包含路径逃逸、绝对路径、符号链接、未注册的可执行文件、受限环境、超时和流式输出截断。某些 Windows 环境没有创建符号链接的权限；在这种环境中，对应测试会跳过，而不会把“无法创建测试条件”误报为安全通过。
+
+## 7. Skill、模型与执行环境如何接起来
+
+Stage 08 的 Skill 可以告诉 Agent 在某类任务中应检查什么、产出什么；它不是执行权限。一个面向代码任务的生产链路应当是：
+
+```text
+Skill procedure
+    → Host validates requested action
+    → isolated workspace / sandbox executes approved command
+    → Host validates and exports selected artifact
+```
+
+因此本章不提供“把 DeepSeek 生成的一段任意 Python 直接交给本机 Runner 执行”的示例。那会绕过本节刚说明的隔离边界，也会把 Stage 09 的策略检查变成形式。真实接入 LLM 时，应先在 Sandbox 外由 Host 完成工具选择、参数校验和审批；只有明确允许的命令才进入**已经隔离的**执行环境。模型提出方案，Host 决定是否执行、在哪里执行，以及哪些产物可以离开 Workspace。
+
+## 8. 下一章：把这些边界放进可运行的服务
+
+现在我们有了单个 Run 的文件、进程与产物边界。下一个问题是：当前 Worker 或进程消失后，任务怎样继续？下一章会建立这条恢复链路：[Stage 13：Long-Horizon Harness](../13-long-horizon-harness/README.zh-CN.md)。

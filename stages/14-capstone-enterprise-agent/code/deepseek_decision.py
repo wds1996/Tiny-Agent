@@ -37,9 +37,9 @@ def create_client() -> Any:
         from openai import OpenAI
     except ImportError as exc:
         raise RuntimeError(
-            "Install Stage 15 dependencies first:\n"
+            "Install Stage 14 dependencies first:\n"
             "python -m pip install -r "
-            "stages/15-capstone-enterprise-agent/code/requirements.txt"
+            "stages/14-capstone-enterprise-agent/code/requirements.txt"
         ) from exc
 
     return OpenAI(

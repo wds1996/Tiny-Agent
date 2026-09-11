@@ -1,4 +1,4 @@
-# Stage 15：毕业设计——做一个真的会查政策、查订单、申请退款的 Support Agent
+# Stage 14：毕业设计——做一个真的会查政策、查订单、申请退款的 Support Agent
 
 > Language: [English](README.md) | **简体中文**
 
@@ -315,7 +315,7 @@ I cannot find an accessible order with that ID.
 
 因为 Unauthorized Caller 不应该因为猜中一个 ID，就额外获得“这个对象真实存在，而且属于谁”的信息。
 
-Stage 13 的 Tenant Boundary 到这里变成了业务代码的一部分。
+Tenant Boundary 到这里变成了业务代码的一部分。
 
 ---
 
@@ -689,7 +689,7 @@ get_run(
 
 Alice 创建的 Refund Run，Bob 不能拿同一个 `run_id` Resume。
 
-这把 Stage 13 的 Trusted Identity 一直带到了 Side Effect 恢复流程。
+这把 Trusted Identity 一直带到了 Side Effect 恢复流程。
 
 身份边界不能只在 API 第一层检查一次，然后内部所有函数开始相信“既然进来了应该都没问题”。
 
@@ -848,7 +848,7 @@ Stage 06 的 Durable Run 已经足够承载它。
 
 没有多个长时间 Work Unit，也没有 Worker Lease Reclaim 的需要。
 
-所以不引入 Stage 14 Harness。
+所以不引入 Stage 13 Harness。
 
 如果未来 Support Case 会自动收集多份证据、联系多个外部团队、等待异步资料、跨天生成复杂 Artifact，那时再升级成 Long-Horizon Task。
 
@@ -861,7 +861,7 @@ Stage 06 的 Durable Run 已经足够承载它。
 先运行：
 
 ```bash
-python stages/15-capstone-enterprise-agent/code/demo.py
+python stages/14-capstone-enterprise-agent/code/demo.py
 ```
 
 你会看到第一条请求：
@@ -903,10 +903,10 @@ waiting_approval
 先安装本章依赖，并在同一个 PowerShell 窗口设置两个 DeepSeek 环境变量：
 
 ```powershell
-python -m pip install -r stages/15-capstone-enterprise-agent/code/requirements.txt
+python -m pip install -r stages/14-capstone-enterprise-agent/code/requirements.txt
 $env:DEEPSEEK_API_KEY="your-api-key"
 $env:DEEPSEEK_MODEL="deepseek-chat"
-python stages/15-capstone-enterprise-agent/code/deepseek_demo.py
+python stages/14-capstone-enterprise-agent/code/deepseek_demo.py
 ```
 
 `deepseek_demo.py` 与离线入口使用相同的订单、检索、审批和退款代码，只替换决策模型。每次 Runtime Trace 后，它会输出真实的 system instruction、用户请求和模型返回的 JSON 决策。
@@ -918,7 +918,7 @@ python stages/15-capstone-enterprise-agent/code/deepseek_demo.py
 ## 24. 运行毕业检查
 
 ```bash
-python stages/15-capstone-enterprise-agent/code/checks.py
+python stages/14-capstone-enterprise-agent/code/checks.py
 ```
 
 检查覆盖十二个关键不变量。
@@ -1054,11 +1054,11 @@ Stage 11 终于讨论什么时候值得拆成多个 Agent。
 
 Stage 12 给代码与文件执行建立 Workspace / Sandbox 心智模型。
 
-Stage 13 把单机程序变成有身份、Queue、Backpressure 和 Durable Run 的服务。
+Stage 13 让长期任务脱离某一个 Worker，能够靠 Ledger / Lease / Artifact 换班继续。
 
-Stage 14 让长期任务脱离某一个 Worker，能够靠 Ledger / Lease / Artifact 换班继续。
+Stage 14 做的事情反而变简单了：只选择 Support 领域真正需要的机制。
 
-最后 Stage 15 做的事情反而变简单了。
+如果这个 Agent 以后成为面向多用户的公开服务，选修 Stage 15 会再补上身份感知的请求处理、Queue、Backpressure 和 Durable Run。
 
 我们拿出这些工具，只选择真正需要的那几件。
 
@@ -1160,4 +1160,6 @@ Agent 技术还会继续变化。
 
 说不清楚，就回到最小机制，一层一层重新搭。
 
-至此，Tiny-Agent 的课程主线结束。
+至此，Tiny-Agent 的核心课程主线结束。
+
+如果你现在需要把 Agent 作为多用户生产服务运行，再继续学习 [Stage 15（选修）：Production Service](../15-production-deployment-optional/README.zh-CN.md)。

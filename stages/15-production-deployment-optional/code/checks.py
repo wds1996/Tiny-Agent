@@ -2,10 +2,17 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from service import AgentService, BackpressureError, RunStore, TrustedIdentity
+from service import (
+    AgentService,
+    BackpressureError,
+    IdempotencyConflictError,
+    InvalidRunTransitionError,
+    RunStore,
+    TrustedIdentity,
+)
 
 
-class Stage13Checks(unittest.TestCase):
+class Stage15Checks(unittest.TestCase):
     def make(self, tmp, *, max_queued=2):
         return AgentService(RunStore(Path(tmp) / "runs.db"), max_queued_per_tenant=max_queued)
 
@@ -32,6 +39,24 @@ class Stage13Checks(unittest.TestCase):
             a = service.submit(identity=TrustedIdentity("a", "tenant-a"), thread_id="t", input_text="x", idempotency_key="same")
             b = service.submit(identity=TrustedIdentity("b", "tenant-b"), thread_id="t", input_text="x", idempotency_key="same")
             self.assertNotEqual(a.run_id, b.run_id)
+
+    def test_reusing_a_key_for_different_input_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make(tmp)
+            identity = TrustedIdentity("a", "tenant-a")
+            service.submit(
+                identity=identity,
+                thread_id="t",
+                input_text="first request",
+                idempotency_key="k1",
+            )
+            with self.assertRaises(IdempotencyConflictError):
+                service.submit(
+                    identity=identity,
+                    thread_id="t",
+                    input_text="changed request",
+                    idempotency_key="k1",
+                )
 
     def test_backpressure_is_per_tenant(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -66,6 +91,17 @@ class Stage13Checks(unittest.TestCase):
             completed = service.run_one()
             self.assertEqual(completed.run_id, run.run_id)
             self.assertEqual(completed.status, "completed")
+
+    def test_only_a_claimed_run_can_be_completed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make(tmp)
+            run = service.submit(
+                identity=TrustedIdentity("a", "tenant-a"),
+                thread_id="t",
+                input_text="x",
+            )
+            with self.assertRaises(InvalidRunTransitionError):
+                service.store.complete(run.run_id, "not claimed")
 
     def test_readiness_checks_durable_dependency(self):
         with tempfile.TemporaryDirectory() as tmp:

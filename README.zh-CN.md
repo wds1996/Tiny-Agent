@@ -12,7 +12,7 @@
 
 Tiny-Agent 走另一条路。
 
-这是一门从零开始的 Agent 工程课程。我们先把模型调用、Structured Output、Tool Calling、Runtime、Workflow、State、Retrieval 这些基础机制一层层搭起来，再进入 MCP、Memory、Context Engineering、Skills、Safety、Evaluation、Multi-Agent、Sandbox、Production 与 Long-Horizon。
+这是一门从零开始的 Agent 工程课程。我们先把模型调用、Structured Output、Tool Calling、Runtime、Workflow、State、Retrieval 这些基础机制一层层搭起来，再进入 MCP、Memory、Context Engineering、Skills、Safety、Evaluation、Multi-Agent、Sandbox 与 Long-Horizon。面向多用户的 Production Service 部署放在核心路径后的选修章节。
 
 框架会出现，但不会比问题更早出现。最终目标也不是记住一套 2026 年流行 API，而是面对一个新的 Agent 系统时，能够自己判断：哪些决定真的需要模型，哪些控制逻辑应该留在普通代码里，模型能提出什么又真正有权做什么，以及系统怎样停止、恢复、审批、评估和上线。
 
@@ -37,11 +37,11 @@ Tiny-Agent 走另一条路。
 | [10](stages/10-evaluation-observability/README.zh-CN.md) | Evaluation / Observability | 怎样知道 Agent 为什么这样做，以及改版到底有没有变好？ |
 | [11](stages/11-multi-agent/README.zh-CN.md) | Multi-Agent | 什么时候真的需要第二个 Agent，而不是多画几个方框？ |
 | [12](stages/12-agent-workspace-sandbox/README.zh-CN.md) | Workspace / Sandbox | Agent 能读写文件、运行代码以后，执行边界在哪里？ |
-| [13](stages/13-production-deployment/README.zh-CN.md) | Production Service | 一个本机 Demo 怎样变成有身份、队列、Backpressure 和 Durable Run 的服务？ |
-| [14](stages/14-long-horizon-harness/README.zh-CN.md) | Long-Horizon Harness | Worker 消失以后，长任务怎样靠 Ledger、Lease 和 Artifact 换班继续？ |
-| [15](stages/15-capstone-enterprise-agent/README.zh-CN.md) | Capstone | 面对真实业务，怎样只选择真正需要的 Agent 机制？ |
+| [13](stages/13-long-horizon-harness/README.zh-CN.md) | Long-Horizon Harness | Worker 消失以后，长任务怎样靠 Ledger、Lease 和 Artifact 换班继续？ |
+| [14](stages/14-capstone-enterprise-agent/README.zh-CN.md) | Capstone | 面对真实业务，怎样只选择真正需要的 Agent 机制？ |
+| [15](stages/15(optional)-production-deployment/README.zh-CN.md) | 选修：Production Service | 一个本机 Demo 怎样变成有身份、队列、Backpressure 和 Durable Run 的服务？ |
 
-建议严格按顺序学习。课程里很多边界是前面一层层建立的，直接跳到后面往往只能看到“怎么写”，看不到“为什么现在才需要它”。
+建议按顺序完成 Stage 00–14 的核心路径。课程里很多边界是前面一层层建立的，直接跳到后面往往只能看到“怎么写”，看不到“为什么现在才需要它”。Stage 15 是面向多用户 HTTP、Queue 和部署生命周期的选修内容。
 
 ---
 
@@ -142,7 +142,7 @@ Tiny-Agent/
     ├── 00-foundations/
     ├── 01-react-runtime/
     ├── ...
-    └── 15-capstone-enterprise-agent/
+    └── 15-production-deployment-optional/
 ```
 
 每一章都拥有自己的完整教学实现和可执行检查。没有第二套全局 `src/` 或 `tests/` 需要学生与章节代码来回对照。

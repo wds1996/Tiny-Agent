@@ -12,7 +12,7 @@ Many Agent tutorials start by installing a framework and calling `create_agent()
 
 Tiny-Agent takes a mechanism-first path.
 
-This is a zero-to-Agent engineering course. It begins with model calls, Structured Output, Tool Calling, runtimes, workflows, state, and retrieval. Only after those foundations exist do MCP, memory, context engineering, Skills, safety, evaluation, Multi-Agent coordination, sandboxing, production services, and long-horizon execution appear.
+This is a zero-to-Agent engineering course. It begins with model calls, Structured Output, Tool Calling, runtimes, workflows, state, and retrieval. Only after those foundations exist do MCP, memory, context engineering, Skills, safety, evaluation, Multi-Agent coordination, sandboxing, and long-horizon execution appear. Production service deployment is an optional chapter after the core path.
 
 Frameworks are welcome, but they do not arrive before the problem they solve. The goal is not to memorize one generation of APIs. It is to be able to design a new Agent system and explain which decisions need a model, which control flow should remain ordinary code, what the model may propose, what the application may execute, and how the system stops, recovers, gets approval, and proves quality.
 
@@ -37,11 +37,11 @@ The curriculum uses continuous integer Stages from `00` to `15`.
 | [10](stages/10-evaluation-observability/README.md) | Evaluation / Observability | How do we explain a trajectory and prove that a change improved the system? |
 | [11](stages/11-multi-agent/README.md) | Multi-Agent | When is a second Agent actually justified? |
 | [12](stages/12-agent-workspace-sandbox/README.md) | Workspace / Sandbox | What boundaries matter once an Agent can manipulate files and run code? |
-| [13](stages/13-production-deployment/README.md) | Production Service | How does a local program become an identity-aware, backpressured, durable service? |
-| [14](stages/14-long-horizon-harness/README.md) | Long-Horizon Harness | How can long work survive worker loss through ledgers, leases, and artifacts? |
-| [15](stages/15-capstone-enterprise-agent/README.md) | Capstone | How do we select only the mechanisms a real domain actually needs? |
+| [13](stages/13-long-horizon-harness/README.md) | Long-Horizon Harness | How can long work survive worker loss through ledgers, leases, and artifacts? |
+| [14](stages/14-capstone-enterprise-agent/README.md) | Capstone | How do we select only the mechanisms a real domain actually needs? |
+| [15](stages/15(optional)-production-deployment/README.md) | Optional: Production Service | How does a local program become an identity-aware, backpressured, durable service? |
 
-The intended path is sequential because later boundaries are built from earlier ones.
+The core path is sequential through Stage 14 because later boundaries are built from earlier ones. Stage 15 is an optional production-service chapter for projects that need multi-user HTTP, queues, and deployment lifecycle.
 
 ---
 
@@ -142,7 +142,7 @@ Tiny-Agent/
     ├── 00-foundations/
     ├── 01-react-runtime/
     ├── ...
-    └── 15-capstone-enterprise-agent/
+    └── 15-production-deployment-optional/
 ```
 
 Each Stage owns its complete teaching implementation and executable checks. There is no second global implementation or test tree that students must reconcile with chapter code.

@@ -1,4 +1,4 @@
-# Stage 15: Capstone — Build a Support Agent That Can Cite Policy, Inspect Orders, and Request Refunds
+# Stage 14: Capstone — Build a Support Agent That Can Cite Policy, Inspect Orders, and Request Refunds
 
 > Language: **English** | [简体中文](README.zh-CN.md)
 
@@ -209,7 +209,7 @@ I cannot find an accessible order with that ID.
 
 The system does not volunteer who owns the order.
 
-This carries Stage 13's service identity boundary into domain logic.
+This carries the service identity boundary into domain logic.
 
 ---
 
@@ -514,7 +514,7 @@ Human review may take time, but Stage 06 durable Run semantics are sufficient fo
 
 There are no multi-hour work units requiring lease reclaim.
 
-If future cases span days, gather many external artifacts, and move between workers, Stage 14 becomes appropriate.
+If future cases span days, gather many external artifacts, and move between workers, Stage 13 becomes appropriate.
 
 Use complexity when the domain earns it.
 
@@ -523,7 +523,7 @@ Use complexity when the domain earns it.
 ## 22. Run the offline capstone
 
 ```bash
-python stages/15-capstone-enterprise-agent/code/demo.py
+python stages/14-capstone-enterprise-agent/code/demo.py
 ```
 
 The first request asks whether `ORDER-42` can be refunded. The runtime makes a decision, loads the authorized order, retrieves policy, and returns a grounded answer.
@@ -537,10 +537,10 @@ The second request asks to refund it. The Run enters `waiting_approval`, and onl
 Install the stage dependency and set the two DeepSeek variables in the same PowerShell window:
 
 ```powershell
-python -m pip install -r stages/15-capstone-enterprise-agent/code/requirements.txt
+python -m pip install -r stages/14-capstone-enterprise-agent/code/requirements.txt
 $env:DEEPSEEK_API_KEY="your-api-key"
 $env:DEEPSEEK_MODEL="deepseek-chat"
-python stages/15-capstone-enterprise-agent/code/deepseek_demo.py
+python stages/14-capstone-enterprise-agent/code/deepseek_demo.py
 ```
 
 `deepseek_demo.py` keeps the same order, retrieval, approval, and refund code as the offline entry. It replaces only the decision-model instance. After each runtime trace, it prints the actual system instruction, user request, and JSON decision returned by the model.
@@ -552,7 +552,7 @@ The application still validates the JSON before it accepts a decision. A model r
 ## 24. Run the capstone checks
 
 ```bash
-python stages/15-capstone-enterprise-agent/code/checks.py
+python stages/14-capstone-enterprise-agent/code/checks.py
 ```
 
 The checks verify twelve invariants:
@@ -655,11 +655,11 @@ Stage 11 asked when multiple Agents are actually justified.
 
 Stage 12 gave file and code work an explicit workspace and sandbox boundary.
 
-Stage 13 turned the program into a service with identity, queues, backpressure, and durable Runs.
+Stage 13 lets long tasks survive worker loss through ledgers, leases, and artifacts.
 
-Stage 14 let long tasks survive worker loss through ledgers, leases, and artifacts.
+Stage 14 looks simpler because it selects only the mechanisms the support domain needs.
 
-Stage 15 looks simpler because it selects only the mechanisms the support domain needs.
+If this Agent later becomes a multi-user public service, optional Stage 15 adds identity-aware request handling, queues, backpressure, and durable Runs.
 
 That is the difference between using an Agent framework and engineering an Agent system.
 
@@ -751,4 +751,6 @@ If yes, you understand the system.
 
 If not, return to the smallest mechanism and rebuild the reasoning one layer at a time.
 
-That is the end of the Tiny-Agent course path.
+That is the end of the Tiny-Agent core path.
+
+If you now need to operate an Agent as a multi-user production service, continue with [Stage 15 (Optional): Production Service](../15-production-deployment-optional/README.md).

@@ -8,7 +8,7 @@ from domain import TrustedIdentity
 from store import SupportStore
 
 
-class Stage15Checks(unittest.TestCase):
+class Stage14Checks(unittest.TestCase):
     def make(self, tmp):
         store = SupportStore(Path(tmp) / "support.db")
         return store, SupportAgent(store)

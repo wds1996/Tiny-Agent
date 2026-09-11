@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import subprocess
-from typing import Mapping, Sequence
+from threading import Thread
+from typing import Mapping, Sequence, TextIO
 
 from workspace import AgentWorkspace
 
@@ -18,18 +19,50 @@ class CommandResult:
     truncated: bool
 
 
+@dataclass(slots=True)
+class _StreamCapture:
+    max_chars: int
+    chunks: list[str] = field(default_factory=list)
+    chars: int = 0
+    truncated: bool = False
+
+    def add(self, chunk: str) -> None:
+        remaining = self.max_chars - self.chars
+        if remaining <= 0:
+            self.truncated = True
+            return
+        kept = chunk[:remaining]
+        self.chunks.append(kept)
+        self.chars += len(kept)
+        if len(kept) != len(chunk):
+            self.truncated = True
+
+    def text(self) -> str:
+        value = "".join(self.chunks)
+        return value + "\n...[truncated]" if self.truncated else value
+
+
 class CommandRunner:
-    """A bounded subprocess wrapper, not a security sandbox."""
+    """A bounded subprocess wrapper, not a security sandbox.
+
+    The Host registers trusted executable paths under short command aliases. A model or
+    script may request an alias such as ``python`` but cannot choose a replacement path.
+    """
 
     def __init__(
         self,
         workspace: AgentWorkspace,
         *,
-        allowed_executables: set[str],
+        allowed_executables: Mapping[str, str | Path],
         max_output_chars: int = 4000,
     ) -> None:
+        if max_output_chars <= 0:
+            raise ValueError("max_output_chars must be positive")
         self.workspace = workspace
-        self.allowed_executables = set(allowed_executables)
+        self.allowed_executables = {
+            alias: Path(executable).resolve()
+            for alias, executable in allowed_executables.items()
+        }
         self.max_output_chars = max_output_chars
 
     def run(
@@ -41,9 +74,9 @@ class CommandRunner:
     ) -> CommandResult:
         if not command:
             raise ValueError("command must not be empty")
-        executable_name = Path(command[0]).name
-        if executable_name not in self.allowed_executables:
-            raise PermissionError(f"executable not allowed: {executable_name}")
+        executable = self.allowed_executables.get(command[0])
+        if executable is None:
+            raise PermissionError(f"executable alias not allowed: {command[0]}")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
 
@@ -52,43 +85,59 @@ class CommandRunner:
             "PYTHONIOENCODING": "utf-8",
         }
         env.update(dict(extra_env or {}))
+        stdout_capture = _StreamCapture(self.max_output_chars)
+        stderr_capture = _StreamCapture(self.max_output_chars)
 
+        process = subprocess.Popen(
+            [str(executable), *command[1:]],
+            cwd=self.workspace.root,
+            env=env,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+        )
+        stdout_thread = Thread(
+            target=self._drain_limited,
+            args=(process.stdout, stdout_capture),
+            daemon=True,
+        )
+        stderr_thread = Thread(
+            target=self._drain_limited,
+            args=(process.stderr, stderr_capture),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+        timed_out = False
         try:
-            completed = subprocess.run(
-                list(command),
-                cwd=self.workspace.root,
-                env=env,
-                text=True,
-                capture_output=True,
-                timeout=timeout_seconds,
-                shell=False,
-                check=False,
-            )
-            stdout, out_truncated = self._truncate(completed.stdout)
-            stderr, err_truncated = self._truncate(completed.stderr)
-            return CommandResult(
-                completed.returncode,
-                stdout,
-                stderr,
-                False,
-                out_truncated or err_truncated,
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout = self._decode_timeout_stream(exc.stdout)
-            stderr = self._decode_timeout_stream(exc.stderr)
-            stdout, out_truncated = self._truncate(stdout)
-            stderr, err_truncated = self._truncate(stderr)
-            return CommandResult(-1, stdout, stderr, True, out_truncated or err_truncated)
+            returncode = process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.kill()
+            returncode = -1
+            process.wait()
+        finally:
+            stdout_thread.join()
+            stderr_thread.join()
 
-    def _truncate(self, text: str) -> tuple[str, bool]:
-        if len(text) <= self.max_output_chars:
-            return text, False
-        return text[: self.max_output_chars] + "\n...[truncated]", True
+        return CommandResult(
+            returncode=returncode,
+            stdout=stdout_capture.text(),
+            stderr=stderr_capture.text(),
+            timed_out=timed_out,
+            truncated=stdout_capture.truncated or stderr_capture.truncated,
+        )
 
     @staticmethod
-    def _decode_timeout_stream(value: str | bytes | None) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, bytes):
-            return value.decode("utf-8", errors="replace")
-        return value
+    def _drain_limited(stream: TextIO | None, capture: _StreamCapture) -> None:
+        if stream is None:
+            return
+        try:
+            while chunk := stream.read(4096):
+                capture.add(chunk)
+        finally:
+            stream.close()

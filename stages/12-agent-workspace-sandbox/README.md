@@ -2,35 +2,21 @@
 
 > Language: **English** | [简体中文](README.zh-CN.md)
 
-Stage 11 gave Agents task boundaries. Real work soon needs files, artifacts, tests, and scripts.
+Stage 11 assigned responsibility across Agents. The next practical question is where an Agent may create files and execute its work. A task that writes reports, downloads inputs, runs tests, or generates scripts needs a place to work, but it must not quietly inherit the whole host computer.
 
-That raises a question we deliberately postponed:
-
-> **If an Agent can manipulate files and run programs, how much of the machine can it touch?**
-
-Stage 12 builds a Workspace and a bounded subprocess runner to make the important boundaries visible.
-
-One statement must remain explicit:
+This chapter builds a small per-run Workspace and a bounded command runner. It also draws the line that matters for production work:
 
 > **The standard-library runner in this chapter is not a security sandbox.**
 
-It teaches the pieces a real sandbox must control.
+It makes several useful limits explicit; an OS-level or virtualized sandbox must enforce the stronger limits that remain.
 
 ---
 
-## 1. Why a Workspace exists
+## 1. From “who does the task” to “where does the task run?”
 
-Longer Agent tasks produce input files, scratch files, generated code, test output, and final artifacts.
+Stage 11 gave a coordinator and workers separate responsibilities. A worker often needs files: user input, scratch code, downloaded material, test output, and a final report. Leaving all of these in the service process's current directory makes ownership, cleanup, and export ambiguous.
 
-If everything lands in the service process's current directory, ownership and cleanup become ambiguous.
-
-A Workspace turns one run's files into an explicit boundary.
-
----
-
-## 2. Start with one root per run
-
-The teaching layout looks like:
+A **Workspace** is a directory allocated to one run. It gives the run a visible file boundary:
 
 ```text
 run-001/
@@ -41,205 +27,186 @@ run-001/
     └── result.txt
 ```
 
-A production Workspace may map to remote storage or a managed sandbox. The abstraction still matters: the Agent works inside its Workspace, not against arbitrary host paths.
-
----
-
-## 3. Path traversal is a small string with sharp teeth
-
-Allowing `../../secret.txt` would make the Workspace root meaningless.
-
-The implementation resolves the canonical target and verifies that it stays under the root. Absolute paths are rejected as well.
-
----
-
-## 4. Symlinks are why string checks are not enough
-
-Blocking the literal substring `..` does not stop a symlink inside the Workspace from pointing elsewhere.
-
-Resolve the real path first, then enforce containment. Filesystem policy should reason about canonical targets.
-
----
-
-## 5. Work files and Artifacts serve different purposes
-
-Scratch code, downloaded data, and debug output are not necessarily user-facing deliverables.
-
-Separating `work/` and `artifacts/` makes lifecycle and export policy clearer. Stage 14 will build on this idea when work survives individual compute sessions.
-
----
-
-## 6. Only now do we add a Command Runner
-
-The runner accepts an argument list:
+The teaching implementation creates that directory and provides paths through `AgentWorkspace`:
 
 ```python
-runner.run(
-    [python, "work/check.py"],
-    timeout_seconds=2,
-)
+from pathlib import Path
+import tempfile
+
+from workspace import AgentWorkspace
+
+with tempfile.TemporaryDirectory() as tmp:
+    workspace = AgentWorkspace.create(Path(tmp) / "run-001")
+    workspace.write_text("input.txt", "draft release notes")
+    workspace.write_text("work/check.py", "print('checked')\n")
+    workspace.write_text("artifacts/result.txt", "approved summary\n")
+
+    print(workspace.list_files())
 ```
 
-and uses `shell=False`.
+The current run may write inside this root. `TemporaryDirectory` removes this teaching Workspace when its block ends. An application can later export a selected item from `artifacts/`; it should not treat every temporary file as a deliverable.
 
-Removing a shell parsing layer reduces one class of injection. It does not make arbitrary commands safe by itself.
+## 2. A file boundary must handle real paths, not only strings
 
----
+An API that accepts a relative path must reject path traversal:
 
-## 7. Executable allowlists bound the capability surface
+```text
+../../secret.txt
+```
 
-The runner is constructed with an executable allowlist.
-
-A program being installed on the machine does not mean the Agent is allowed to run it. This is the Stage 09 permission idea applied to compute capabilities.
-
-Allowing Python is still powerful, so this remains only one layer.
-
----
-
-## 8. Working directory should be explicit
-
-The subprocess always starts with:
+It must also reject absolute paths. The key detail is that the implementation calls `resolve()` first, then verifies the canonical target remains under the Workspace root:
 
 ```python
-cwd=workspace.root
+def resolve(self, relative_path: str | Path) -> Path:
+    candidate = Path(relative_path)
+    if candidate.is_absolute():
+        raise WorkspaceEscapeError("absolute paths are not allowed")
+
+    target = (self.root / candidate).resolve()
+    try:
+        target.relative_to(self.root)
+    except ValueError as exc:
+        raise WorkspaceEscapeError("path escapes workspace") from exc
+    return target
 ```
 
-Relative paths become deterministic and naturally map to the current run.
-
----
-
-## 9. Do not inherit every environment variable by default
-
-The parent service may contain database URLs, API keys, cloud credentials, and tokens.
-
-Passing the entire environment to generated code silently expands its authority.
-
-The teaching runner starts from a small environment and adds only explicitly provided values.
-
-Credentials should be capabilities, not ambient decoration.
-
----
-
-## 10. Process timeout is stronger than thread timeout, but not perfect isolation
-
-`subprocess.run(..., timeout=...)` can terminate the direct child after timeout.
-
-That is a clearer boundary than simply stopping a wait on a worker thread.
-
-Complex process trees and external side effects still require stronger lifecycle management.
-
----
-
-## 11. Output needs a budget too
-
-A subprocess can print megabytes.
-
-Feeding all of stdout back into model context creates another unbounded data path.
-
-The runner truncates output after `max_output_chars`.
-
-Anything that enters context, logs, or persistence deserves a limit.
-
----
-
-## 12. This is not a security sandbox
-
-The wrapper controls paths it exposes, executable names, CWD, environment, timeout, and output.
-
-But allowed Python code can still use the operating system capabilities available to the process.
-
-A stronger sandbox may require separate users, namespaces, containers or VMs, mount policy, network controls, syscall restrictions, resource limits, and credential isolation.
-
-Do not call a subprocess wrapper a sandbox merely because it has a timeout.
-
----
-
-## 13. Containers are tools, not automatic security proofs
-
-Containers can provide useful filesystem, process, resource, and network boundaries.
-
-Their effective isolation depends on configuration, mounts, Linux capabilities, runtime, and credentials.
-
-“Runs in a container” is not enough information to evaluate the security boundary.
-
----
-
-## 14. Network access should be explicit policy
-
-Some tasks need the network. Many do not.
-
-A real sandbox can disable networking or restrict destinations.
-
-The standard-library runner cannot reliably enforce OS-level network isolation, so this chapter does not invent a fake `network=False` flag.
-
-Unimplemented isolation should not be represented as a decorative option.
-
----
-
-## 15. Skill scripts finally have an execution location
-
-Stage 08 deliberately refused to run arbitrary Skill scripts.
-
-Now the chain can be explicit:
+Why not simply reject a string containing `..`? A **symbolic link (symlink)** can make an ordinary-looking path point outside the Workspace:
 
 ```text
-Skill procedure
-    ↓
-Host policy
-    ↓
-Workspace
-    ↓
-Runner / Sandbox
-    ↓
-Artifact
+workspace/outside-link  ->  /somewhere/private.txt
 ```
 
-The Skill still does not own execution authority.
+`outside-link` contains no `..`, but its real target is external. Checking the resolved path catches this case. The checks test it when the operating system permits symlink creation; on Windows machines without that permission, the test is skipped rather than reporting a false pass.
 
----
+This local path-confinement helper is useful against ordinary escapes. It is not a complete defense against a malicious process on the same host, which can potentially change filesystem state between the check and the file operation. Untrusted code needs the OS or virtualization isolation discussed later in this chapter.
 
-## 16. Workspace is not durable state
+## 3. Workspace, Artifact, Checkpoint, and Cleanup are four different things
 
-A Workspace may disappear with compute.
+These terms all involve saved data, but they answer different questions:
 
-A checkpoint should survive compute loss.
+| Object | What it holds | Typical lifetime |
+| --- | --- | --- |
+| Workspace | Input, intermediate files, and temporary scripts for this computation | Cleaned up after the run |
+| Artifact | A report, patch, or test result worth delivering | Explicitly exported and retained |
+| Checkpoint | State needed to continue work | Stage 06 durable store |
+| Task ledger | Run status, retries, and audit events | Long-lived service record |
 
-Artifacts worth retaining should be exported to durable storage.
+A Workspace can be backed by persistent storage, but the meanings should stay distinct. If a Worker disappears, a Checkpoint tells the system how to resume. An Artifact is the result a user or downstream workflow receives. Temporary work files usually need cleanup.
 
-These semantics can share infrastructure, but they should remain distinct.
-
----
-
-## 17. Cleanup is part of the lifecycle
-
-A complete Workspace lifecycle is:
+The lifecycle is therefore:
 
 ```text
-create
-use
-export artifacts
-cleanup
+create workspace
+    → write / execute / inspect
+    → export selected artifacts
+    → cleanup temporary workspace
 ```
 
-Temporary downloads, caches, generated code, and logs otherwise accumulate until disk space becomes the monitoring system.
+Without that final step, downloaded inputs, caches, generated scripts, and large logs accumulate until disk space reveals the design gap.
 
 ---
 
-## 18. Run the chapter
+## 4. When executing a command, return “what may run” to the Host
+
+After controlling file locations, we can ask what programs may run. Do not pass a command string assembled by a model or script straight to a shell:
+
+```python
+# Do not do this with untrusted input: the shell parses the whole string again.
+import subprocess
+
+untrusted_argument = "work/check.py && echo unexpected-shell-command"
+subprocess.run(f"python {untrusted_argument}", shell=True, check=False)
+```
+
+With `shell=True`, the shell interprets quotes, redirects, `&&`, and other syntax. Any unvalidated input mixed into that string becomes difficult to reason about. The chapter runner takes an argument list and fixes `shell=False`:
+
+```python
+from pathlib import Path
+import sys
+import tempfile
+
+from runner import CommandRunner
+from workspace import AgentWorkspace
+
+with tempfile.TemporaryDirectory() as tmp:
+    workspace = AgentWorkspace.create(Path(tmp) / "demo-run")
+    workspace.write_text("work/check.py", "print('checked')\n")
+
+    runner = CommandRunner(
+        workspace,
+        allowed_executables={"python": sys.executable},
+    )
+    result = runner.run(["python", "work/check.py"], timeout_seconds=2)
+    print(result.stdout)
+```
+
+Here `"python"` is not an arbitrary program that the model may find through `PATH`. It is a **command alias** registered by the Host when it starts. The runner replaces it with the known `sys.executable` path. A file named `python` inside the Workspace, or a request for `./python`, does not match the alias.
+
+This is a small capability boundary: the Host decides which aliases exist, and the caller can request only those programs. Command arguments cannot quietly replace the executable itself.
+
+The runner also fixes `cwd=workspace.root`. Thus `work/check.py` is relative to this run's working directory, not to the service project's root. Outputs stay grouped with the run and scripts are less likely to read an accidental host-relative path.
+
+## 5. A started command still needs resource limits
+
+Allowing a known interpreter does not mean handing it the whole host environment. The runner starts with just `PATH` and `PYTHONIOENCODING`, then lets the Host add explicitly selected variables through `extra_env`. Database passwords, cloud credentials, and deployment tokens must not be inherited merely because a child process might find them convenient.
+
+Three runtime limits solve three different problems:
+
+| Limit | What this runner does | What it protects against |
+| --- | --- | --- |
+| Timeout | Terminates the direct child after `timeout_seconds` | A stuck command occupying a Worker forever |
+| Output budget | Continuously drains stdout and stderr while retaining only the first `max_output_chars` characters per stream | Huge logs exhausting the parent process's memory |
+| Input | Connects stdin to `DEVNULL` | A script waiting for human input and hanging the run |
+
+Continuous draining matters. If a program first buffers all output and only then applies `output[:4000]`, its displayed result is short but the Python process may already have stored hundreds of megabytes. This runner reads stdout and stderr on separate threads; once a budget is reached it keeps discarding data so pipes cannot fill, and it appends `...[truncated]` to the returned result.
+
+The limits have edges. A timeout stops the directly launched process; it does not guarantee cleanup of every descendant, undo a file already written, or cancel a network request already sent. Process-tree control and resource quotas belong to the stronger isolation environment described next.
+
+Run the complete local demonstration now:
 
 ```bash
 python stages/12-agent-workspace-sandbox/code/demo.py
-python stages/12-agent-workspace-sandbox/code/checks.py
 ```
 
-The checks cover path confinement, absolute paths, executable allowlists, CWD, timeout, output truncation, and environment minimization.
+It writes a fixed teaching script, runs it through the `python` alias, and explicitly exports one result. It does not let a model generate arbitrary code for the local machine; the focus is how a Host runs an already allowed command.
 
 ---
 
-## 19. Why production service design comes next
+## 6. A Workspace and Runner are not a security Sandbox
 
-The Agent now has durable state, external capabilities, memory, guardrails, evaluation, team coordination, and a workspace.
+We now have path checks, command aliases, a limited environment, a timeout, and an output budget. These are defense layers, but they do not make hostile code safe to run on the host.
 
-Deployment introduces ordinary but unavoidable systems questions: concurrent users, request/run/thread/tenant identity, long jobs, backpressure, restarts, readiness, and durable status.
+| Boundary | What the Workspace / Runner does here | What a real Sandbox also needs |
+| --- | --- | --- |
+| Files | Constrains paths resolved through this API | Separate filesystem or mounts, read-only input, least privilege |
+| Processes | Fixes the entry point and limits the direct child | Container/VM, process groups, CPU and memory quotas |
+| Network | Provides no network policy | Default-deny egress or an explicit destination allowlist |
+| System calls and identity | Cannot stop Python code using the current user's permissions | Low-privilege identity and OS-level restrictions such as seccomp |
+| Cleanup | Removes Workspace files | Destruction and audited recovery of the isolated instance |
 
-Stage 13 turns the Agent program into a service.
+Containers can add useful boundaries, but “it runs in Docker” is not enough. Mounting the Docker socket or a writable host directory can reintroduce broad host control. Similarly, network policy must be enforced by the container, VM, or infrastructure. `CommandRunner` has no such implementation, so it must not pretend to offer a decorative `network=False` switch.
+
+Run the offline checks to inspect the limits that are actually implemented:
+
+```bash
+python stages/12-agent-workspace-sandbox/code/checks.py
+```
+
+They cover path traversal, absolute paths, symlinks, unregistered executables, environment minimization, timeouts, and streamed output truncation. The symlink check skips on systems where the test cannot create a symlink.
+
+## 7. How Skills, models, and an execution environment fit together
+
+A Stage 08 Skill can describe which checks and outputs a task needs. It does not grant execution authority. A production code-task flow should be:
+
+```text
+Skill procedure
+    → Host validates requested action
+    → isolated workspace / sandbox executes approved command
+    → Host validates and exports selected artifact
+```
+
+For that reason, this chapter does not include an example that sends arbitrary Python generated by DeepSeek directly to this machine's Runner. That would bypass the isolation boundary just described and turn Stage 09 policy checks into ceremony. In a real LLM integration, the Host selects tools, validates parameters, and obtains approval outside the Sandbox. Only an explicitly allowed command enters an **already isolated** execution environment. The model proposes; the Host decides whether to execute, where to execute, and which artifacts may leave the Workspace.
+
+## 8. Next: place these boundaries in a running service
+
+We now have file, process, and artifact boundaries for one run. The next question is how work continues when this Worker or its process disappears: [Stage 13: Long-Horizon Harness](../13-long-horizon-harness/README.md).

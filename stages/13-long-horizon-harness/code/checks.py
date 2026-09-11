@@ -6,14 +6,14 @@ from harness import LongHorizonHarness
 from ledger import LeaseError, TaskLedger
 
 
-class Stage14Checks(unittest.TestCase):
+class Stage13Checks(unittest.TestCase):
     def test_expired_lease_can_be_reclaimed(self):
         with tempfile.TemporaryDirectory() as tmp:
             ledger = TaskLedger(Path(tmp) / "x.db")
             task = ledger.create_task(total_steps=1)
             first = ledger.claim(worker_id="a", lease_seconds=5, now=100)
             self.assertEqual(first.task_id, task.task_id)
-            second = ledger.claim(worker_id="b", lease_seconds=5, now=106)
+            second = ledger.claim(worker_id="b", lease_seconds=5, now=105)
             self.assertEqual(second.lease_owner, "b")
 
     def test_unexpired_lease_cannot_be_stolen(self):
@@ -37,8 +37,48 @@ class Stage14Checks(unittest.TestCase):
             ledger = TaskLedger(path)
             task = ledger.create_task(total_steps=1)
             ledger.claim(worker_id="a", lease_seconds=5, now=100)
-            ledger.record_step_output(task.task_id, worker_id="a", step_index=0, output={"x": 1})
+            ledger.record_step_output(
+                task.task_id,
+                worker_id="a",
+                step_index=0,
+                output={"x": 1},
+                now=101,
+            )
             self.assertEqual(TaskLedger(path).step_output(task.task_id, 0), {"x": 1})
+
+    def test_expired_owner_cannot_heartbeat_or_persist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = TaskLedger(Path(tmp) / "x.db")
+            task = ledger.create_task(total_steps=1)
+            ledger.claim(worker_id="a", lease_seconds=5, now=100)
+            with self.assertRaises(LeaseError):
+                ledger.heartbeat(task.task_id, worker_id="a", lease_seconds=5, now=105)
+            with self.assertRaises(LeaseError):
+                ledger.record_step_output(
+                    task.task_id,
+                    worker_id="a",
+                    step_index=0,
+                    output={"stale": True},
+                    now=105,
+                )
+
+    def test_repair_keeps_outputs_from_each_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = TaskLedger(Path(tmp) / "x.db")
+            task = ledger.create_task(total_steps=1, max_repairs=1)
+            ledger.claim(worker_id="a", lease_seconds=5, now=100)
+            ledger.record_step_output(
+                task.task_id, worker_id="a", step_index=0, output={"draft": "v0"}, now=101
+            )
+            ledger.request_repair(
+                task.task_id, worker_id="a", restart_step=0, progress={"revision": 1}, now=101
+            )
+            ledger.claim(worker_id="b", lease_seconds=5, now=102)
+            ledger.record_step_output(
+                task.task_id, worker_id="b", step_index=0, output={"draft": "v1"}, now=103
+            )
+            self.assertEqual(ledger.step_output(task.task_id, 0, attempt=0), {"draft": "v0"})
+            self.assertEqual(ledger.step_output(task.task_id, 0, attempt=1), {"draft": "v1"})
 
     def test_each_work_unit_advances_one_step(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -60,8 +100,10 @@ class Stage14Checks(unittest.TestCase):
             harness = LongHorizonHarness(ledger, [bad])
             first = harness.work_once(worker_id="a", now=100)
             self.assertEqual(first.task.repair_count, 1)
-            with self.assertRaises(RuntimeError):
-                harness.work_once(worker_id="b", now=101)
+            self.assertNotIn("needs_repair", first.task.progress)
+            self.assertNotIn("restart_step", first.task.progress)
+            exhausted = harness.work_once(worker_id="b", now=101)
+            self.assertEqual(exhausted.task.status, "failed")
 
     def test_progress_survives_harness_recreation(self):
         with tempfile.TemporaryDirectory() as tmp:

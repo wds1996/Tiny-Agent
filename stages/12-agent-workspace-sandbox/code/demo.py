@@ -21,10 +21,10 @@ def main() -> None:
 
         runner = CommandRunner(
             workspace,
-            allowed_executables={Path(sys.executable).name},
+            allowed_executables={"python": sys.executable},
             max_output_chars=500,
         )
-        result = runner.run([sys.executable, "work/check.py"], timeout_seconds=2)
+        result = runner.run(["python", "work/check.py"], timeout_seconds=2)
         print("command:", result)
         print("files:", workspace.list_files())
         print("artifact:", workspace.read_text("artifacts/result.txt"))
