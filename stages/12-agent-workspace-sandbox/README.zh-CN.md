@@ -1,231 +1,323 @@
-# Stage 12：给 Agent 一张工作台，但别顺手把整台电脑钥匙也给它——Workspace 与 Sandbox
+# Stage 12：报告写好了，怎样检查并交到用户手里？——工作区与执行边界
 
 > Language: [English](README.md) | **简体中文**
 
-Stage 11 解决了多个 Agent 中“谁做什么”。真实任务很快会变成读取资料、修改文件、生成报告、运行测试和执行 Skill Script。此时问题变成：
+[上一章](../11-multi-agent/README.zh-CN.md)里，我们已经会把工作分给不同的 Agent，也知道不能因为它叫“专家”，就把所有资料和权限都交给它。现在产品同事小林提出一个很具体的要求：“帮我做一份客服助手试点报告，检查格式后，把文件给我。”原本在消息里传递的文字，开始变成真正的文件；原本一句“我检查过了”，也需要有实际运行的程序作证。
 
-> **Agent 在做这些事时，究竟能碰到机器上的哪些文件、程序、网络和凭证？**
+小林提供的材料不多：试点拟覆盖 20 名客服，助手只建议回复、不能执行退款，而且目前没有试点结果。报告应当包含背景、风险、建议三部分。我们先让程序在一次工作会话里完成这件事：拿到材料，写一版草稿，发现少了风险说明，补齐，重新检查，最后交付一个 Markdown 文件。至于是一个 Agent 写，还是几个 Agent 协作写，不改变这里的问题：**文件放在哪里，什么程序可以处理它，以及哪个结果允许离开工作区？**
 
-本章先建立明确的 **Workspace**，再建立受限 Command Runner，最后严格区分“减少意外操作的本地包装器”和“可以运行不可信代码的 Security Sandbox”。
+这次先用固定草稿观察执行过程，不调用在线模型。模型以后可以负责写报告，但不能因此获得任意运行程序的权限。负责安排文件、检查请求和启动进程的应用，我们沿用前面的称呼叫作 Host；它就是你编写的控制程序，不是另一个神秘的 Agent。
 
-```text
-Host chooses a Workspace root
-    ↓
-Agent reads and writes bounded workspace paths
-    ↓
-Host chooses registered command aliases
-    ↓
-Runner bounds cwd, environment, duration, and returned output
-    ↓
-Artifact is exported; temporary work is cleaned up
-```
+## 1. 先给这份报告分一张工作台
 
-本章代码只使用标准库。若要逐段复制运行，先执行 `cd stages/12-agent-workspace-sandbox/code`；完整示例命令放在对应知识点后。
+最省事的办法，是把草稿直接写进程序当前目录，文件名叫 `report.md`。一个人试用时可能没事，第二个用户也来生成报告，名字就撞上了。更麻烦的是，项目目录里还可能有配置文件、历史资料和凭证。我们只是让助手写一份报告，不是邀请它整理整台电脑。
 
----
+因此，先由应用给这次执行分配一个独立目录。这个目录就是 **工作区（Workspace）**：它帮助我们识别这次工作有哪些输入、产生了什么文件，以及结束时可以清理哪些临时内容。工作区首先是文件组织和访问约定，不是仅凭目录名字就出现的操作系统隔离。
 
-## 1. 从“谁做”走到“在哪里做”：Workspace 的文件边界
-
-一个短聊天的主要状态在 Message 中。长任务还会有输入文件、下载资料、中间脚本、测试输出和最终报告。若它们散落在服务当前目录，就很难回答：哪些文件属于这次 Run？下个 Run 能否看见？用户可以下载哪一个？清理时删什么？
-
-Workspace 把“一次 Run 的文件工作区”变成明确对象。`root` 是 Host 创建的目录；Agent 只能请求相对于它的路径：
+[`AgentWorkspace`](code/workspace.py) 为一次执行建立这样的目录：
 
 ```text
-run-001/
-├── input.txt
-├── work/
-│   └── check.py
-└── artifacts/
-    └── result.txt
+run/
+├── inputs/       小林给的任务要求和原始材料
+├── work/         正在修改的报告草稿
+└── artifacts/    可选的候选产物暂存区，不表示已批准交付
 ```
 
-`work/` 存放中间草稿、下载和测试脚本；`artifacts/` 存放准备交付或导出的结果。这不是目录名的魔法，而是应用的语义约定：只有 Host 明确导出的 Artifact 才应离开本次 Run。
+目录名是我们的约定。把一份有问题的文件放进 `artifacts/`，它不会自动变成合格产物；小林最终收到的文件还要经过明确检查和导出。这个例子会直接从检查过的工作稿导出，不需要为了经过每个文件夹而多复制一次。
 
-下面代码在 Host 已决定根目录后创建 Workspace。`Path` 是 Python 表示文件路径的对象；根目录不能由模型给出任意绝对路径：
+先看创建工作区和放入材料的部分：
 
 ```python
-from pathlib import Path
-import tempfile
-
-from workspace import AgentWorkspace
-
-with tempfile.TemporaryDirectory() as tmp:
-    workspace = AgentWorkspace.create(Path(tmp) / "run-001")
-    workspace.write_text("input.txt", "tiny agent workspace")
-    workspace.write_text("work/check.py", "print('checked')\n")
-    workspace.write_text("artifacts/result.txt", "approved summary\n")
-
-    print(workspace.list_files())
+with AgentWorkspace.temporary() as workspace:
+    workspace.import_input("inputs/brief.txt", BRIEF)
+    workspace.write_text("work/report.md", FIRST_DRAFT)
 ```
 
-`TemporaryDirectory` 会在 `with` 代码块结束时删除这个教学用 Workspace。真实服务可以改用持久化目录或隔离环境，但也应明确何时导出 Artifact、何时清理临时文件。
+`temporary()` 在系统临时目录里创建一张新的“工作台”，并在正常离开 `with` 时回收它；`import_input()` 是应用初始化时使用的方法，`write_text()` 则是可以包装成 Agent 文件工具的受限写入接口。`BRIEF` 和 `FIRST_DRAFT` 分别是任务材料与第一版草稿。它们不是路径，更不是要执行的代码。
 
----
+如果应用自己选择工作目录，`create()` 会拒绝复用已经存在的同名目录。这里宁可明确报错，也不悄悄把上一次运行留下的文件当成这一次的成果。一个随机、难猜的目录名有助于避免碰撞，但不能替代真实服务中的用户身份与访问授权。
 
-## 2. 文件边界不是字符串检查：Path Traversal 与 Symlink
+工作台分好了，接下来出现一个很自然的问题：Agent 如果说“我要读 `../something.txt`”，我们是不是也照办？
 
-如果 Agent 可以请求 `../../secret.txt`，Workspace Root 只是墙上的“请勿越界”标志。这个技巧叫 **Path Traversal**：`..` 表示父目录，连续使用能逐层走出工作区。
+## 2. 接受相对路径，不等于接受任意位置
 
-本章的 `resolve()` 先拒绝绝对路径，再把相对路径与 Root 合并并调用 `Path.resolve()`；`resolve()` 得到的是文件系统实际指向的规范路径。最后检查该路径仍在 Root 内：
+`work/report.md` 的意思是从当前工作区找到草稿；`../other-run/report.md` 的意思却是先走到父目录，再去别人的目录。这个利用路径走出预定范围的做法叫路径穿越。更直接的请求是给出 `/somewhere/private.txt` 或 `C:/private.txt`，完全绕开这次工作区。
+
+我们的文件接口只接受使用 `/` 分隔的相对路径，包括在 Windows 上运行时。它先拒绝绝对路径、盘符、反斜杠及无效输入，再检查最终目标是否还在工作区中。关键不在于字符串里有没有某个词，而在于它实际指向哪里：
 
 ```python
-from pathlib import Path
-import tempfile
-
-from workspace import AgentWorkspace, WorkspaceEscapeError
-
-with tempfile.TemporaryDirectory() as tmp:
-    workspace = AgentWorkspace.create(Path(tmp) / "run-001")
-    assert workspace.resolve("notes/a.txt").is_relative_to(workspace.root)
-
-    try:
-        workspace.write_text("../secret.txt", "no")
-    except WorkspaceEscapeError:
-        print("path escape rejected")
+target = (self.root / relative).resolve()
+try:
+    local = target.relative_to(self.root)
+except ValueError as exc:
+    raise WorkspaceEscapeError("path escapes workspace") from exc
 ```
 
-为什么不只检查字符串里有没有 `..`？因为 **Symlink（符号链接）** 可以让一个看似普通的工作区路径指向外部文件：
+`resolve()` 把路径规范化，并解析已有的符号链接；`relative_to()` 判断目标能否表示成工作区下的相对位置。不能，就拒绝。不能改成简单的 `str(target).startswith(str(root))`：`/tmp/run-copy` 也以 `/tmp/run` 开头，但它们显然不是同一个目录。相关路径行为可以对照 [Python pathlib 文档](https://docs.python.org/3.10/library/pathlib.html)。
 
-```text
-workspace/outside-link  ->  /somewhere/private.txt
-```
+还有一种容易漏掉的情况：工作区里有个叫 `work/reference.md` 的符号链接，实际上指向外部文件。路径名字看起来很本分，真实目的地却不在这里。为让文件策略容易检查，这个接口进一步拒绝路径中出现的符号链接，包括指向工作区内部的链接；文件清单也不会跟着链接向外递归。
 
-读取 `outside-link` 时路径字符串没有 `..`，真实目标却在外面。因此代码检查规范路径，而不是字符串外观。测试会在系统允许创建 Symlink 时验证这一点；某些 Windows 环境没有创建 Symlink 的权限，测试会标记为跳过，而不是把权限限制误报成实现成功。
+这些规则保护的是**通过这个接口发生的文件操作**。它们不承诺抵御同机恶意进程在“检查”和“打开”之间替换文件，也不把硬链接、操作系统权限或恶意挂载问题全部解决掉。当前例子的前提是应用拥有一个私有工作目录，运行的检查器也受应用信任。等小林要求运行陌生脚本时，我们需要另一层边界，后面会亲眼看到原因。
 
-这份本地 Path Confinement 适合防止普通路径逃逸，却不是对抗同机恶意进程的完整方案：另一个进程仍可能在“检查路径”和“打开文件”之间篡改文件系统。运行不可信代码时，应依赖后文的 OS/虚拟化隔离，而不是把这段路径检查当成全部防线。
+不过，即使目标仍在工作区里，也还有一个不能含糊的问题：原始要求和草稿，应该拥有相同的写入权限吗？
 
----
+## 3. 可以修改报告，不应该顺便修改题目
 
-## 3. Workspace、Artifact、Checkpoint 与 Cleanup 是四件事
+第一版报告漏了风险说明。Agent 最应该做的是补上风险，而不是把 `inputs/brief.txt` 里的“必须包含风险”删掉。考试时把题目改成自己会做的那一道，确实能显著提高自信，但不能提高成绩。
 
-这些概念都和“保存东西”有关，却解决不同问题：
-
-| 对象 | 保存什么 | 生命周期 |
-| --- | --- | --- |
-| Workspace | 当前计算的输入、中间文件和临时脚本 | 通常随 Run 结束清理 |
-| Artifact | 值得交付的报告、补丁、测试结果 | 应由应用明确导出和保留 |
-| Checkpoint | 继续执行所需的状态 | Stage 06 的 Durable Store |
-| Task Ledger | Run 状态、重试和审计记录 | 由服务长期管理 |
-
-把 Workspace 做成持久卷是可能的实现选择，但不要因此混淆语义：Worker 消失后，Checkpoint 告诉系统如何恢复；Artifact 是用户或后续流程要获取的结果；临时工作文件大多数应清理。
-
-完整生命周期是：
-
-```text
-create workspace
-    ↓
-write / execute / inspect
-    ↓
-export selected artifacts
-    ↓
-cleanup temporary workspace
-```
-
-如果每次 Run 都留下下载文件、缓存、生成脚本和大日志，磁盘会替你发现生命周期设计缺了一步。
-
----
-
-## 4. 执行命令时，先把“能运行什么”交回 Host
-
-文件能写到哪里解决以后，下一步才是“能执行什么”。不要把一段由模型或脚本拼出的命令字符串直接交给 shell：
+所以我们允许应用初始化输入材料，却不允许 Agent 的普通写入接口修改 `inputs/`。路径规范化以后，写入方法还会按目标所在区域检查：
 
 ```python
-# 不要把未验证内容这样交给 shell：它会重新解释整段字符串。
-import subprocess
-
-untrusted_argument = "work/check.py && echo unexpected-shell-command"
-subprocess.run(f"python {untrusted_argument}", shell=True, check=False)
+if target.relative_to(self.root).parts[0] not in {"work", "artifacts"}:
+    raise PermissionError("Agent writes cannot modify inputs/")
 ```
 
-`shell=True` 会让 shell 解释空格、引号、重定向和 `&&` 等语法；如果命令中混入了未验证的内容，边界很难判断。本章的 Runner 接受一个参数列表，并固定 `shell=False`：
+先规范化再检查区域很重要。`work/../inputs/brief.txt` 最终仍指向输入材料，不能因为最前面写着 `work` 就放行。`import_input()` 也使用排他创建，已有的同名输入不会被它覆盖；它是 Host 的初始化操作，不应该一并暴露成模型可随意调用的工具。
+
+这里的“只读”是文件 API 的策略，并没有把本机所有进程对这个文件的操作系统权限一起改掉。同样，工作区里保存着材料，也不等于模型已经看见材料。应用仍要按照 Stage 07 的上下文选择，把需要的内容读出来，送入当前模型调用。
+
+我们还需要一个朴素的大小边界。一份小报告如果意外变成几百 MB，直接 `read_text()` 再截取前半段，内存可能早已被占满。接口先按字节限量读取：
 
 ```python
-from pathlib import Path
-import sys
-import tempfile
-
-from runner import CommandRunner
-from workspace import AgentWorkspace
-
-with tempfile.TemporaryDirectory() as tmp:
-    workspace = AgentWorkspace.create(Path(tmp) / "demo-run")
-    workspace.write_text("work/check.py", "print('checked')\n")
-
-    runner = CommandRunner(
-        workspace,
-        allowed_executables={"python": sys.executable},
-    )
-    result = runner.run(["python", "work/check.py"], timeout_seconds=2)
-    print(result.stdout)
+with target.open("rb") as stream:
+    payload = stream.read(self.max_file_bytes + 1)
+if len(payload) > self.max_file_bytes:
+    raise FileBudgetError("file exceeds the read budget")
 ```
 
-这里的 `"python"` 不是让模型在 `PATH` 中自行寻找的任意程序，而是 Host 在启动时注册的**命令别名**。Runner 会将它替换为 `sys.executable`，也就是当前 Python 解释器的确定路径。模型即使在 Workspace 中写了一个叫 `python` 的文件，或者请求 `./python`，也不会匹配这个别名。
+多读一个字节，是为了区分“恰好达到上限”和“还没有读完”。默认上限是 65,536 字节，写入也按 UTF-8 编码后的字节数检查；中文字符不一定只占一个字节，所以不能把它解释成 65,536 个字符。这个上限只管本接口单次读写的文件大小，不是整个磁盘配额，也管不住绕开接口自行写文件的进程。
 
-这是一种很小但很实用的能力设计：Host 提供哪些别名，调用方就只能请求哪些程序；它不能借“命令参数”偷偷改掉可执行文件本身。
+现在原始材料与草稿各有位置，草稿也能读写了。下一步要把“检查过”变成一个真的发生过的动作。
 
-Runner 还固定 `cwd=workspace.root`。因此 `work/check.py` 是相对于本次 Run 的工作目录，而不是相对于启动服务的项目根目录。这样既让产物集中，也减少了脚本误读宿主机文件的机会。
+## 4. 给 Agent 一项检查能力，而不是一个万能命令行
 
-## 5. 命令能启动以后，还要限制运行时资源
+小林要求的检查很具体：报告应有 `Background`、`Risks`、`Recommendation` 三个二级标题，且每部分都有内容。应用已经有一个受信任的小检查器 [`report_check.py`](code/report_check.py)。它只把 Markdown 当文本读取，不执行里面的 Python，不渲染其中的 HTML，也不访问网络。
 
-允许一个已知解释器，并不等于可以把宿主机的完整环境交给它。本章只传入最小环境：`PATH` 和 `PYTHONIOENCODING`，再由 Host 按需通过 `extra_env` 传入额外变量。数据库密码、云凭证和部署令牌不应因为“子进程也许用得到”而默认继承。
+这样的检查在同一进程里调用函数也能完成。这里把它当成独立命令行工具来运行，是为了练习 Agent 接外部程序时的边界；相同问题也会出现在接测试工具、格式检查器或文件转换器时。启动它的应用进程是父进程，检查器是子进程。子进程不是第二个 Agent，也不会自动共享父进程中的 Python 对象。
 
-三个运行时限制分别解决不同问题：
+模型侧真正需要表达的请求只有这一点：
 
-| 限制 | Runner 的做法 | 它防止什么 |
-| --- | --- | --- |
-| 超时 | 到达 `timeout_seconds` 后终止直接子进程 | 卡住的命令无限占用 Worker |
-| 输出预算 | 同时持续读取 stdout、stderr，只保留各流前 `max_output_chars` 个字符 | 大量日志撑满父进程内存 |
-| 输入 | 子进程的 stdin 连接到 `DEVNULL` | 脚本等待人工输入，导致 Run 悬挂 |
+```json
+{"action": "check_report", "path": "work/report.md"}
+```
 
-“持续读取”很关键。若等子进程结束后才执行 `output[:4000]`，虽然最后展示的文字短了，Python 进程在此之前仍可能已经把几百 MB 日志放进内存。Runner 为 stdout 和 stderr 分别启动读取线程：超过预算后继续丢弃后续内容，避免管道写满，同时在结果末尾标记 `...[truncated]`。
+注意这里没有 `shell`、解释器参数、脚本路径或环境变量。应用知道“检查报告”要调用哪个程序，没必要把这些控制权一并交给模型。[`ReportTools.execute()`](code/report_tools.py) 首先把入口收窄：
 
-这仍有边界：超时只终止直接启动的进程，不保证清理它派生出的全部子进程，也不能撤销已经写出的文件或已经发出的网络请求。更强的进程组控制和资源配额应由后面的隔离运行环境提供。
+```python
+if not isinstance(proposal, dict) or set(proposal) != {"action", "path"}:
+    raise ValueError("expected exactly action and path")
+if proposal["action"] != "check_report":
+    raise PermissionError("only check_report is available")
+```
 
-此时可以运行完整的本地演示：
+然后它要求路径指向 `work/` 下的 `.md` 文件，验证文件类型与读取预算，才构造命令：
+
+```python
+command = ["python", "-I", "-S", "-B", str(self.checker), str(target)]
+result = self.runner.run(command, timeout_seconds=5.0)
+```
+
+这里的 `python` 是应用注册的别名，最终替换成 `sys.executable` 的绝对路径；检查器也来自应用自己的代码目录，而不是 Agent 可以修改的工作区。否则 Agent 完全可能把检查器改成“永远通过”，然后非常诚实地向你汇报：检查确实通过了。
+
+`-I` 减少工作目录、用户包目录和 `PYTHON*` 环境变量对 Python 模块加载的影响；`-S` 不执行 `site` 初始化；`-B` 避免写入字节码缓存。这个检查器只依赖标准库，因此能在这些限制下工作。这些是解释器启动选项，**不是文件系统沙箱**，具体含义见 [Python 命令行文档](https://docs.python.org/3.10/using/cmdline.html)。
+
+还有个常见误区：只允许执行 `python` 就算权限足够小了。其实调用方如果还能自由传 `-c` 和一段代码，就已经可以要求解释器做很多事情。因此底层 `CommandRunner` 只供受信任的 Host 代码使用；真正给 Agent 的是上面的 `check_report` 操作，而不是底层 runner 的全部接口。Stage 09 的身份和业务授权仍应该在工具入口检查，这个单用户例子不另造一套身份系统。
+
+## 5. 不经过 Shell，也不能省略参数规则
+
+启动程序时，可以给 Shell 一整段字符串，也可以直接提供“程序名加参数列表”。前一种方式会让 Shell 再解释引号、重定向、`&&` 等语法。如果把用户文本混在里面，文本就可能变成另一条命令。
+
+我们的 runner 使用参数列表，并固定 `shell=False`。像 `hello && echo not-a-command` 这样的文本会作为一个参数交给已选定的程序，而不是让 Shell 再拆成两条命令。不过，目标程序仍会解释自己的参数：`python -c`、某些工具的文件覆盖选项，都不需要 Shell 帮忙才能生效。所以“没有 Shell 注入”和“操作被正确授权”不是一回事。Windows 批处理文件还有额外的 Shell 解释行为，本 runner 不接受 `.bat`、`.cmd` 作为注册程序；这些细节见 [subprocess 安全说明](https://docs.python.org/3/library/subprocess.html#security-considerations)。
+
+这次我们把已经确定的参数交给 `Popen()`，它负责实际启动子进程。与执行环境最相关的部分如下：
+
+```python
+process = subprocess.Popen(
+    [str(executable), *command[1:]],
+    cwd=self.workspace.root,
+    env=env,
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    shell=False,
+    bufsize=0,
+    start_new_session=(os.name == "posix"),
+)
+```
+
+`cwd` 是子进程的当前工作目录，只决定相对路径从哪里开始找，不会阻止它访问绝对路径。`env` 是应用明确构造的环境，不是 `os.environ` 的整份副本。例子只给出必要的 Python 文本设置，并在 Windows 上按需保留 `SystemRoot`；不会自动转交 API Key、`HOME`、继承的 `PATH` 或代理配置。解释器使用 `-I` 时会忽略 Python 环境设置，检查器因此明确按 UTF-8 读文件、按 ASCII 转义的 JSON 输出，不依赖这些变量来保证协议编码。
+
+`stdin` 连接到 `DEVNULL`，意味着没有用户坐在检查器旁边等着输入；如果脚本读取标准输入，它会读到结束，而不是一直等确认。`stdout` 是正常输出，`stderr` 是诊断输出，两个 `PIPE` 让父进程读取它们。它们像两条有容量上限的管道，不能接上以后就忘了收。至于 `start_new_session`，它为 POSIX 系统上的进程组清理做准备，下一节会用到。
+
+这里有意不把模型密钥发给检查器。如果 Agent 需要先调用模型写报告，调用可以由 Host 在这条执行边界之外完成，再把产生的文字保存为草稿。为了检查三行标题，把整串云凭证一并送进去，没有任何必要。
+
+## 6. 检查器卡住或不停刷屏时，谁来收场？
+
+正常的小报告很快就能检查完。但外部程序可能卡住，也可能把大量日志写进输出。如果父进程只调用 `wait()` 等待它退出，却不读取管道，子进程可能在管道写满后阻塞；父进程等子进程，子进程等父进程，双方都很有耐心，任务却毫无进展。
+
+因此 [`runner.py`](code/runner.py) 为 stdout 和 stderr 分别启动读取线程，边运行边收取数据。每条流只保留前 `max_output_bytes` 个字节，超过部分继续读取并丢弃，避免因为“不想要更多日志”反而堵住管道。缓冲区里最重要的几行是：
+
+```python
+remaining = self.limit - len(self.data)
+self.data.extend(chunk[:remaining])
+self.truncated |= len(chunk) > remaining
+```
+
+这里限制的是父进程为输出保留的数据量，不是子进程的内存、CPU 或磁盘使用量。日志解码遇到无效 UTF-8 时用替代字符保留诊断，报告文件本身则严格要求 UTF-8。输出被截断也有专门标志，不会假装收到了一份完整 JSON。报告工具遇到被截断、读取不完整或无法解析的检查结果，会拒绝继续交付。
+
+时间也需要边界。runner 在启动后使用单调时钟计算截止点，把等待直接子进程和收完管道都纳入同一个预算。为什么还要管“收完管道”？因为一个子进程可能又启动后代进程，自己退出了，后代却还握着 stdout 的写端。此时一个没有超时的 `thread.join()` 仍然可以把父进程拖住。检查器本身不会这样派生进程，但通用执行层不能把“主程序退出”误认为“所有输出都结束”。
+
+超过预算后，本例在 POSIX 系统上向刚才建立的进程组发送终止信号；Windows 路径只终止直接子进程。清理与线程等待也有额外的有限等待，结果中会报告是否确认了直接进程退出、输出读取结束，而不是无期限地等下去。进程创建本身和操作系统调度仍可能耗时，因此这不是严格的实时执行保证。
+
+进程组也不是安全沙箱：后代可以脱离进程组，Windows 的这段代码更没有实现 Job Object 级的进程树管理。`cleanup_complete` 只表示本 runner 观察到的直接进程和读管道线程已结束，不证明机器上所有相关后代都不存在。需要强隔离时，应让外部执行环境负责整个实例的资源回收。
+
+最后，超时终止不是撤销。如果检查程序在超时前已经写了一份文件，它不会因为进程被杀死就自动消失；发出去的网络请求也不会倒流回来。本章检查器只读报告，把副作用限制在更小的范围。可以重试什么、哪些结果需要人工处理，仍然要遵守前面学过的重试与幂等边界。
+
+## 7. 收到了结果，先分清“没通过”和“没检查完”
+
+现在检查器能运行了。第一份草稿缺少 `Risks`，检查器给出结构化结果，并返回退出码 `2`。这不是程序崩溃，而是检查已经完成、报告没有满足约定。补齐风险后，它返回 `passed=true` 和退出码 `0`。文件不存在、编码不对或文档不符合检查器支持的简化格式时，它返回诊断与退出码 `3`。
+
+这些退出码是本检查器的约定，不是所有程序共享的标准。Host 还会对照结果内容验证退出码，不能只看到一个 `0` 就宣布报告正确。结果里既有检查结论，也有这次读到的文件摘要：
+
+```python
+return {
+    "passed": not missing,
+    "missing_sections": missing,
+    "sha256": hashlib.sha256(payload).hexdigest(),
+}
+```
+
+`missing` 来自对所需标题及非空正文的检查。这个小检查器采用明确的 Markdown 子集，还会忽略代码围栏中的假标题、拒绝重复标题或未闭合围栏；它不是完整的 CommonMark 解析器，更不会证明报告没有事实错误。把“20 名客服”改成“200 名客服”，报告可能仍然通过结构检查。事实、隐私和业务质量，要由相应的证据核对与评估负责。
+
+第一版缺少风险，因此演示补上两项实际限制：回复建议可能不准确，需要人工确认；不能不必要地暴露客户资料，也不能执行退款。第二次检查才通过。这里的修改是固定教学数据，不是一个隐藏的在线模型调用。
+
+但即使第二次通过了，我们仍然不能立刻把文件打包交出去。还有一个问题：检查通过以后，草稿会不会又被改过？
+
+## 8. 检查结论要跟文件内容绑定，不能只跟文件名绑定
+
+假设检查时 `work/report.md` 包含完整报告，导出前却被另一个步骤覆盖成旧草稿。文件名没有变，之前那张“通过”的回执却已经不适用于当前内容。如果只记住 `passed=True`，这类错误很难发现。
+
+`sha256` 就在这里派上用场：它是根据文件字节计算的摘要，用来标识这次检查对应的具体内容。导出前，应用重新限量读取文件，计算摘要，并对照检查回执：
+
+```python
+payload = workspace.read_bytes(review.relative_path)
+digest = hashlib.sha256(payload).hexdigest()
+if digest != review.sha256 or not analyze_report(payload)["passed"]:
+    raise ArtifactError("report changed after review; run check_report again")
+```
+
+如果字节发生变化，必须重新检查。这里的结构检查很便宜，所以 Host 还对准备导出的字节重新验证了一次；接昂贵的外部测试时，不必机械重复全部计算，但需要让验证结论绑定不可变的输入版本，不能只绑定文件名。
+
+接下来导出的是已经读到内存中的同一个 `payload`，不会验证一个文件、再重新打开路径复制另一个文件。这缩小了“检查完以后又变了”的窗口。不过 SHA-256 不是审批签名，也不是权限证明。一个带有正确摘要的坏报告仍然是坏报告；谁可以请求导出、交给哪个用户，必须由应用另外决定。这个例子的回执由 Host 创建，不接受模型提交一个 `passed=True` 来冒充执行结果。
+
+报告终于准备好了。我们还得把它从临时工作台带到小林真正能拿到的地方。
+
+## 9. 真正交付以后，再收拾工作台
+
+只打印 `workspace.read_text("work/report.md")`，最多证明我们在这一刻读到了文件，并没有替用户保留它。如果打印完就离开临时目录的 `with`，草稿仍会随目录一起被清理。用户拿着一条已经失效的路径，收到的不是报告，是一次文件存在过的传说。
+
+**产物（Artifact）** 指应用选定并保留、准备交付或供后续使用的结果。这个例子把检查过的报告复制到工作区之外，由 Host 选择目的地，不让模型提出任意绝对路径。写目标文件时使用排他创建：
+
+```python
+with destination.open("xb") as stream:
+    stream.write(payload)
+return Artifact(destination, digest, len(payload))
+```
+
+`x` 表示目标已存在就报错，不静默覆盖旧报告；`b` 表示复制字节，保持刚才检查的内容。导出记录包含路径、大小和摘要。输入材料、临时脚本和其他工作文件不会因为“都在这个目录里”就被一起打包出去。即使目标在工作区内部，也会被拒绝：我们现在需要的是一个能活过工作区清理的结果。
+
+现在可以运行整段报告任务。使用 Python 3.10 或更新版本，从仓库根目录执行：
 
 ```bash
-python stages/12-agent-workspace-sandbox/code/demo.py
+python stages/12-agent-workspace-sandbox/code/demo.py --output-dir stage12-output
 ```
 
-它写入一个固定的教学脚本、通过 `python` 别名运行它，再显式导出一个结果文件。这里没有让模型生成任意代码；该示例关注的是 Host 如何执行已经允许的命令。
+程序会先打印工作区位置和文件清单，再展示两次检查与导出信息。下面是需要观察的几行，随机目录名与文件摘要没有列出：
 
----
+```text
+first check: False missing: ('Risks',)
+second check: True
+workspace removed: True
+export survives: True
+```
 
-## 6. Workspace 和 Runner 不是安全 Sandbox
+打开输出中 `exported:` 指向的文件，可以看到包含三部分的最终报告。多运行一次会选择新的报告文件名，不覆盖前一次结果。这个导出目录是明确保留的，不会被演示清理；测试程序则把它放在自己的临时目录里，避免测试污染工作目录。
 
-到这里我们已经有了路径检查、命令别名、受限环境、超时和输出预算。这些都是防护层，却不足以把不可信代码安全地放在主机上运行。
+工作区的回收由 `TemporaryDirectory` 管理，它只负责这次新建的临时目录，不会遍历删除仓库或既有用户目录。异常正常传播出 `with` 时仍会进行清理；但进程被强制终止、机器断电等情况不能依赖这段 Python 清理代码完成，需要外部的遗留目录回收机制。相关生命周期见 [tempfile 文档](https://docs.python.org/3.10/library/tempfile.html)。
 
-| 要隔离的对象 | 本章的 Workspace / Runner 能做什么 | 真正 Sandbox 还需要什么 |
-| --- | --- | --- |
-| 文件 | 限制本章 API 解析的 Workspace 路径 | 独立文件系统或挂载、只读输入、最小权限 |
-| 进程 | 固定入口、限制直接子进程的时间 | 容器/虚拟机、进程组、CPU 和内存配额 |
-| 网络 | 本章不提供网络策略 | 默认拒绝出网，或只允许明确的目标 |
-| 系统调用与身份 | 无法阻止当前用户权限下的任意 Python 代码 | 低权限身份、seccomp 等 OS 级限制 |
-| 清理 | 清理 Workspace 文件 | 隔离实例销毁、可审计的资源回收 |
+保留文件也不等于构建了完整的持久化服务。例子的导出没有为断电原子发布、备份、多用户下载授权或网页渲染安全提供全部保证。报告中的 HTML、链接和其他内容仍应按使用方式验证；不要因为它叫 `.md`，就在高权限页面里当可信 HTML 执行。
 
-容器常被用于增加这层隔离，但“用了 Docker”本身不是答案。把 Docker socket 挂进容器，或把宿主机目录以可写方式挂载进去，都会重新扩大权限。网络策略也必须由容器、虚拟机或基础设施实际执行；本章的 `CommandRunner` 没有实现它，所以不能声称它已经阻断网络。
+## 10. “能管住工具请求”，为什么还不是安全沙箱？
 
-运行离线检查可以看到这些已经实现的边界：
+报告交付后，小林很可能再问：“既然已经能跑 Python，下次干脆让模型自己写一个检查脚本吧？”这次不能简单地把 `report_check.py` 换成模型刚生成的文件。前面的边界依赖于检查器受信任、文件请求通过受控接口；新代码却可以直接调用 Python 的 `open()`，根本不经过 `AgentWorkspace.read_text()`。
+
+我们用一个无害实验看清区别，不去读取任何真实私人文件。运行：
+
+```bash
+python stages/12-agent-workspace-sandbox/code/boundary_demo.py
+```
+
+程序只在它自己创建的临时目录里放一份写着 `SYNTHETIC CANARY` 的假资料，位置在工作区旁边。用工作区 API 请求 `../host-canary.txt` 会被拒绝；受信任的诊断代码直接在子进程中按绝对路径读取它，却仍然成功。实验结束后，假资料和工作区都会被删除。
+
+这个对照说明：工作区接口确实拦住了自己负责的路径请求，但 `cwd`、`shell=False`、`-I` 和输出预算没有剥夺子进程的操作系统文件访问能力。子进程通常仍以当前用户的身份运行。在同一用户权限下，它也可能读到磁盘上的凭证；没有继承某个环境变量，不意味着所有凭证来源都已经隔离。
+
+**安全沙箱（Sandbox）** 需要在代码绕开应用接口时仍然施加限制。对这份报告，首先应让执行环境只看到指定输入和检查器，不看到整个宿主目录；再控制可写位置、网络、身份、系统调用以及 CPU、内存、进程数等资源。这里“隔离什么”和“允许什么”必须由实际环境执行，不能只在 Prompt 里写“不要越界”。
+
+容器可以提供其中一些机制，但并不是一个自动安全的标签。普通 Linux 容器共享内核；挂入整个宿主目录、Docker socket，或使用特权配置，都可能把边界重新打开。接收任意不可信代码的多租户服务，还需要结合威胁模型考虑更强运行时或虚拟机隔离。可对照 [Docker 安全说明](https://docs.docker.com/engine/security/) 与 [gVisor 的隔离模型](https://gvisor.dev/docs/)理解这些层次，而不是把所有“在另一个进程里跑”的东西都叫沙箱。
+
+## 11. 把同一个检查器放进受限容器，观察边界落在哪里
+
+机制看清以后，再看一次具体映射。[`sandbox_demo.py`](code/sandbox_demo.py) 仍然只运行同一个受信任的报告检查器，不执行模型生成的任意代码。它把检查器和报告分别作为只读文件挂入容器，检查结论通过 stdout 返回，报告的检查与导出仍由 Host 负责。
+
+这个例子默认只打印配置，不启动容器：
+
+```bash
+python stages/12-agent-workspace-sandbox/code/sandbox_demo.py
+```
+
+输出第一行明确写着 `PROFILE ONLY`。列出的临时挂载路径随后会被删除，不是让你复制那串路径以后再运行。需要实际执行时，应先准备可用的本地 Docker Engine，切到 Linux 容器模式，并准备可信的 Python 镜像。例如：
+
+```bash
+docker pull python:3.12-slim
+python stages/12-agent-workspace-sandbox/code/sandbox_demo.py --run
+```
+
+拉取镜像需要网络；真正执行时设置 `--pull=never`，镜像缺失或 Docker 不可用就报错，绝不悄悄退回本机 Python 执行。`python:3.12-slim` 是便于实验的可变标签，需要固定运行版本时应由运维选择审核过的镜像摘要，再通过 `--image` 传入。这里的执行配置由操作者选择，不属于模型的工具参数。
+
+配置中这些参数分别把前面的要求落到环境上：
+
+```text
+--network=none
+--read-only
+--user=65534:65534
+--cap-drop=ALL
+--security-opt=no-new-privileges
+--memory=128m
+--memory-swap=128m
+--cpus=0.5
+--pids-limit=32
+```
+
+无外部网络连接的网络模式对应“检查报告不需要出网”；只读根文件系统与两个只读文件挂载对应“只能读取指定材料”；非 root 身份、去除额外 capabilities 和禁止提权减少不必要的权限。`/tmp` 单独提供有大小限制的可写临时空间，程序并没有获得整个宿主工作区的写权限。具体运行语义见 [Docker run 文档](https://docs.docker.com/engine/containers/run/)。
+
+CPU、内存与进程数限制是运行环境的资源控制，不是前面“只保留几 KB 输出”的替代品。内存和 memory-swap 设为同值用于避免额外交换空间，是否可执行这些限制还依赖宿主内核和 Docker 配置；默认容器并不会自动拥有合适的资源配额，参见 [Docker 资源限制文档](https://docs.docker.com/engine/containers/resource_constraints/)。不要为了让脚本跑通而删除这些约束后，仍沿用原来的安全说明。
+
+还有一个容易忽略的区别：杀掉本机 `docker` 客户端，不等于停止由 Docker daemon 管理的容器。示例在 `finally` 中用本次随机生成的容器名请求 `docker rm --force`，并检查清理结果；不会清理其他容器。如果父进程被强杀或 Docker 失联，仍需要环境管理者做实例回收。这里没有把一次本地演示包装成完整的沙箱服务。
+
+容器结果依然要核验。即使进程退出码是 `0`，输出不完整、报告摘要不匹配或清理无法确认，都不能被当成这份报告成功完成的证据。标准库检查只测试配置构造、拒绝路径和本地机制，不代表你的机器已经实测了容器隔离；真实的 `--run` 才是单独的集成操作。
+
+## 12. 回头检查一次，再把问题交给下一章
+
+现在可以运行本章的离线检查：
 
 ```bash
 python stages/12-agent-workspace-sandbox/code/checks.py
 ```
 
-检查包含路径逃逸、绝对路径、符号链接、未注册的可执行文件、受限环境、超时和流式输出截断。某些 Windows 环境没有创建符号链接的权限；在这种环境中，对应测试会跳过，而不会把“无法创建测试条件”误报为安全通过。
+这些检查不需要模型密钥或 Docker。除了正常交付，它们会故意请求越界路径、尝试改写输入、提交额外命令参数、制造缺少风险的报告，以及修改已经检查过的草稿。runner 检查还会让程序同时大量写 stdout 和 stderr、写完标记再超时，并在 POSIX 上构造“父进程已退出、后代仍握着管道”的情况。符号链接或平台能力不可用时，相应测试会明确跳过，而不是把缺少测试条件算作成功。
 
-## 7. Skill、模型与执行环境如何接起来
+先预测两个结果，再去修改演示试一试：如果第二次检查后只给报告追加一句话，旧回执还能导出吗？如果把目的地改成工作区中的 `artifacts/report.md`，为什么即使它叫产物目录，也不应该当作持久交付？再想远一点，如果三个标题都齐全但报告编造了试点成绩，当前结构检查为什么不能证明它可信？能够解释这些情况，比背住几个方法名更有用。
 
-Stage 08 的 Skill 可以告诉 Agent 在某类任务中应检查什么、产出什么；它不是执行权限。一个面向代码任务的生产链路应当是：
+从头回看，小林收到报告并不是因为模型说“已完成”，而是因为应用实际分配了工作区、检查了请求、运行了指定程序、验证了对应字节，并选择性地保留了产物。Stage 08 的 Skill 可以描述这套工作步骤，Stage 11 的不同 Agent 可以参与写作和检查，但它们都不会自动改变文件和执行权限。一次执行的文件清单也不是 Stage 06 的检查点：前者说明有什么文件，后者还要说明程序怎样继续。
 
-```text
-Skill procedure
-    → Host validates requested action
-    → isolated workspace / sandbox executes approved command
-    → Host validates and exports selected artifact
-```
-
-因此本章不提供“把 DeepSeek 生成的一段任意 Python 直接交给本机 Runner 执行”的示例。那会绕过本节刚说明的隔离边界，也会把 Stage 09 的策略检查变成形式。真实接入 LLM 时，应先在 Sandbox 外由 Host 完成工具选择、参数校验和审批；只有明确允许的命令才进入**已经隔离的**执行环境。模型提出方案，Host 决定是否执行、在哪里执行，以及哪些产物可以离开 Workspace。
-
-## 8. 下一章：把这些边界放进可运行的服务
-
-现在我们有了单个 Run 的文件、进程与产物边界。下一个问题是：当前 Worker 或进程消失后，任务怎样继续？下一章会建立这条恢复链路：[Stage 13：Long-Horizon Harness](../13-long-horizon-harness/README.zh-CN.md)。
+到这里，我们能在一次会话中完成报告。下一件事才是：如果报告写到一半，负责执行的进程消失了，后来的人怎样知道该从哪里接着做？这正是 [Stage 13：报告写到一半，进程没了怎么办？](../13-long-horizon-harness/README.zh-CN.md) 要解决的问题。

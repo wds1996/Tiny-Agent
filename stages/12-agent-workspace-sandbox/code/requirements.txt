@@ -1,1 +1,3 @@
-# Standard library only
+# All Python examples and checks use the standard library (Python 3.10+).
+# sandbox_demo.py --run additionally requires a local Docker Engine in Linux-container
+# mode and a pre-pulled, trusted Python image. The default only prints a profile.
