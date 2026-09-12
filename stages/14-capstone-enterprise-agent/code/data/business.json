@@ -1,0 +1,912 @@
+{
+  "fictional": true,
+  "description": "All identities, orders, invoices and policies are fictional teaching fixtures; no payment gateway is connected.",
+  "as_of": "2026-09-12",
+  "profiles": {
+    "alice": {
+      "tenant": "qinghe",
+      "user": "alice",
+      "role": "customer"
+    },
+    "bob": {
+      "tenant": "qinghe",
+      "user": "bob",
+      "role": "customer"
+    },
+    "chen": {
+      "tenant": "qinghe",
+      "user": "chen",
+      "role": "reviewer"
+    },
+    "lin": {
+      "tenant": "south",
+      "user": "lin",
+      "role": "customer"
+    },
+    "mei": {
+      "tenant": "south",
+      "user": "mei",
+      "role": "reviewer"
+    }
+  },
+  "products": [
+    {
+      "sku": "DESK-01",
+      "name": "Foldable desk stand / 折叠桌面支架",
+      "category": "standard",
+      "warranty_months": 12
+    },
+    {
+      "sku": "LAMP-02",
+      "name": "Reading lamp / 阅读灯",
+      "category": "standard",
+      "warranty_months": 12
+    },
+    {
+      "sku": "CABLE-03",
+      "name": "USB cable / 连接线",
+      "category": "standard",
+      "warranty_months": 6
+    },
+    {
+      "sku": "MUG-04",
+      "name": "Engraved mug / 刻字杯",
+      "category": "custom",
+      "warranty_months": 6
+    },
+    {
+      "sku": "EBOOK-05",
+      "name": "Digital workbook / 数字练习册",
+      "category": "digital",
+      "warranty_months": 0
+    },
+    {
+      "sku": "CASE-06",
+      "name": "Travel organizer / 收纳包",
+      "category": "standard",
+      "warranty_months": 6
+    }
+  ],
+  "orders": [
+    {
+      "order_id": "QH-1001",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "DESK-01",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 14900,
+      "discount_cents": 2000,
+      "paid_items_cents": 12900,
+      "shipping_cents": 1200,
+      "refunded_cents": 0,
+      "delivered_on": "2026-09-05",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-1001",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1001",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-09-05"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1001",
+        "currency": "CNY",
+        "total_cents": 14100,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1002",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "LAMP-02",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 19900,
+      "discount_cents": 2000,
+      "paid_items_cents": 17900,
+      "shipping_cents": 0,
+      "refunded_cents": 0,
+      "delivered_on": "2026-08-13",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-1002",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1002",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-08-13"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1002",
+        "currency": "CNY",
+        "total_cents": 17900,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1003",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "LAMP-02",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 19900,
+      "discount_cents": 2000,
+      "paid_items_cents": 17900,
+      "shipping_cents": 0,
+      "refunded_cents": 0,
+      "delivered_on": "2026-08-12",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-1003",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1003",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-08-12"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1003",
+        "currency": "CNY",
+        "total_cents": 17900,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1004",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "DESK-01",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 12900,
+      "discount_cents": 2000,
+      "paid_items_cents": 10900,
+      "shipping_cents": 1200,
+      "refunded_cents": 0,
+      "delivered_on": "2026-09-08",
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-1004",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1004",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-09-08"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1004",
+        "currency": "CNY",
+        "total_cents": 12100,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1005",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "CASE-06",
+      "category": "standard",
+      "status": "shipped",
+      "quantity": 1,
+      "list_price_cents": 8900,
+      "discount_cents": 2000,
+      "paid_items_cents": 6900,
+      "shipping_cents": 1200,
+      "refunded_cents": 0,
+      "delivered_on": null,
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-1005",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1005",
+        "events": [
+          {
+            "status": "shipped",
+            "date": "2026-09-11"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1005",
+        "currency": "CNY",
+        "total_cents": 8100,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1006",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "CABLE-03",
+      "category": "standard",
+      "status": "processing",
+      "quantity": 1,
+      "list_price_cents": 5900,
+      "discount_cents": 2000,
+      "paid_items_cents": 3900,
+      "shipping_cents": 800,
+      "refunded_cents": 0,
+      "delivered_on": null,
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-1006",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1006",
+        "events": [
+          {
+            "status": "processing",
+            "date": "2026-09-11"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1006",
+        "currency": "CNY",
+        "total_cents": 4700,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1007",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "MUG-04",
+      "category": "custom",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 11900,
+      "discount_cents": 2000,
+      "paid_items_cents": 9900,
+      "shipping_cents": 0,
+      "refunded_cents": 0,
+      "delivered_on": "2026-09-07",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-1007",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1007",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-09-07"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1007",
+        "currency": "CNY",
+        "total_cents": 9900,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1008",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "EBOOK-05",
+      "category": "digital",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 6900,
+      "discount_cents": 2000,
+      "paid_items_cents": 4900,
+      "shipping_cents": 0,
+      "refunded_cents": 0,
+      "delivered_on": "2026-09-10",
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-1008",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1008",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-09-10"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1008",
+        "currency": "CNY",
+        "total_cents": 4900,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1009",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "DESK-01",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 14900,
+      "discount_cents": 2000,
+      "paid_items_cents": 12900,
+      "shipping_cents": 1200,
+      "refunded_cents": 4900,
+      "delivered_on": "2026-09-02",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-1009",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1009",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-09-02"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1009",
+        "currency": "CNY",
+        "total_cents": 14100,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1010",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "DESK-01",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 14900,
+      "discount_cents": 2000,
+      "paid_items_cents": 12900,
+      "shipping_cents": 1200,
+      "refunded_cents": 12900,
+      "delivered_on": "2026-08-31",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-1010",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1010",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-08-31"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1010",
+        "currency": "CNY",
+        "total_cents": 14100,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1011",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "CABLE-03",
+      "category": "standard",
+      "status": "cancelled",
+      "quantity": 1,
+      "list_price_cents": 2000,
+      "discount_cents": 0,
+      "paid_items_cents": 0,
+      "shipping_cents": 0,
+      "refunded_cents": 0,
+      "delivered_on": null,
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-1011",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1011",
+        "events": [
+          {
+            "status": "cancelled",
+            "date": "2026-09-11"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1011",
+        "currency": "CNY",
+        "total_cents": 0,
+        "state": "void",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-1012",
+      "tenant": "qinghe",
+      "user": "alice",
+      "sku": "LAMP-02",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 19900,
+      "discount_cents": 2000,
+      "paid_items_cents": 17900,
+      "shipping_cents": 0,
+      "refunded_cents": 0,
+      "delivered_on": "2026-06-14",
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-1012",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-1012",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-06-14"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-1012",
+        "currency": "CNY",
+        "total_cents": 17900,
+        "state": "issued",
+        "customer_label": "ALICE (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-2001",
+      "tenant": "qinghe",
+      "user": "bob",
+      "sku": "DESK-01",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 14900,
+      "discount_cents": 2000,
+      "paid_items_cents": 12900,
+      "shipping_cents": 1200,
+      "refunded_cents": 0,
+      "delivered_on": "2026-09-05",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-2001",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-2001",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-09-05"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-2001",
+        "currency": "CNY",
+        "total_cents": 14100,
+        "state": "issued",
+        "customer_label": "BOB (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-2002",
+      "tenant": "qinghe",
+      "user": "bob",
+      "sku": "LAMP-02",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 19900,
+      "discount_cents": 2000,
+      "paid_items_cents": 17900,
+      "shipping_cents": 0,
+      "refunded_cents": 0,
+      "delivered_on": "2026-08-13",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-2002",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-2002",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-08-13"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-2002",
+        "currency": "CNY",
+        "total_cents": 17900,
+        "state": "issued",
+        "customer_label": "BOB (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-2003",
+      "tenant": "qinghe",
+      "user": "bob",
+      "sku": "LAMP-02",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 19900,
+      "discount_cents": 2000,
+      "paid_items_cents": 17900,
+      "shipping_cents": 0,
+      "refunded_cents": 0,
+      "delivered_on": "2026-08-12",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-2003",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-2003",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-08-12"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-2003",
+        "currency": "CNY",
+        "total_cents": 17900,
+        "state": "issued",
+        "customer_label": "BOB (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-2004",
+      "tenant": "qinghe",
+      "user": "bob",
+      "sku": "DESK-01",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 12900,
+      "discount_cents": 2000,
+      "paid_items_cents": 10900,
+      "shipping_cents": 1200,
+      "refunded_cents": 0,
+      "delivered_on": "2026-09-08",
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-2004",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-2004",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-09-08"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-2004",
+        "currency": "CNY",
+        "total_cents": 12100,
+        "state": "issued",
+        "customer_label": "BOB (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-2005",
+      "tenant": "qinghe",
+      "user": "bob",
+      "sku": "CASE-06",
+      "category": "standard",
+      "status": "shipped",
+      "quantity": 1,
+      "list_price_cents": 8900,
+      "discount_cents": 2000,
+      "paid_items_cents": 6900,
+      "shipping_cents": 1200,
+      "refunded_cents": 0,
+      "delivered_on": null,
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-2005",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-2005",
+        "events": [
+          {
+            "status": "shipped",
+            "date": "2026-09-11"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-2005",
+        "currency": "CNY",
+        "total_cents": 8100,
+        "state": "issued",
+        "customer_label": "BOB (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-2006",
+      "tenant": "qinghe",
+      "user": "bob",
+      "sku": "CABLE-03",
+      "category": "standard",
+      "status": "processing",
+      "quantity": 1,
+      "list_price_cents": 5900,
+      "discount_cents": 2000,
+      "paid_items_cents": 3900,
+      "shipping_cents": 800,
+      "refunded_cents": 0,
+      "delivered_on": null,
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-2006",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-2006",
+        "events": [
+          {
+            "status": "processing",
+            "date": "2026-09-11"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-2006",
+        "currency": "CNY",
+        "total_cents": 4700,
+        "state": "issued",
+        "customer_label": "BOB (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-3001",
+      "tenant": "south",
+      "user": "lin",
+      "sku": "DESK-01",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 14900,
+      "discount_cents": 2000,
+      "paid_items_cents": 12900,
+      "shipping_cents": 1200,
+      "refunded_cents": 0,
+      "delivered_on": "2026-09-05",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-3001",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-3001",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-09-05"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-3001",
+        "currency": "CNY",
+        "total_cents": 14100,
+        "state": "issued",
+        "customer_label": "LIN (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-3002",
+      "tenant": "south",
+      "user": "lin",
+      "sku": "LAMP-02",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 19900,
+      "discount_cents": 2000,
+      "paid_items_cents": 17900,
+      "shipping_cents": 0,
+      "refunded_cents": 0,
+      "delivered_on": "2026-08-13",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-3002",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-3002",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-08-13"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-3002",
+        "currency": "CNY",
+        "total_cents": 17900,
+        "state": "issued",
+        "customer_label": "LIN (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-3003",
+      "tenant": "south",
+      "user": "lin",
+      "sku": "LAMP-02",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 19900,
+      "discount_cents": 2000,
+      "paid_items_cents": 17900,
+      "shipping_cents": 0,
+      "refunded_cents": 0,
+      "delivered_on": "2026-08-12",
+      "return_received": true,
+      "version": 1,
+      "invoice_id": "INV-3003",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-3003",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-08-12"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-3003",
+        "currency": "CNY",
+        "total_cents": 17900,
+        "state": "issued",
+        "customer_label": "LIN (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-3004",
+      "tenant": "south",
+      "user": "lin",
+      "sku": "DESK-01",
+      "category": "standard",
+      "status": "delivered",
+      "quantity": 1,
+      "list_price_cents": 12900,
+      "discount_cents": 2000,
+      "paid_items_cents": 10900,
+      "shipping_cents": 1200,
+      "refunded_cents": 0,
+      "delivered_on": "2026-09-08",
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-3004",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-3004",
+        "events": [
+          {
+            "status": "delivered",
+            "date": "2026-09-08"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-3004",
+        "currency": "CNY",
+        "total_cents": 12100,
+        "state": "issued",
+        "customer_label": "LIN (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-3005",
+      "tenant": "south",
+      "user": "lin",
+      "sku": "CASE-06",
+      "category": "standard",
+      "status": "shipped",
+      "quantity": 1,
+      "list_price_cents": 8900,
+      "discount_cents": 2000,
+      "paid_items_cents": 6900,
+      "shipping_cents": 1200,
+      "refunded_cents": 0,
+      "delivered_on": null,
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-3005",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-3005",
+        "events": [
+          {
+            "status": "shipped",
+            "date": "2026-09-11"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-3005",
+        "currency": "CNY",
+        "total_cents": 8100,
+        "state": "issued",
+        "customer_label": "LIN (synthetic)"
+      }
+    },
+    {
+      "order_id": "QH-3006",
+      "tenant": "south",
+      "user": "lin",
+      "sku": "CABLE-03",
+      "category": "standard",
+      "status": "processing",
+      "quantity": 1,
+      "list_price_cents": 5900,
+      "discount_cents": 2000,
+      "paid_items_cents": 3900,
+      "shipping_cents": 800,
+      "refunded_cents": 0,
+      "delivered_on": null,
+      "return_received": false,
+      "version": 1,
+      "invoice_id": "INV-3006",
+      "shipment": {
+        "carrier": "Demo Express / 虚构快递",
+        "tracking_id": "DEMO-3006",
+        "events": [
+          {
+            "status": "processing",
+            "date": "2026-09-11"
+          }
+        ]
+      },
+      "invoice": {
+        "invoice_id": "INV-3006",
+        "currency": "CNY",
+        "total_cents": 4700,
+        "state": "issued",
+        "customer_label": "LIN (synthetic)"
+      }
+    }
+  ]
+}

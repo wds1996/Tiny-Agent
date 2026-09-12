@@ -1,3 +1,4 @@
-# The offline demo and checks use the standard library only.
-# The live DeepSeek decision example uses this SDK.
+# Live entry point: DeepSeek chat completions + official MCP 2.x stdio transport.
+# Offline checks use only the standard library; the real MCP test requires mcp.
 openai>=2,<3
+mcp>=2,<3

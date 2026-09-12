@@ -1,0 +1,22 @@
+{
+  "refund": {
+    "file": "refund/SKILL.md",
+    "description": "Explain return eligibility and prepare an exact proposal; never execute a refund."
+  },
+  "delivery": {
+    "file": "delivery/SKILL.md",
+    "description": "Investigate shipment status and explain estimates without inventing an ETA."
+  },
+  "invoice": {
+    "file": "invoice/SKILL.md",
+    "description": "Explain a simulated invoice and distinguish invoice total from refundable value."
+  },
+  "warranty": {
+    "file": "warranty/SKILL.md",
+    "description": "Read product terms and separate warranty support from ordinary return eligibility."
+  },
+  "policy": {
+    "file": "policy/SKILL.md",
+    "description": "Answer policy or agreement questions from effective merchant-scoped evidence."
+  }
+}

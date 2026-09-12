@@ -1,0 +1,14 @@
+{
+  "version": "returns-2026-09",
+  "return_days": 30,
+  "excluded_categories": [
+    "custom",
+    "digital"
+  ],
+  "policy_pages": [
+    "RETURNS:p02",
+    "RETURNS:p03"
+  ],
+  "description": "Fictional full-item refund after warehouse receipt, net paid items less prior refunds; no freight refund. Unsupported partial quantities need human handling.",
+  "tenant": "qinghe"
+}
