@@ -1,338 +1,331 @@
-# Stage 11：一个 Agent 不够用？先证明你真的需要第二个——Multi-Agent
+# Stage 11：这份报告要不要多请一位同事？——从任务委托到多 Agent 协作
 
 > Language: [English](README.md) | **简体中文**
 
-Stage 10 让我们能比较一个 Agent 的答案、轨迹、延迟、成本与拒绝行为。现在才适合提出一个容易被架构图掩盖的问题：**拆成多个 Agent，是否确实改善了结果，还是只增加了调用、Context 传递和排错难度？**
+[上一章](../10-evaluation-observability/README.zh-CN.md)，我们学会了用执行记录解释一次失败，用固定案例判断一次改动有没有变好。现在产品同事小林拿来一个任务：“我们打算让 20 名客服试用回复助手。帮我整理一下试点规模、能力边界，以及哪些问题还没确定，我要据此准备评估报告。”材料来自运营和风险两边，第一反应很容易是：那就各安排一个 Agent，再请一个主管来汇总。
 
-Multi-Agent 不是“多调用几次模型”，也不是给同一模型换几段人格 Prompt。本章把它当成一种明确的系统设计：多个相对独立的执行主体各自接收任务和有限 Context，并在可观察、可授权、可评测的边界上协作。
+先别急着开招聘会。能拆成几个名词，不代表必须拆成几个 Agent。一个助手读完两份短材料，也许就能把问题说清楚；多找两位“专家”，有可能只把一句话变成三次付费转述。本章会让同一份试点评估经过单一处理流程、分工协作、失败处理和任务移交。最后仍要回到上一章的问题：新增的边界解决了什么，代价又在哪里？
 
-这一章按如下顺序展开：
+我们先使用固定材料和确定性处理函数，观察谁接到了什么、谁有权继续、哪些结论不能合并。这些函数是模拟专家的测试替身，不是假装已经有几个会自主思考的模型。理解协作机制后，再让真实 DeepSeek 主管通过工具调用选择专家，让专家分别进行模型调用。整章只讨论评估材料，不连接客服数据、退款系统或上线接口。
 
-```text
-先判断要不要拆
-    ↓
-定义 Specialist 的输入、输出和责任
-    ↓
-区分 Delegation 与 Handoff
-    ↓
-限制 Context、权限、预算和循环
-    ↓
-用 Eval 证明协作收益
-    ↓
-需要跨系统时，才讨论 A2A
-```
+## 1. 先把任务做好，再决定要不要组队
 
-本章展示的 Python 片段直接导入同目录的 `team.py`。若要逐段复制运行，先进入代码目录：`cd stages/11-multi-agent/code`，再启动 `python`；从仓库根目录直接运行完整示例时，使用对应知识点后给出的命令。
+小林给出的试点计划写着：拟覆盖 20 名客服，目前还没有试点结果，助手只能建议回复，不能执行退款。风险规则补充了一条：如果要使用真实客服对话，需要先澄清隐私处理条件。我们要回答的是“现有材料足不足以写评估稿”，不是代替任何人批准上线，也不能把计划中的效果写成已经取得的成绩。
 
----
+如果这些规则就这么几条，普通 Python 足以处理。即使解释部分需要模型，也可以由一个模型读取受允许的材料后组织语言。只有当运营分析和风险审查需要不同的材料、提示要求、工具权限、维护团队，或者可以独立开展的工作确实很多时，拆分才开始有价值。这里把它们分开，是为了研究这样的边界；后面的对照实验不会故意把单一实现写笨，再宣布团队大获全胜。
 
-## 1. 第二个 Agent 要解决什么明确问题？
+所谓 **多 Agent（Multi-Agent）**，在本章指多个有明确职责和独立输入的执行主体协作。它们可以使用同一个底层模型，也可以使用不同模型；可以由固定工作流安排顺序，也可以由模型参与选择下一位执行者。关键是每个主体接到什么任务、使用哪些上下文、返回什么，以及控制权如何流动，不是名字里有没有“高级专家”。一个 ReAct 循环调用模型三次，依然可能只是一个 Agent。
 
-一个 ReAct Agent 在一次任务中调用模型三次，仍可以只是一个 Agent。出现第二个 Agent 的关键不是调用次数，而是出现了新的工作主体：它有不同的任务边界、所见 Context、可用 Tool、权限，或由另一个团队独立维护。
+这也不是非黑即白的分类：一个被包装成工具的子 Agent，在主管看来就是可调用能力，在内部却可以有自己的模型与工具循环。我们先关心接口和责任，而不是给每个对象颁发“真正 Agent 证书”。[Anthropic 的工作流与 Agent 设计讨论](https://www.anthropic.com/engineering/building-effective-agents)也把是否需要动态控制作为重要选择，而不是默认复杂架构优于简单流程。
 
-下面这些情况可能值得拆分：
+现在假设运营与风险确实是两条独立职责。主管负责接待小林、拆出子问题和汇总；运营专家只整理计划事实，风险专家只解释规则。先把这张分工单写清楚，下一步才有办法检查交接有没有走样。
 
-| 需要解决的问题 | 合理的拆分方式 |
-| --- | --- |
-| 订单与政策需要不同资料、不同 Instructions | Orders Specialist 与 Policy Specialist |
-| 子问题互不依赖 | Fan-out 后分别完成，再由 Supervisor 合并 |
-| 高风险能力属于不同责任域 | 由具备相应审批、审计和 Tool 权限的 Specialist 处理 |
-| 对方是另一个团队或系统维护的 Agent | 使用稳定的跨系统协议边界 |
+## 2. 分工单要写问题，也要写“交回来什么”
 
-以下理由不够：单 Agent Prompt 很乱却没有整理；框架示例画了很多框；给同一个模型取了五个角色名；或者希望“再加一个 Critic”自动变正确。拆分前先为单 Agent 与候选团队各跑同一份 Stage 10 Eval Dataset，比较通过率、错误类型、平均 Tool 数、延迟和成本。没有可测收益，就不应保留额外 Agent。
+“你是很专业的运营专家，请认真回答”不是一份合格的分工单。运营专家到底要告诉主管试点人数，还是估计节省多少成本？没有明确问题，就算它写了三页漂亮文字，主管也不知道缺了什么。
 
----
+我们给运营专家的问题是：计划涉及多少人，是否已经有测量结果，计划声称拥有哪些退款能力。给风险专家的问题则是：政策允许哪些退款能力，当前数据使用方式是否需要隐私澄清。两边都不能批准部署。这里故意让“退款能力”在两份材料中都出现：如果计划与政策写得不一致，我们希望发现冲突，而不是让主管挑一句顺耳的。
 
-## 2. Specialist 不是人格，而是一条可检查的边界
-
-本章的最小 `Agent` 接口只收任务和已投影的 Context，并返回结构化 `AgentMessage`。真正重要的是返回值不再是一段没有来源的自由文本：它带有执行者、状态、摘要、可传递数据和来源。
+返回值也要承认“不知道”和“执行失败”的存在。在 [`team.py`](code/team.py) 中，专家交回的是一份 `Finding`，而不只是自由文字：
 
 ```python
-from team import AgentMessage, Specialist
-
-orders = Specialist("orders", "order specialist")
-message = orders.run(
-    "Check the order status.",
-    {"order_id": "ORDER-42"},
-)
-
-assert message.agent == "orders"
-assert message.status == "completed"
-assert message.data == {"order_id": "ORDER-42"}
-assert message.provenance == ("specialist:orders",)
-print(message.summary)
+@dataclass(frozen=True)
+class Finding:
+    status: str
+    summary: str
+    facts: dict[str, Any] = field(default_factory=dict)
+    evidence_ids: tuple[str, ...] = ()
 ```
 
-这里的 `assert` 是 Python 断言：条件不成立时程序会报错。它让示例里的接口约定成为可执行检查。
+`status` 只能是 `ok`、`needs_input` 或 `failed`。第一种表示这次处理正常得到结果，第二种表示缺少必要材料，第三种表示没有拿到可接受的执行结果。`summary` 方便人阅读，`facts` 交给后续代码使用，`evidence_ids` 指向它所依据的材料。运营的结构化事实例如包含 `staff=20`、`measured_results=False`；风险结果包含 `privacy_review_required`，表示是否还需要隐私澄清。
 
-真实系统的 `data` 可以是订单状态、检索到的证据 ID、文件引用或已验证的结构化结果；`provenance` 记录“这个结果从哪个 Specialist 或来源而来”。它们不能保证内容绝对正确，但能避免消息经过三次转述后只剩一句“有人说可以”。
+注意，`ok` 不是“事实已被宇宙认证”。一个数据结构合格、引用了某个来源的结果，仍然可能理解错材料。运行时先检查返回类型、状态、非空摘要和 JSON 大小，业务层再检查具体字段。模型版本中还会核对这些简单事实是否与输入记录一致；复杂的自然语言分析仍需评测，不能靠字段名保证正确。
 
-值得拆分的 Specialist 至少应在任务、Context、Tool、权限、数据源或服务目标（SLA）中的一项上存在实际差异。不同的“语气”和“性格”可以是提示技巧，却不是可靠的系统边界。
+我们没有让专家自己填写“这次结果来自谁”。运行时知道实际调用了哪个对象，因此由运行时加上 `agent`、`run_id` 和 `request_id`，形成 `AgentMessage`。`run_id` 关联本次评估，`request_id` 关联其中一次委托。这样，“风险专家说的”和“主管猜风险专家会这么说的”就不会变成同一种消息。
 
----
+返回格式说清楚以后，接下来的问题不是马上调用，而是：给这位同事复印哪几页材料？
 
-## 3. Delegation 与 Handoff：谁还拥有总任务？
+## 3. 发任务，不等于把整个文件柜搬过去
 
-两个概念都像“交给另一个 Agent”，但控制权不同。
+假设应用还保存了一段内部备注，与这份评估无关。我们不需要真的放密钥进去做实验，用 `private_note` 这个假字段就足够观察它有没有被错误传递。主管能访问的应用数据、运营专家应该看到的数据、风险专家应该看到的数据，不应默认是同一份。
 
-| 方式 | 语义 | 原任务的 Owner |
-| --- | --- | --- |
-| **Delegation** | “帮我做这个子任务，结果回来给我。” | Caller 保留 |
-| **Handoff** | “接下来整个任务归你继续处理。” | Target 接手 |
-
-下面是完整的最小运行时初始化与一次 Delegation。`Principal` 表示当前代表谁工作；`TeamPolicy` 明确授予 `support` 角色访问两个 Specialist 的权限。
+沿用 Stage 07 的上下文选择思路，应用为每个目标固定允许字段。在 [`scenario.py`](code/scenario.py) 中，映射是：
 
 ```python
-from team import (
-    Delegation, Principal, Specialist, TeamBudget, TeamPolicy, TeamRuntime,
-)
-
-runtime = TeamRuntime(
-    [
-        Specialist("supervisor", "supervisor"),
-        Specialist("orders", "order specialist"),
-        Specialist("policy", "policy specialist"),
-    ],
-    policy=TeamPolicy({"support": frozenset({"orders", "policy"})}),
-)
-principal = Principal("user-7", frozenset({"support"}))
-budget = TeamBudget()
-
-result = runtime.delegate(
-    caller="supervisor",
-    principal=principal,
-    delegation=Delegation("orders", "Check the order status.", ("order_id",)),
-    shared_context={"order_id": "ORDER-42", "internal_secret": "do-not-send"},
-    budget=budget,
-)
-
-assert result.agent == "orders"
-assert result.data == {"order_id": "ORDER-42"}
-assert budget.delegations == 1
-```
-
-`delegate()` 返回 Specialist 的 `AgentMessage`，不会改变顶层任务的 Owner。相反，`handoff()` 返回 `TeamResult`，其中 `owner` 会变成 Target：
-
-```python
-handed = runtime.handoff(
-    caller="supervisor",
-    principal=principal,
-    target="orders",
-    task="Take ownership of the order follow-up.",
-    shared_context={"order_id": "ORDER-42", "user_id": "user-7"},
-    context_keys=("order_id", "user_id"),
-    budget=budget,
-)
-
-assert handed.owner == "orders"
-assert handed.message.agent == "orders"
-```
-
-Handoff 不是“从此拥有永久权限”。它只是这次任务的控制权转移；Target 真正调用 Tool 时仍要经过 Stage 09 的参数、权限、审批、预算和 Deadline 检查。
-
----
-
-## 4. Context Projection 与 Shared Memory：先问谁需要看、谁可以改
-
-如果 Supervisor 持有如下数据：
-
-```python
-context = {
-    "user_id": "user-7",
-    "order_id": "ORDER-42",
-    "policy_excerpt": "...",
-    "internal_secret": "...",
+CONTEXT_KEYS = {
+    "operations": ("brief", "operations_note"),
+    "risk": ("brief", "policy_note"),
+    "privacy": ("brief",),
 }
 ```
 
-Orders Specialist 只需订单号。`project_context()` 使用允许字段白名单，而不是“复制整个字典再希望对方别看”：
+`brief` 只包含共同目标和是否计划使用真实对话。运营拿运营材料，风险拿政策；后面需要隐私专员接手时，它先拿共同目标。这里的规则来自应用配置，不是模型在工具参数里写一句“我还需要 private_note”，就可以扩大范围。
+
+把大上下文投出一个小视图，叫作 **上下文投影（Context Projection）**。下面是实际执行选择的部分：
 
 ```python
-from team import project_context
-
-orders_context = project_context(context, allowed_keys=("order_id",))
-assert orders_context == {"order_id": "ORDER-42"}
+def project_context(context: Mapping[str, Any], keys: Sequence[str]) -> dict[str, Any]:
+    return json_copy({key: context[key] for key in keys if key in context})
 ```
 
-这叫 **Context Projection**：从较大的 Context 中投出某个角色完成工作所需的最小视图。它同时减少噪音、Token 和不必要的数据暴露，是 Stage 07 Context Engineering 在团队场景中的延伸。
+为什么不是只返回一个新字典？因为值里面还有嵌套字典。仅做浅拷贝，两个专家仍可能引用同一份 `brief`，其中一个修改内容，另一个看到的条件也跟着变了。这里的 `json_copy()` 将受限制的 JSON 数据序列化再读回，建立独立副本，同时拒绝超出字符预算、非 JSON 对象和非有限数值。这个大小限制约束的是我们接收和转交的数据，不是对任意 Python 函数的内存隔离。
 
-“让所有 Agent 共享 Memory”并不是完整设计。至少还要回答：
+还有一个容易漏掉的通道：只过滤 `context`，却把包含秘密的原始用户文本放进 `task`，一样会泄漏。本例的子任务说明也由应用固定，主管模型只能选专家，不能附带任意分工文本。真实的开放任务需要额外设计子任务文本、引用、历史消息的过滤，不能只检查一个字典字段就宣称已经实现完整保密。
 
-| 问题 | 需要的明确规则 |
-| --- | --- |
-| 谁拥有这项信息？ | Owner 或 Namespace |
-| 谁能读取？ | 按角色、任务或租户的 Read Policy |
-| 谁能修改？ | Write Policy、版本或追加规则 |
-| 这是真实事实还是中间推断？ | 类型、来源与置信度 |
+这些对象仍然运行在同一个 Python 进程里。投影防止正常接口误传资料，不阻止恶意代码读取进程内存；真实数据的身份验证、租户隔离和源系统访问控制也不由一个字典替代。材料边界明确之后，还要回答另一件事：这次身份有没有资格请这位专家办事？
 
-不要使用 `shared_global_dict = {}` 作为跨 Agent 协作方案。它既没有最小暴露，也没有冲突、来源和写入语义。
+## 4. 公司内部同事，也不是想叫谁就叫谁
 
----
+Stage 09 已经讲过，知道工具名字不等于得到执行权限。换成专家也是一样：运营分析身份能够请求风险解释，不意味着它能够发起生产发布，更不意味着请另一个 Agent 转述一下就能借到发布权限。
 
-## 5. Fan-out、Budget 与事件：团队也必须有边界
-
-订单状态和退款政策相互独立时，可以先把它们分给不同 Specialist，再由 Supervisor 合并：
-
-```text
-Orders result ---\
-                  -> Supervisor -> final answer
-Policy result ---/
-```
-
-这叫 **Fan-out / Fan-in**。本章的 `fan_out()` 故意顺序运行多个 Delegation：它演示“任务可以独立”，却不假装“已经并发”。
-
-```text
-Fan-out      = 任务结构：哪些子问题可以独立完成
-Concurrency  = 执行策略：是否同时启动、怎样限流、怎样取消
-```
-
-多 Agent 的循环更容易隐藏：`Supervisor → Reviewer → Planner → Supervisor`。`TeamBudget` 因此分别限制 Delegation 和 Handoff；后者单独计数，因为 Owner 转移是更强的控制变化。
+因此，本例的授权不仅看目标，还看当前调用者和操作类型。由应用创建的 `Principal` 表示本次代表哪个用户或服务工作；它的角色来自可信入口，不是让模型自由填写。策略中的一项授权可以读作：“拥有 analyst 角色、当前以 coordinator 继续执行时，可以把子任务委托给 operations。”
 
 ```python
-budget = TeamBudget(max_delegations=4, max_handoffs=1)
+("delegate", "coordinator", "operations"): frozenset({"analyst"}),
 ```
 
-教学运行时会把成功的交接记成 `TeamEvent`，其中只含调用者、目标、投影字段和状态：
+这是策略字典中的一项。运行时检查角色与这条边允许的角色是否有交集：
 
-```text
-TeamEvent(kind='delegation', caller='supervisor', target='orders',
-          context_keys=('order_id',), status='completed')
+```python
+def allows(self, principal: Principal, kind: str, caller: str, target: str) -> bool:
+    return bool(principal.roles & self.grants.get((kind, caller, target), frozenset()))
 ```
 
-这是一种结构化团队轨迹。生产实现应将它与 Stage 10 的 `agent.run`、`policy.authorize`、`team.delegate`、`team.handoff` Span 关联到同一个 `run_id`。仅靠“Agent failed”无法区分模型没有提议、策略拒绝、预算耗尽或 Specialist 失败。
+没有登记的组合返回空集合，因此默认拒绝。授权 `delegate` 不自动授权 `handoff`；后者会改变谁继续负责，我们稍后用具体场景解释。即使身份有 `analyst` 角色，已经不再负责本次运行的旧主管，也不能靠传入自己的名字继续调用。
 
-教学代码会拒绝最直接的 `A → A` 自委托。更长的 `A → B → C → A` 环需要团队调用栈或全局图检测；无论实现方式，Budget 和 Trace 都不能省。
+真实系统中还有第二道检查：专家内部使用具体工具时，工具仍需验证业务权限。进入风险专家不等于获得退款权限；收到一条协作消息，更不会让外部系统跳过用户身份。我们现在只有本地教学材料，因此没有伪造一套“企业身份服务”，只是把进入协作边界的授权写成可以检查的规则。
 
-现在运行离线 Demo，观察两个 Specialist 分别得到什么 Context、Handoff 后 Owner 如何变化，以及每次交接留下的 `TeamEvent`：
+至此，任务说明、材料范围和允许的协作关系都有了。终于可以请同事开始工作，而不是继续发组织架构图。
+
+## 5. 第一次交接：请你帮忙，但最后仍由我回答
+
+主管请运营整理计划，请风险解释政策，结果回来之后自己汇总。这种“做完子任务再回来”的方式叫 **委托（Delegation）**。它与 Stage 01 的工具调用非常接近，只是工具背后现在可以运行另一个专家模型。
+
+[`demo.py`](code/demo.py) 先创建本次运行，再安排两个子任务。下面是执行和汇总的关键两步：
+
+```python
+messages = runtime.fan_out(caller="coordinator", targets=("operations", "risk"), parallel=args.parallel)
+```
+
+```python
+assessment = from_messages(messages)
+```
+
+`fan_out()` 表示把两个子问题分出去；默认并不同时执行。`from_messages()` 则负责把返回的结构化材料合并为评估结果，它不会因为第二位专家最后发言，就让第二份字典覆盖第一份。这两个操作之间的界面就是前面定义的消息契约。
+
+从仓库根目录运行下面的命令。离线示例只需要 Python 3.10 及以上版本，不需要模型密钥：
 
 ```bash
 python stages/11-multi-agent/code/demo.py
 ```
 
----
+输出中可以找到 `pilot-001:1` 和 `pilot-001:2` 两次请求。前者带回 20 人、没有测量结果等计划事实；后者带回不允许退款、当前不需要真实对话隐私澄清等规则事实。最后的 `assessment.status` 是 `ready_for_draft`：材料足以准备评估稿，**不是允许上线**。两次调用前后，`owner` 都是 `coordinator`。
 
-## 6. 内部协作也必须保留 Stage 09 的授权边界
+运行时给每次调用留下的事件只包含关联编号、调用者、目标、实际可见字段、状态和耗时，不默认写入整段提示词、结果正文或内部备注。这是 Stage 10 的观测原则在团队里的应用。当前事件是一份按请求顺序合并的运行记录，不是完整的嵌套 Span 系统，也不表示并发时的实际完成先后。
 
-“这些都是公司内部 Agent”不是授权理由。`TeamRuntime` 在每次 Delegation 和 Handoff 前检查 `TeamPolicy`：没有明确 Grant 就抛出 `PermissionError`，即默认拒绝。
+正常结果并不难得到。真正考验协作设计的，是一位同事没交作业，或者两份材料写反了。主管这时应该怎么办？
 
-```python
-from team import Delegation, Principal, TeamBudget
+## 6. 有人没回答，与有人回答“不可以”，是两回事
 
-intern = Principal("intern-1", frozenset({"intern"}))
-try:
-    runtime.delegate(
-        caller="supervisor",
-        principal=intern,
-        delegation=Delegation("orders", "Check ORDER-42."),
-        shared_context={},
-        budget=TeamBudget(),
-    )
-except PermissionError as exc:
-    print(exc)
-```
-
-这里检查的是“这个身份能否进入 Orders Specialist 边界”。它不替代 Orders 自己执行 Tool 时的授权：如果 Orders 能退款，退款 Tool 仍必须在自己的执行边界再次检查 Principal、业务策略和必要审批。Delegation 不能把 Supervisor 没有的外部执行权悄悄放大。
-
----
-
-## 7. Critic、错误传播与 Eval：协作收益需要证据
-
-增加 Critic 很诱人：
-
-```text
-Generator -> Critic -> final
-```
-
-但 Critic 也可能误判、遗漏证据或制造新循环，并且一定增加一次模型调用的成本和延迟。它不是免费的正确性按钮。
-
-用 Stage 10 的同一 Dataset 比较：
-
-```text
-single Agent:  pass rate / latency / cost / unnecessary tools
-team version:  pass rate / latency / cost / unnecessary delegations
-```
-
-只有在关键 Case 的收益足以覆盖额外成本与失败路径时，才保留 Critic 或额外 Specialist。
-
-消息必须尽量保留 `status`、`data` 与 `provenance`，因为每次自然语言转述都可能丢失事实、来源、不确定性和错误类别。出现失败时，Supervisor 不应把 “policy service timed out” 重写成 “policy says no”；应将结构化失败状态交给自己的恢复或上报逻辑。
-
-相应的离线检查放在这里运行。它会验证 Context Allowlist、结构化消息、Delegation 与 Handoff、默认拒绝、Budget、Self-delegation、Unknown Agent 与 Fan-out 的隔离 Context：
+先让风险材料缺失，再让风险处理函数模拟服务故障。两种情况下都没有得到完整评估，但含义不同：没有材料时应该请求补充，执行失败时应该报告失败，不能顺手写成“政策不允许”。否则基础设施故障会变成业务结论，听起来还特别斩钉截铁。
 
 ```bash
-python stages/11-multi-agent/code/checks.py
+python stages/11-multi-agent/code/demo.py --case missing
+python stages/11-multi-agent/code/demo.py --case failure
 ```
 
----
+第一个结果是 `needs_input`，第二个是 `failed`。在两种情况下，运营那份已经成功返回的结果仍然保留。运行时捕获专家异常后只传出受控错误码，不把原始异常文本塞回模型，因为异常里可能带有请求正文、服务地址或凭证。
 
-## 8. MCP、进程内团队与 A2A 分别解决什么边界？
+业务汇总先检查执行状态，之后才解释业务事实：
 
-三者常一起出现，却不是一回事：
-
-| 边界 | 主要对象 | 本课程对应内容 |
-| --- | --- | --- |
-| Agent ↔ Tool / Resource | 工具、数据、Prompt Provider | Stage 05 MCP |
-| Agent ↔ Agent（同一应用内） | Supervisor 与 Specialist 的协作 | 本章 `TeamRuntime` |
-| Agent ↔ 独立 Agent 系统 | 跨团队、框架或服务的互操作 | A2A |
-
-如果对方只暴露 `search_database`，它更像 Tool；如果对方接收目标、自己规划执行、维护任务生命周期并返回 Artifact 或阶段状态，它更像独立 Agent。
-
-当对方属于另一个系统时，进程内的 `runtime.delegate(...)` 不够用。A2A（Agent2Agent）是面向独立 Agent 系统互操作的开放协议：它定义能力发现、消息、任务状态和 Artifact 交换，但不会替你决定是否应该拆分、是否可信、或是否有权限。可继续阅读 [A2A 官方规范](https://a2a-protocol.org/latest/specification) 与 [核心概念](https://a2a-protocol.org/latest/topics/key-concepts/)。
-
-因此 A2A 与 MCP 是互补关系：一个 Specialist 可以通过 MCP 使用自己的 Tool 和数据，再通过 A2A 与其他独立 Agent 协作。
-
----
-
-## 9. 真实 DeepSeek 团队：Supervisor 委托两个真实 Specialist
-
-离线 `Specialist` 让我们稳定地观察 Runtime 语义。真实模型接入在 [`code/deepseek_team.py`](code/deepseek_team.py)：
-
-1. DeepSeek Supervisor 根据用户任务提出 `delegate_to_specialist` Tool Call。
-2. Host 验证目标和任务，按 `CONTEXT_KEYS_BY_SPECIALIST` 投影 Context，并通过 `TeamRuntime.delegate()` 做授权与 Budget 检查。
-3. Orders 或 Policy Specialist 各自发起一次真实 DeepSeek 调用，只接收自己的投影视图。
-4. Host 将结构化 `AgentMessage` 作为 Tool Result 交回 Supervisor，由它生成最终回答。
-
-```text
-user
-  ↓
-DeepSeek supervisor
-  ↓ delegate_to_specialist
-Host policy + context projection + budget
-  ↓
-DeepSeek orders / policy specialist
-  ↓ structured Tool Result
-DeepSeek supervisor final answer
+```python
+if any(item.status == "failed" for item in items):
+    return Assessment("failed", "Assessment incomplete: a specialist failed, not a policy rejection.", sources)
+if any(item.status != "ok" for item in items):
+    return Assessment("needs_input", "Assessment incomplete: required information is missing.", sources)
 ```
 
-示例里的 `order_id` 与 `policy_excerpt` 是本地教学数据；`internal_secret` 故意存在于 Supervisor Context 中，用来观察它不会被投影给 Specialist。它不会连接订单或支付系统。
+这段代码刻意没有“少一份就猜一下”的分支。部分成功在这里意味着保留可解释的部分材料，不意味着降低最后的验收标准。重试是否适合、是否安全，需要沿用 Stage 09 的判断；本章不会自动重复所有失败，也不会把一次异常藏成空字符串。
 
-安装依赖：
+还有一种更容易被漂亮总结掩盖的问题：两边都正常返回，但计划说可以退款，政策说不可以。运行冲突示例：
+
+```bash
+python stages/11-multi-agent/code/demo.py --case conflict
+```
+
+汇总会停在 `conflict`，要求核对来源，而不是投票。这里两份材料讨论的是同一个权限事实，确实不能同时采用。相反，“运营认为值得试点”与“风险要求增加控制”可能是不同维度的建议，不能看到意见不同就一律标为矛盾。实际业务应先分清事实冲突、来源版本差异和取舍分歧，再决定澄清、重新检索或请求人工判断。
+
+请一个 Critic 再读一遍，可以提供另一份意见，但它也有输入、成本和失败方式。尤其当两个模型读取同一份错误材料时，意见一致并不构成独立证据。本例先使用可精确检查的字段规则，复杂语义再交给有明确标准的评审，并限制评审轮数。第三位同事不能因为叫“总审核”，就自动拥有真理。
+
+现在返回结果的意义已经清楚了。接下来小林问：“两边互不依赖，能不能同时去问，少等一会儿？”
+
+## 7. 同时请两位同事，不等于让他们共用一支笔
+
+运营只读计划，风险只读规则和数据使用方式，二者都不依赖对方的结果，因此可以并发执行。汇总必须等所需材料回来，不能把汇总也扔进同一批并发任务里。这里的依赖关系比“用了几个线程”更重要。
+
+先说清两个词：**Fan-out / Fan-in** 描述分发子任务再收集结果的结构；**并发**描述它们是否在时间上重叠。默认版本顺序运行，增加 `--parallel` 后才真正把两个调用交给线程池：
+
+```bash
+python stages/11-multi-agent/code/demo.py --parallel
+```
+
+线程池出现前，应用先检查整批目标和权限，再一次性预留委托预算。若预算只够一位同事，就不会让第一位已经开始工作，才发现第二位不能调用。这是“启动前全量检查”，不是对执行结果提供事务保证；两位同事真正开始以后，仍可能一位成功、一位失败。
+
+执行部分使用标准库的 `ThreadPoolExecutor`：
+
+```python
+with ThreadPoolExecutor(max_workers=self._limits.max_workers) as pool:
+    futures = [pool.submit(self._invoke, spec, context) for spec, context in prepared]
+    outcomes = [future.result() for future in futures]
+```
+
+第一行限制同时工作的线程数。第二行先把这批调用都提交出去，第三行再按提交顺序收集结果；并不是提交一个、等完一个再提交另一个。每个处理函数收到自己的 JSON 副本，返回值由主管线程统一记录，因此没有两个专家同时修改共享结果字典。测试使用两个线程相互等待的同步点验证它们确实重叠运行，不靠一张“并行”示意图证明。
+
+如果运营需要 2 秒、风险需要 3 秒，理想情况下顺序等待接近 5 秒，并发等待接近 3 秒，再加启动与汇总开销。这是假设下的时间估计，不是这个示例测出的模型性能。对于几乎瞬间返回的离线函数，线程调度反而可能更慢；并发也不会自动减少模型请求次数和 token 成本。
+
+特别留意超时边界。Python 的线程池不会因为 `Future` 等待超时就强杀正在执行的函数，退出这里的 `with` 也会等待已启动工作结束，[官方文档](https://docs.python.org/3/library/concurrent.futures.html)明确说明了这一行为。本例的运行截止时间用于拒绝新的调用和迟到结果，是协作式检查，不是硬终止。真实网络调用仍需自己的超时和取消设计。我们没有把“一直卡住的任意函数”包装成已解决的问题。
+
+## 8. 这次不是帮忙，而是请你接着与用户沟通
+
+小林又补充：“试点时，我们想直接拿真实客服对话测试。”风险专家发现这需要隐私澄清。主管当然可以把问题转述回去；但如果后续问题应由拥有专门流程的隐私专员连续处理，就可以让它接手当前对话。
+
+这叫 **任务移交（Handoff）**。与委托不同，目标不只是交回一份子任务结果，而是成为当前这次运行的继续处理者。本例让隐私专员询问同意依据与脱敏措施；它不会替人工批准使用数据，也不代表真的访问了客服对话。
+
+```bash
+python stages/11-multi-agent/code/demo.py --case handoff
+```
+
+先出现两次普通委托，主管仍是负责人。应用读到 `needs_review` 后发起移交，`owner` 才变成 `privacy`。隐私专员收到共同目标，以及应用允许转交的风险结果，不会收到运营材料、内部备注或所有历史消息。为什么还要给一份交接材料？因为只改负责人名字，却不告诉接手者为什么需要澄清，下一轮只能从头问小林。
+
+运行时确认目标、权限和预算后，真正更新控制状态：
+
+```python
+self._owner = target
+self._handoff_path.append(target)
+```
+
+之后所有继续操作都要经过负责人检查：
+
+```python
+def _check_owner(self, caller: str) -> None:
+    if self._closed or caller != self._owner:
+        raise OwnershipError("only the active owner may continue this run")
+```
+
+因此，演示中旧主管尝试提交最终回复，会得到 `former owner: rejected`；最后由隐私专员给出澄清问题。这比在返回字典里写一个新的 `owner` 更重要：控制权变化确实改变了哪些后续操作被允许。
+
+本例在调用接手者之前完成移交。如果接手者执行失败，负责人仍然是它；应用得到失败记录，而不是悄悄恢复旧主管继续发言。失败后是否回退，需要一条明确的新策略。这里也只结束当前回复，不实现持久化多轮客服会话，不能把内存中的负责人字段当成跨进程任务系统。
+
+负责人变化不改变用户身份，也不会增加外部权限。隐私专员有自己的上下文，并不等于获得小林没被授予的能力。若它内部还有工具，仍需按同一身份重新检查。这条规则让“转给专家”不至于变成“通过转手来绕过权限”。
+
+## 9. 别让三个同事无限互相推荐第四个同事
+
+委托正常了，移交正常了，新的风险是把一个小问题变成无休止的内部沟通。主管问运营，运营建议找风险，风险建议重新问主管。如果每次都创建一份新预算，局部看每个人都很克制，整体却已经开了一天会。
+
+本例把预算放在**整次运行**上。`max_delegations` 限制子任务调用，`max_handoffs` 单独限制控制权移交。请求经过权限与参数检查、被接纳执行后，就消耗相应额度，即使专家后来失败，也不会退回这次额度。一个批次整体超额时则全部拒绝，不会启动部分工作。拒绝事件仍然记录，帮助区分“没资格调用”和“调用后失败”。
+
+运行时的实际预留逻辑是：
+
+```python
+if self._delegations + count > self._limits.max_delegations:
+    raise BudgetExceeded("delegation budget exhausted")
+self._delegations += count
+```
+
+这些计数由主管线程更新，并发处理函数不碰它们。上节的并发上限则限制同时在途的处理数量；两种限制不能互相替代。四次调用可以串行，也可以两两并发，但都不能因此变成第五次。
+
+对于控制权移交，运行时还保存经过的负责人路径，拒绝重新进入已经出现的负责人。因此 `A → B → C → A` 会被拦住。这是一条适合本例的保守规则，不是说所有合法工作流都不得回到之前的角色；确实需要重新评审时，应设计有界的评审循环和清楚的轮次，而不是偷偷关闭所有限制。本例的普通专家没有拿到运行时对象，不能递归创建子团队；扩展成嵌套团队时，必须继续传播整体预算，而不是每层重置。
+
+模型侧还有另一份计数：主管一次决策调用加上专家自己的模型调用，都是请求。委托次数不能直接代表模型成本。稍后的真实模型适配器会让所有角色共用一个请求预算，限制每次生成长度，并记录服务实际返回的 token 用量。未拿到用量就记为未知，不编造一张精确账单。
+
+## 10. 同样的题，单人做与组队做到底差在哪？
+
+现在可以回到开篇的检验。我们已经付出了消息封装、上下文投影、授权、汇总和移交规则的成本，是否真的值得？对这么小的规则任务，最诚实的起点是：让两种实现使用同样的材料、同样的处理规则、同样的验收标准。
+
+[`evaluation.py`](code/evaluation.py) 对照三种组织方式：一个普通控制函数直接处理两份材料、顺序委托两个模拟专家、并发委托两个模拟专家。它不把同一个简单函数换个名字就算不同模型，也没有人为让单一实现漏掉政策。四个案例的期望如下：
+
+| 材料情况 | 正确处理 |
+| --- | --- |
+| 计划与政策完整且一致 | 可以准备评估稿，但不能批准上线 |
+| 缺少政策 | 要求补充，不猜测权限 |
+| 计划与政策在退款权限上冲突 | 明确冲突，等待核对 |
+| 准备使用真实对话 | 请求隐私澄清 |
+
+```bash
+python stages/11-multi-agent/code/evaluation.py
+```
+
+运行后会有 12 条对照结果，检查状态、来源编号和假私密备注未进入最终结果，并记录真实本地耗时及跨专家边界的调用数。这里三种方式都应该通过。这个结果说明运行时保留了业务行为，也说明这道小题尚未证明“多 Agent 更聪明”。单一方案没有跨专家交接，团队方案多出两次边界调用；是否接受这项开销，取决于你是否确实需要职责与数据边界。
+
+离线模型请求数是 0，模型 token 与费用字段是 `null`，不能拿线程测试的毫秒数预测在线模型延迟。真正比较模型效果时，要让单 Agent 与团队拿到同等可访问资料，记录模型与提示版本，在同一组固定问题上重复运行；分别比较事实正确率、证据完整性、应当拒绝时是否拒绝、不必要调用、延迟和实际成本。独立并发查询可能改善复杂研究任务，但不能把别的任务上的收益直接搬来当本项目结论。[一个真实多 Agent 研究系统的工程记录](https://www.anthropic.com/engineering/multi-agent-research-system)可作为设计参考，而不是这份小实验的成绩单。
+
+你还可以故意把冲突判断删掉，再运行检查：最后答案或许依然流畅，但系统已经不再坚持同一项权限事实必须一致。这个练习会让 Stage 10 的“看轨迹，不只看最后一句”变得非常具体。
+
+## 11. 现在让真实模型加入，不让它顺便改组织纪律
+
+此前的专家只执行固定规则，这让错误容易复现，但不能验证真实模型能否正确理解材料。[`deepseek_team.py`](code/deepseek_team.py) 让主管和运营、风险专家分别发起真实调用。它们可以使用同一个模型名称，但提示要求、所见材料和返回契约不同；隐私移交仍由应用规则触发，由固定的澄清处理器回答，不把它冒充为第三个在线专家。
+
+主管第一次只看到公开任务目标和一个 `ask_specialist` 工具。工具参数只有 `specialist`，允许值为 `operations` 或 `risk`。它不能指定 `caller`、角色、上下文字段、额外任务正文或下一任负责人。应用实际检查工具名与参数，而不只是把 Schema 发给服务后祈祷它完全照做：
+
+```python
+if call.type != "function" or call.function.name != "ask_specialist":
+    raise ProviderError("unknown tool name or type")
+```
+
+整个批次的调用编号也必须有效且不重复，包括此前轮次用过的编号。随后才通过前面同一个运行时委托专家，将结果用服务返回的 `tool_call_id` 关联回主管。这是 Stage 01 模型—工具循环的一次扩展：工具内部又发生了模型调用，但外层运行时的权限和预算没有消失。当前调用格式可对照 [DeepSeek 的工具调用文档](https://api-docs.deepseek.com/guides/tool_calls/)。
+
+专家输出是 JSON 对象，包含刚才约定的状态、摘要、事实和来源。API 的 JSON 模式不替我们检查业务真假。本例的结构化事实很简单，应用会将人数、布尔条件和来源编号与受允许的材料核对；模型擅自写成 200 人、编造来源、拿数字 `0` 冒充布尔 `false`，都会被拒绝。摘要仍是模型生成的自由文字，即使事实字段通过了检查，也不能顺便宣布整段分析绝对正确。
+
+主管也可能没查询任何专家，就直接说“全部可以”。适配器要求两份必要观察已经返回，才允许结束；随后使用确定性汇总给出应用结论。成功时另外展示 `model_commentary_unverified`，明确它只是未经过语义验证的模型补充，不替代应用结论。如果材料不足、冲突或专家失败，不展示这段自由补充，以免它把停止条件说成“问题不大”。
+
+所有模型请求共用 `ModelGateway`，最多尝试 8 次，主管最多 4 轮决策，每轮最多接纳 2 个工具调用。客户端关闭隐式重试，每次设置请求超时与生成长度上限；非正常结束、空响应和截断响应都不当作完整答案。当前请求显式使用非思考模式，避免把另一种消息续接协议悄悄混进这个例子；相关参数以 [DeepSeek Chat Completions 文档](https://api-docs.deepseek.com/api/create-chat-completion/)为准。请求超时仍不等于能够强杀任意线程，截止时间的限制与上一节一致。
+
+安装可选客户端后，配置自己账号实际可用的模型名称。这条路径会使用你的额度；命令中的密钥只是占位符，不要把真实值写进仓库：
 
 ```bash
 python -m pip install -r stages/11-multi-agent/code/requirements.txt
 ```
 
-Windows 命令提示符（CMD）：
+macOS / Linux 的 shell：
 
-```bat
-set "DEEPSEEK_API_KEY=your_key_here"
-set "DEEPSEEK_MODEL=your_available_deepseek_model"
+```bash
+export DEEPSEEK_API_KEY="your_key_here"
+export DEEPSEEK_MODEL="your_available_model_id"
 python stages/11-multi-agent/code/deepseek_team.py
 ```
 
-PowerShell：
+Windows PowerShell：
 
 ```powershell
 $env:DEEPSEEK_API_KEY="your_key_here"
-$env:DEEPSEEK_MODEL="your_available_deepseek_model"
+$env:DEEPSEEK_MODEL="your_available_model_id"
 python stages/11-multi-agent/code/deepseek_team.py
 ```
 
-真实模型的结果会受模型版本和服务状态影响，因此这里的 live run 是集成观察，不应取代 Stage 10 的固定回归测试。
+Windows CMD 使用 `set "DEEPSEEK_API_KEY=your_key_here"` 与 `set "DEEPSEEK_MODEL=your_available_model_id"`，再执行同一条 Python 命令。追加 `--real-data` 只会改变教学输入中的布尔标记，观察隐私澄清分支，不会上传真实对话。输出中有模型请求总数与每次响应的 token 用量；服务未提供的用量保持未知。真实生成可能失败，也可能不采用预期顺序，这些应当通过真实评测观察，不能用离线替身替它保证。
 
----
+## 12. 换成框架，或者让同事在另一个系统里工作
 
-## 10. 从团队协作进入 Agent Workspace
+理解了这套职责分工，再看框架，关注点应该是“它替我安排哪一条控制流”，而不是重新背名词。例如 OpenAI Agents SDK 的 `Agent.as_tool()` 可让主管调用子 Agent 后继续汇总，`handoffs` 则让另一个 Agent 接管当前对话。这与本章的委托和移交有对应关系，但不代表我们的类名、消息对象或预算参数与 SDK 可以直接互换。[官方编排指南](https://openai.github.io/openai-agents-python/multi_agent/)说明了两种模式的区别。
 
-Multi-Agent 并没有让任务只剩下聊天。随着 Agent 开始生成 Artifact、读写文件、运行测试和执行脚本，下一个问题变成：**它到底能碰到机器上的哪些文件、进程、网络与凭证？**
+框架也不会自动知道哪些历史消息可以给接手者。使用移交时，需要检查其历史传递与过滤规则，再把自己的数据范围和授权接进去；不能因为函数叫 `handoff()`，就假定它采用了本章的最小交接材料。[SDK 的移交文档](https://openai.github.io/openai-agents-python/handoffs/)提供了输入过滤等具体接口。本章运行示例不依赖该 SDK，这里只是把已理解的机制对应到现有工具。
 
-这就是 [Stage 12：Agent Workspace 与 Sandbox](../12-agent-workspace-sandbox/README.zh-CN.md)。
+再把场景往前推一点：风险专家由另一个团队维护，不在当前 Python 进程里。我们无法直接拿到它的 `run()` 函数，还需要知道服务在哪里、可以处理什么、怎样确认身份，以及等待时如何获取结果。**A2A（Agent2Agent）** 标准化的正是这类独立 Agent 系统之间的交互。
+
+在这份试点评估中，Agent Card 可以描述远程风险服务的能力、接口与认证要求；Message 承载发送的请求或返回的回复；如果工作无法立即结束，可以用有编号与状态的 Task 跟踪；整理好的风险意见可以作为 Artifact 返回。对方也可以直接返回一条 Message，并非每次交互都必须创建长任务。它不需要暴露内部用了几个模型、什么记忆或哪些工具。[A2A 核心概念](https://a2a-protocol.org/latest/topics/key-concepts/)与[规范](https://a2a-protocol.org/latest/specification/)给出了实际协议对象，本章的 `AgentMessage` 不是其中一种序列化格式。
+
+Agent Card 描述能力，不构成访问授权；卡片里的 `skills` 也是能力描述，不等于 Stage 08 的 `SKILL.md` 文件包。应用仍需验证远程服务身份、限定可连接的目标、只发送允许的数据，并在服务端执行授权。MCP 与 A2A 也不是互相替代：风险 Agent 可以通过 MCP 使用政策检索工具，再通过 A2A 把评估结果交给别的系统。我们没有在本章建立远程 A2A 服务，因此离线检查不证明协议互操作性或跨服务安全。
+
+## 13. 小林拿到了评估意见，接下来还缺一个文件
+
+现在这份任务已经能说清楚：运营依据计划整理事实，风险依据规则提出约束，主管保留来源并处理缺失和冲突；确实需要连续澄清时，再把控制权交给隐私专员。每次协作都知道谁可以发起、能看到什么、返回了什么，以及花掉了多少调用额度。没有必要的时候，单一控制流程仍然是完全合理的选择。
+
+可以运行本章的边界检查，重点观察它们是不是验证了刚才故事里的困难，而不只是检查导入成功：
+
+```bash
+python stages/11-multi-agent/code/checks.py
+```
+
+检查会制造缺失材料、失败专家、过期结果、越权协作、上下文嵌套修改和重复模型调用编号；也会验证并发确实发生、移交后旧负责人被拒绝、同一组规则没有在组队后悄悄改变。模型部分使用伪客户端，因此不需要 API Key，也不能据此宣称在线回答质量已经得到验证。
+
+小林看完评估意见，又问：“那能把它写成一份报告，检查好再把文件交给我吗？”这时责任已经分清，但文字开始要落到文件和程序上。哪些文件可以修改，哪些命令可以执行，哪份产物可以交付，就成为[下一章：工作区与执行边界](../12-agent-workspace-sandbox/README.zh-CN.md)要解决的问题。
