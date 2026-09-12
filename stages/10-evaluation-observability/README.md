@@ -1,344 +1,382 @@
-# Stage 10: Do Not Judge an Agent by Its Last Sentence — Evaluation and Observability
+# Stage 10: Did That Change Actually Improve the Assistant? — From One Investigation to an Evaluation Report
 
 > Language: **English** | [简体中文](README.zh-CN.md)
 
-Stage 09 put validation, permissions, budgets, retries, and deadlines into the Runtime. The natural next question is: after changing a Prompt, Tool, RAG pipeline, or Guardrail, how do we know the system actually improved?
+[Stage 09](../09-reliability-safety/README.md) gave our Agent argument checks, permissions, budgets, and bounded retries. Those controls stop it from doing whatever a model happens to suggest. They do not, by themselves, tell us whether it helped the user. Lin, a product colleague preparing to try the support assistant, now asks: “You shortened its context yesterday. How do we know you didn't shorten away something it needed?”
 
-Trying a few pleasant-looking prompts only shows that those demonstrations happened to look good. Agent quality also lives in its path: whether it omitted critical evidence, called an unnecessary Tool, spent too many steps, was denied by a guardrail, or kept answering when evidence was insufficient.
+We can approach this without learning a dictionary of monitoring terms first. Suppose we are reviewing a colleague's work. Reading their final “done” message tells us little about whether they consulted the right material. Reading a detailed account of one successful task is better, but still does not tell us how they handle other tasks. We need both an account of what happened this time and a set of questions with expectations we can check repeatedly. One helps us explain; the other helps us compare.
 
-This chapter builds two complementary capabilities:
+This chapter follows Lin through one change to a support assistant. A refund-policy question produces the wrong response even though no operation crashes. We locate the missing information, turn the failure into a repeatable case, and decide whether the candidate should pass a release gate. All orders and policies are fictional, all tools read local data, and there is no payment or refund-execution capability. Deterministic functions make the mechanics visible before we introduce a real model.
 
-| Question | Capability | Output |
-| --- | --- | --- |
-| “What happened in this one Run?” | **Observability** | Traces, logs, metrics |
-| “Did this change improve an important set of behaviors?” | **Evaluation** | Stable cases, scores, regression report |
+## 1. Start with an answer that does not make sense
 
-Use a trace to explain one failure, then use evaluation to tell whether behavior regressed overall. Neither replaces the other: a trace is not a grade, and an evaluation report cannot automatically explain a failure.
+Lin asks: “Can `ORDER-42` be refunded?” Our deliberately small teaching policy says that delivered orders within **30 days of delivery, including day 30**, may be returned to the original payment method. This order belongs to the current user and was delivered seven days ago. With the policy available, the assistant should explain that the order meets this teaching rule. It must not say that a payment has already been refunded. Real merchants have other conditions; this exercise is not a rule for real transactions.
 
----
+Two pieces of information are needed: the order's delivery age and the applicable policy. Seven days is not enough information without a policy, and a 30-day policy is not enough without the order. If the order belongs to somebody else, the application should stop at the access boundary rather than read it first and decide whether that was acceptable later.
 
-## 1. From “the guardrail exists” to “we can prove its behavior”
+From the repository root, run the local baseline with Python 3.10 or later:
 
-In Stage 09, a Tool may not run for many different reasons: the model never proposed it, validation failed, permission was denied, the budget was exhausted, the deadline expired, or the external dependency actually failed. One `tool failed` log line erases all of those responsibility boundaries.
+```bash
+python stages/10-evaluation-observability/code/demo.py --version baseline
+```
 
-Stage 10 therefore starts by preserving the boundaries the system already has, rather than by choosing a monitoring product:
+The answer has `decision='eligible'` and cites `order:ORDER-42` and `refund-policy-v1`. Now run the candidate that tries to shorten the context:
+
+```bash
+python stages/10-evaluation-observability/code/demo.py --version candidate
+```
+
+It returns `decision='insufficient_evidence'`. More confusingly, the recorded steps all say `[ok]`. A program can make a mistake without throwing an exception. In fact, it can do the wrong thing with exemplary punctuality.
+
+These versions are an intentional fault-injection exercise, not a performance comparison between real models. Both execute the local lookup functions; one context-selection behavior differs. Before blaming model quality, notice the last part of the output: `retrieved` contains the order and policy, while `visible to answer step` contains only the order. Our next job is to find where those two lists diverged.
+
+## 2. Keep an account of this particular execution
+
+“Did it look up the order?” is a useful first question, but we will soon need more detail. When did that lookup start? Did it return anything? Which request triggered it? What happened afterwards? An execution record that connects this work is called a **trace**. Here it records operations and state the application can observe. It is not a transcript of the model's hidden reasoning.
+
+A trace contains smaller pieces of work: an order lookup, a context-building operation, or a model request. Each piece has a beginning and an end. We call one such piece a **span**. A larger span can enclose smaller ones, so the overall task contains the individual operations. Once that relationship is familiar, `parent_span_id` is simply the identifier saying which larger operation a span belongs to.
+
+The local lookup goes through request handling, argument validation, authorization, and execution. Part of the actual output looks like this; it is generated by the path being evaluated, not by a separate demonstration tree:
 
 ```text
-agent.run
-├── context.build
-├── model.generate
-├── policy.authorize
-├── tool.lookup_order
-├── retrieval.search_policy
-└── final response
+└── agent.run [ok] decision=insufficient_evidence
+    ├── route.decide [ok]
+    ├── tool.request [ok] tool=lookup_order attempt=1 outcome=ok
+    │   ├── tool.validate [ok]
+    │   ├── tool.authorize [ok] allowed=True
+    │   └── tool.execute [ok] tool=lookup_order found_count=1
 ```
 
-Each line is a **Span**: one small piece of work with a clear responsibility. All spans associated with the same `run_id` form a **Trace**.
-
-Three common signals have different jobs:
-
-| Signal | Question it answers | Agent example |
-| --- | --- | --- |
-| Log | “Which discrete event happened?” | `permission denied for issue_refund` |
-| Metric | “What is the trend across many Runs?” | P95 latency, Tool success rate, average Tool calls |
-| Trace | “Which path led this Run to a result or failure?” | Which evidence was retrieved, which Tools ran, where a call was denied |
-
-For example, `P95 latency = 820 ms` means that 95% of Runs finished within 820 milliseconds; the slowest 5% took longer. It exposes a small set of very slow requests more clearly than an average alone.
-
-For production terminology and tooling, read the [OpenTelemetry Observability Primer](https://opentelemetry.io/docs/concepts/observability-primer/). OpenTelemetry is an open standard for consistently recording and exporting this kind of observability data. This chapter implements a small tracer by hand so its data model and boundaries remain visible; it is not a replacement for a production SDK.
-
----
-
-## 2. Trace a whole Run before printing more log lines
-
-[`code/tracing.py`](code/tracing.py) records a Span’s name, start time, duration, attributes, status, and its `span_id` / `parent_span_id`. The final two fields make the Trace an actual tree rather than a few coincidentally adjacent log lines.
-
-This is a complete minimal Trace using the same API as [`code/demo.py`](code/demo.py):
+To record an operation, we wrap the relevant code in a `with` block. Entering records its start; leaving records its end. The application still performs the same work. The authorization block in [`scenario.py`](code/scenario.py) begins as follows:
 
 ```python
-from tracing import CapturePolicy, Trace, Tracer, format_trace
-
-trace = Trace("run-001")
-tracer = Tracer(trace, capture_policy=CapturePolicy(capture_content=False))
-
-with tracer.span("agent.run", workflow="refund_support"):
-    with tracer.span("context.build", question="Can ORDER-42 be refunded?") as span:
-        span["selected_items"] = 3
-
-    with tracer.span("tool.lookup_order", tool="lookup_order") as span:
-        span["status_code"] = 200
-
-print(format_trace(trace))
+with self.tracer.span("tool.authorize") as auth:
+    order = None
+    if name == "lookup_order":
+        order = next((o for o in self.request.orders if o.id == arguments["order_id"]), None)
+        if order is not None and order.owner != self.request.user_id:
+            auth["allowed"] = False
+            raise ToolRejected("access_denied")
+    auth["allowed"] = True
 ```
 
-Its essential output is:
+`auth["allowed"]` attaches a small structured note to that operation. Such a key-value note is an **attribute**. It records the authorization result; it does not perform authorization. The ordinary Python condition still owns the decision to permit or reject access.
 
-```text
-run-001
-└── agent.run [ok]
-    ├── context.build [ok]
-    └── tool.lookup_order [ok]
-```
+We also need identifiers. In this example, `run_id` identifies one application run, `trace_id` identifies its trace, and `span_id` identifies an operation inside it. We use one trace per local run and keep that association explicit. Larger systems can associate runs and traces differently, so these IDs should not be assumed identical. They are lookup keys, not user identities or permissions.
 
-`agent.run` is the parent Span; `context.build` and `tool.lookup_order` are its children. A Span name states the responsibility. An **attribute** is a key-value note attached to that step: `selected_items=3` says three Context items were selected, while `status_code=200` says the request succeeded. Do not put an entire Prompt or Tool Result into attributes by default; the next section explains why.
+There is one timing trap worth avoiding now: the outer `agent.run` duration already includes its children. Adding parent and child durations would count the same time twice. We measure elapsed time using differences from [`time.perf_counter()`](https://docs.python.org/3/library/time.html#time.perf_counter), while separately recording a wall-clock timestamp for when the operation began. A stopwatch reading is not a calendar date.
 
-Instrumentation is an observer and must not alter business behavior. When work inside `with tracer.span(...)` raises, the tracer records `status="error"` and the exception type, then re-raises the original exception:
+## 3. Why does an all-green trace still lead to a wrong answer?
+
+Return to the missing policy. The policy execution span has `found_count=1`: the local function returned a document. Together with the order, the context builder received two documents. Yet it selected only one. The answer step did not overlook a policy it had received; it never received the policy in the first place.
+
+Now there is a specific reason to inspect the code. The candidate's context selection contains this filter:
 
 ```python
-from tracing import Trace, Tracer
+documents = list(self.documents.values())
+span["found_count"] = len(documents)
+if self.version == "candidate":
+    # Deliberate regression: a context "optimization" drops policy evidence.
+    documents = [doc for doc in documents if doc["kind"] == "order"]
+self.visible_ids = [doc["source_id"] for doc in documents]
+span["selected_count"] = len(documents)
+```
 
-trace = Trace("failed-run")
+It keeps only documents whose kind is `order`. The policy's kind is `policy`, so the supposed optimization removes it. Filtering a list is a perfectly valid operation and raises no exception. The answer function then correctly notices that its own inputs are incomplete. The failure lies in what the pipeline supplied, not in a crashed function.
+
+That is why green needs interpretation. In our handwritten tracer, `ok` means no exception escaped this span. It does not mean the answer is correct, evidence is sufficient, or a business action is authorized. Separate `outcome` and `decision` attributes preserve the distinction between execution status and business meaning.
+
+The reverse situation is just as important. Try the unauthorized-order case:
+
+```bash
+python stages/10-evaluation-observability/code/demo.py --case foreign-order --version baseline
+```
+
+Authorization rejects the request and that child span records an error. The application handles this expected rejection, returns `access_denied`, and completes the outer run normally. The case should pass: preventing unauthorized access is the intended behavior, not a defect to remove in pursuit of an all-green dashboard. A temporary lookup failure is different again: it should produce `temporarily_unavailable`, not a fabricated policy decision that the order is ineligible.
+
+A trace can now direct our investigation, but it still cannot grade the answer on its own. We need explicit expectations. Before storing more records, however, we should check whether the records themselves are collecting too much.
+
+## 4. Troubleshooting is not permission to photocopy every customer record
+
+It is tempting to log the complete question, tool response, model input, and exception message. That makes debugging convenient. It also makes the logs an excellent place for someone else to find customer information. Stage 09 already showed how exception messages can contain credentials; context and tool results can contain order details, contact information, or internal documents. Diagnostic data needs access and retention boundaries too.
+
+We diagnosed the policy omission using document counts, selected counts, and a few controlled states. We did not need the original order text. [`CapturePolicy`](code/tracing.py) therefore takes a conservative approach: retain only reviewed counters and labels with enumerated values. Unknown fields, arbitrary strings, and nested objects are not stored. Its core is:
+
+```python
+for key, value in attributes.items():
+    if key in NUMERIC_KEYS and type(value) in (int, float, bool):
+        if math.isfinite(value) and 0 <= value <= 10**12:
+            safe[key] = value
+    elif key in LABEL_VALUES and isinstance(value, str):
+        if value in LABEL_VALUES[key]:
+            safe[key] = value
+```
+
+`found_count=2` survives, as does `outcome="ok"`. A `prompt` field does not. A nested `{"password": "..."}` placed under a counter key also fails the type check. This avoids a common hole in filters that sanitize top-level strings but preserve entire dictionaries underneath them.
+
+An allowlist is still not a complete data-loss-prevention system. Span names must be fixed by the application rather than assembled from user questions. Counters and labels must come from trusted instrumentation, not serve as an encoding channel for secrets. We do not hash every text value by default: fingerprints can help compare content, but hashing is not anonymization, especially when the original value comes from a small set of guessable candidates. Controlled access to raw content needs a separate diagnostic path with authorization, redaction, and a retention policy.
+
+The record itself also needs a size limit. The local tracer admits a bounded number of spans. Excess spans increase `dropped_spans`, and the trace is visibly marked incomplete. If the filter fails, `telemetry_errors` increases rather than allowing the diagnostic exception to replace the original business exception. The core exception behavior is deliberately ordinary:
+
+```python
 try:
-    with Tracer(trace).span("tool.lookup_order"):
-        raise RuntimeError("connection lost")
-except RuntimeError:
-    pass
-
-span = trace.spans[0]
-assert span.status == "error"
-assert span.attributes["error_type"] == "RuntimeError"
+    yield mutable
+except BaseException:
+    status = "error"
+    raise
 ```
 
-The snippet intentionally does not retain the raw `connection lost` message. Model-visible safe errors, controlled engineer diagnostics, and Trace attributes need distinct data boundaries, consistent with Stage 09.
+The `raise` propagates the same exception to the caller. Recording an error is not swallowing it, and failing to record an attribute is not permission to pretend the business operation succeeded. The checks deliberately break the filter to verify that the original business error remains visible.
 
-Run the local example now:
+There is another way a record can be wrong: sharing one mutable “current span” stack across interleaved operations can attach a child to the wrong parent. The implementation uses a [`ContextVar`](https://docs.python.org/3/library/contextvars.html) to hold the active parent in the current execution context, restoring it on exit. An asynchronous interleaving test checks that the relationships do not cross. This is Python context-local state, not the context sent to a language model. It does not automatically propagate across processes; that is another responsibility when using distributed instrumentation.
 
-```bash
-python stages/10-evaluation-observability/code/demo.py
-```
+## 5. One diagnosed failure is not yet a reusable exam
 
----
+Lin understands the missing-policy bug, but fixing this one request does not establish that the rest of the assistant is intact. The day-30 boundary might still be wrong. Or a new routing rule might query orders for every greeting. We need a small set of important scenarios that can be rerun after each change.
 
-## 3. A Trace is a data system: design what it may retain
+One such scenario is an **evaluation case**. It includes not just a question, but also the environment in which that question is asked and the expected behavior. “Seven-day-old order, policy available” differs from “seven-day-old order, policy missing,” even when the question text is identical. A prompt without its relevant environment is not enough to reproduce this test.
 
-Traces are useful for debugging, which also makes them an easy place to collect Prompts, user details, retrieved documents, secrets, and Tool arguments. Think of a Trace as the maintenance record for one Run: it needs to say which step took time and whether it succeeded, but it need not photocopy every sentence a user supplied. Observability needs minimization, access control, and retention policy just like every other data system.
+The eight cases in [`cases.py`](code/cases.py) stay within the same support story:
 
-`CapturePolicy` is the filter before that maintenance record is written. Each Span’s attributes pass through it before the Trace stores them.
-
-The chapter’s default `CapturePolicy` stores no raw strings. It stores their length and a 12-character SHA-256 digest instead:
-
-```python
-from tracing import CapturePolicy
-
-policy = CapturePolicy(capture_content=False)
-safe = policy.sanitize({"prompt": "private text", "selected_items": 3})
-
-assert safe == {
-    "prompt_sha256": "66c279b1e928",
-    "prompt_chars": 12,
-    "selected_items": 3,
-}
-```
-
-`prompt_chars=12` is only the original length. `prompt_sha256` is the fixed fingerprint calculated from `private text`. You do not need the mathematics of SHA-256 here: the same text produces the same fingerprint, while changed text normally produces a different one. That lets us ask whether two Runs used the same content or whether a Context item changed, without retaining the original text by default.
-
-A hash is not a universal privacy solution. A **low-entropy value** has only a few easy-to-enumerate candidates, such as `yes/no`, a country code, or a status with only a few options. Someone can hash every candidate and guess the original value. Hashing reduces default exposure; it does not replace data governance.
-
-Only enable content capture for a controlled debugging need, and keep a hard length limit:
-
-```python
-from tracing import CapturePolicy
-
-policy = CapturePolicy(capture_content=True, max_text_chars=4)
-assert policy.sanitize({"prompt": "abcdef"})["prompt"] == "abcd"
-```
-
-Production systems must still define who can read a trace, how long it lives, which fields require **redaction** (replacing secrets with `[REDACTED]`), and how to **sample**. Sampling records only a subset of ordinary Runs, for example one out of every hundred. Errors or high-risk Runs may retain more structured information, but that does not mean raw-content capture should become less strict. The in-memory list in this chapter does not solve those operations problems; it makes “do not capture full text by default” a testable starting point.
-
----
-
-## 4. Define correct behavior in an Eval Case before discussing scores
-
-Evaluation is not asking the user’s question again. It writes a repeatable expectation for one important behavior. An `EvalCase` holds a stable ID, question, required answer fragments, expected Tool sequence, and whether the Agent should abstain. An `AgentRun` holds what the Agent actually produced: its answer, Tools, retrieved sources, and run measurements.
-
-The `assert` statements below are Python assertions: the program raises an error when a condition is false. The teaching example uses them to make an expected result into a runnable check.
-
-This complete refund example compares answer, trajectory, and abstention separately:
-
-```python
-from evaluation import AgentRun, EvalCase, score_case
-
-case = EvalCase(
-    id="refund-within-window",
-    question="Can ORDER-42 be refunded to the original payment method?",
-    expected_answer_contains=("30 days", "original payment method"),
-    expected_tools=("lookup_order", "search_refund_policy"),
-)
-run = AgentRun(
-    answer="Orders within 30 days may use the original payment method.",
-    tools=("lookup_order", "search_refund_policy"),
-    retrieved_ids=("refund-policy",),
-    latency_ms=18,
-)
-
-score = score_case(case, run)
-assert score.answer_ok
-assert score.tool_trajectory_ok
-assert score.abstention_ok
-assert score.passed
-```
-
-In the teaching implementation, `expected_tools` is an **ordered, exact** tuple: extra calls, missing calls, or a different order set `tool_trajectory_ok=False`. That is useful when a refund flow has one known action path. If two different paths are both valid, create a Case for each or write an explicit custom evaluator. Do not quietly weaken the rule until every path passes.
-
-`expected_answer_contains` is also a narrow, stable deterministic check, not a complete measure of natural-language quality. Its value is that failures remain reproducible and explainable when a rule can be stated precisely.
-
----
-
-## 5. Report answers, trajectories, resources, and retrieval components together
-
-For each Case, `score_case()` produces `answer_ok`, `tool_trajectory_ok`, and `abstention_ok`. A Case passes only when all three are true. An Agent that gets the final answer by luck after making irrelevant Tool calls therefore does not receive the same result as the intended trajectory.
-
-[`code/evaluation.py`](code/evaluation.py) aggregates the cases into:
-
-```python
-EvalReport(
-    scores=...,                       # three independent results per Case
-    pass_rate=...,                    # passing Cases / all Cases
-    unnecessary_tool_rate=...,        # unnecessary Tool calls / all Tool calls
-    average_tool_calls=...,           # mean Tool calls per Case
-    average_latency_ms=...,           # mean latency per Case
-    average_estimated_cost_usd=...,   # mean estimated cost per Case
-)
-```
-
-The numerator of `unnecessary_tool_rate` includes all Tool calls in cases such as a greeting that expected none, plus calls beyond the expected number in other cases. Its denominator is all observed Tool calls. It does not replace trajectory scoring: a wrong Tool with the same count still fails `tool_trajectory_ok`.
-
-Do not guess after an end-to-end score falls. Earlier stages already contain independently measurable components:
-
-| Component | Direct checks |
-| --- | --- |
-| Stage 02 Router | route accuracy |
-| Stage 04 Retriever | Recall@K, MRR, whether a critical source was retrieved |
-| Stage 07 Context | required-context retention, irrelevant content, omissions |
-| Stage 09 Tool / Guardrail | arguments, permission-denial reason, retries, budget |
-| Agent trajectory | Tool order, step count, unnecessary actions |
-| Final answer | correctness, evidence boundary, abstention |
-
-For example, Retriever `Recall@K` asks one exact question: did the first K results contain the labeled relevant documents?
-
-```python
-from evaluation import recall_at_k
-
-score = recall_at_k(["a", "b", "c"], {"b", "x"}, k=2)
-assert score == 0.5
-```
-
-If a critical document never enters Top-K, a fluent later answer cannot repair that retrieval failure.
-
-`MRR` (Mean Reciprocal Rank) also measures retrieval ordering: a relevant document at rank 1 scores `1`, at rank 2 scores `1/2`, and lower ranks score less; the values are then averaged across queries.
-
-Run the local regression checks here:
-
-```bash
-python stages/10-evaluation-observability/code/checks.py
-```
-
----
-
-## 6. Use deterministic evaluators first when the rule is deterministic
-
-Evaluators need design too. Start with rules that can be decided exactly, then use human review or an LLM judge for genuinely open semantic questions.
-
-| Evaluation question | First choice | Why |
+| Case | Conditions | Expected behavior |
 | --- | --- | --- |
-| Was the correct Tool called, were arguments valid, was a budget exceeded? | Deterministic rule | Exact answer, cheap and repeatable |
-| Did relevant evidence enter Top-K? | Recall@K / MRR | Labeled sources permit direct calculation |
-| Did the Agent abstain when evidence was insufficient? | Boolean Case expectation plus answer boundary | The behavior requirement is explicit |
-| Is an open-ended answer complete and clearly written? | Human review or LLM judge | No single string rule captures it |
+| Greeting | The user says hello | Greet without tool requests |
+| Within the window | Delivered seven days ago | Explain eligibility and cite order plus policy |
+| Day 30 | Exactly on the included boundary | Still eligible under the teaching rule |
+| Outside the window | Delivered 31 days ago | Explain ineligibility under that rule |
+| Missing policy | Order exists, policy does not | Acknowledge insufficient evidence |
+| Uncovered topic | A question about lunar delivery | Do not invent an answer from a refund policy |
+| Somebody else's order | Ownership does not match the current identity | Deny access before the lookup handler executes |
+| Lookup outage | A synthetic service timeout | Report unavailability, not an eligibility judgment |
 
-LLM judges are useful, but they have cost, variance, and model-version drift. Record the judge prompt, model version, temperature, and rubric, and sample results against human review. Do not ask a second probabilistic model to judge something that `==` or a set operation can already answer.
+This is a narrow regression set, not a representative sample of all support traffic. It intentionally covers both sides of several behaviors: when to query and when not to, when to answer and when to stop. A one-sided test suite can reward an assistant that queries everything or refuses everything.
 
-An evaluator observes and scores. It must not secretly call a Tool to help the Agent, add context, or repair an answer. Otherwise the system being measured is “Agent plus helper,” not the Agent.
+With those examples in mind, the case structure is easier to read:
 
----
-
-## 7. Offline evaluation detects regression; online traces meet real traffic
-
-A fixed Dataset run repeatedly in development and CI is an **offline evaluation**. It prevents repaired failures from returning: when a real failure mode is fixed, add it as a Case rather than leaving only “fixed” in an issue.
-
-Real traffic latency, failure rate, denial rate, user distribution, and cost are **online signals**. They reveal production behavior, but they cannot replace controlled comparison because a user has already experienced the failure.
-
-When an offline Case fails, retrieve the Trace with the same `run_id`:
-
-```text
-retrieval.search_policy [ok]  -> found refund-policy
-context.build [ok]            -> did not put it into model context
-model.generate [ok]           -> answered “evidence is insufficient”
+```python
+@dataclass(frozen=True)
+class EvalCase:
+    id: str
+    request: Request
+    expected_decision: str
+    allowed_paths: tuple[tuple[ToolRecord, ...], ...]
+    required_evidence: tuple[str, ...] = ()
+    critical: bool = False
 ```
 
-Evaluation says “the refund Case regressed.” The Trace says “Context building is the first place to inspect, not the Retriever or model.” Likewise, Stage 09 `policy.authorize`, `approval.review`, and `tool.execute` belong in separate spans so you can distinguish no proposal, invalid arguments, permission denial, approval denial, and execution failure.
+`request` holds the question and local test environment. `expected_decision` is the reference judgment held by the grader, `allowed_paths` records permitted tool behavior, and `required_evidence` specifies the expected citations. `critical` allows important boundaries to be protected separately; here it marks the foreign-order and missing-policy cases.
 
----
+Do not give the system its answer key. The evaluation loop invokes:
 
-## 8. A real DeepSeek Run: trace the trajectory, then score that one run
-
-Offline cases are a stable regression baseline, but real model behavior still needs observation. [`code/deepseek_observability.py`](code/deepseek_observability.py) is a complete DeepSeek Tool Calling integration: the model proposes `lookup_order` and `search_refund_policy`; the Host runs local teaching Tools and returns Tool Results; the tracer records `agent.run`, `model.generate`, and every `tool.*` Span; finally it converts the actual answer and Tool sequence to an `AgentRun` and sends it through the same `score_case()`.
-
-The path is:
-
-```text
-user task
-    ↓
-DeepSeek model.generate
-    ↓ tool call
-Host local Tool + tool.* span
-    ↓ tool result
-DeepSeek model.generate
-    ↓
-AgentRun + Trace + deterministic score
+```python
+run = runner(case.request)
 ```
 
-The message sequence follows the [DeepSeek Tool Calls guide](https://api-docs.deepseek.com/guides/tool_calls/). The example order and refund-policy data live in local functions: it does not contact a payment system or create a real refund.
+It does not pass the entire case. The model receives even less: the user question enters its messages, while order and policy data arrive through actual tool results. This prevents a deterministic substitute from simply reading the expected label and keeps the lookup operations meaningful.
 
-Install the dependency:
+An actual attempt at a case is a **trial**. It has a fresh `run_id` and returns an `AgentRun`. Repeating the same case preserves the case ID but changes the run ID. Otherwise yesterday's failed trace and today's successful answer become far too easy to confuse.
+
+## 6. Ask not only whether it was right, but what supported it
+
+Suppose the assistant skips all lookups and happens to say that this order is eligible. Its final decision might match today's fixture, but that is not the same behavior as answering from the relevant information. We therefore grade separate dimensions rather than searching for a phrase such as `30 days`. Phrase matching alone cannot distinguish “allowed within 30 days” from “not allowed within 30 days.”
+
+Answers contain a `decision`, user-facing `text`, and `evidence_ids`. A decision is what the model or substitute concluded, not a fact the application has already certified. The grader compares it with the reference judgment. Separate values for `insufficient_evidence`, `access_denied`, and `temporarily_unavailable` keep different reasons for not answering from collapsing into one ambiguous failure.
+
+The grader checks five dimensions:
+
+| Check | Meaning |
+| --- | --- |
+| execution | The trial produced a valid answer rather than an unhandled run failure |
+| decision | Its structured conclusion matches the case's expectation |
+| evidence | Citations match this case and were both retrieved and supplied to the answer step |
+| trajectory | Tool names, arguments, and outcomes match an explicitly permitted path |
+| diagnostics | The trace needed for this evaluation is complete and correctly associated |
+
+The final dimension concerns measurement coverage, not language quality. We do not sample this offline acceptance run. If records were dropped, absence of a bad action in the trace cannot prove the action never occurred. A production scorecard could report business quality and diagnostic coverage separately; this teaching gate requires both to meet their declared conditions.
+
+The main evidence relationship can be written as:
+
+```python
+evidence_ok = (
+    citations == set(case.required_evidence)
+    and citations <= set(run.visible_ids)
+    and citations <= set(run.retrieved_ids)
+)
+```
+
+The first comparison checks that this narrow case has its required citations. The remaining comparisons check that the sources actually participated in the current run. Exact citation equality is an explicit convention for this small fixture. An open research task may admit several reliable source sets; it should not be graded as though the author's two favorite links were the only acceptable answer. Nor does a valid source identifier prove that every sentence is supported by that source.
+
+Paths need similar care. On ordinary refund cases, order lookup and policy retrieval may happen in either order, so both paths are allowed. Looking up the wrong order, treating a failed call as a successful one, or repeating a request still fails. Other workflows may need only a partial constraint such as “approval before execution,” rather than one rigid sequence for every operation. Grade the business requirement, not accidental ordering in an example.
+
+These checks also have a known blind spot: correct structured fields can accompany contradictory prose. `checks.py` deliberately tests that example to show that `passed=True` means these machine-checkable contracts passed, not that every sentence was verified. We will return to prose review later. A grader needs its own tests; being responsible for assigning marks does not make it infallible.
+
+## 7. Measure retrieval, context selection, and answering separately
+
+We can now identify which checks fail, but an “evidence problem” can originate in several places. The retriever may never find the document. The context builder may discard it. The answer step may receive it and interpret it incorrectly. Calling all three “bad RAG” is an efficient way to tune the wrong component.
+
+Recall Stage 04. If a query has two labeled relevant documents and the first two results recover one, **Recall@2** is `1/2`. It measures the fraction of relevant documents recovered, not the probability that the model's answer is correct. The core calculation is a set intersection:
+
+```python
+return len(set(ranked_ids[:k]) & relevant_ids) / len(relevant_ids)
+```
+
+The numerator counts distinct relevant IDs among the first `k` results. The denominator counts all labeled relevant IDs. Repeating a document must not earn recall twice. When there are no relevant documents, this implementation returns `None`: a positive-retrieval score is not applicable. Such cases should instead test whether the system avoids unsupported answers, rather than receive a meaningless perfect recall score.
+
+If the first useful result's position matters, use reciprocal rank: rank one scores 1, rank two scores `1/2`, and no relevant result scores 0. Averaging that quantity over labeled queries gives **MRR**, mean reciprocal rank. It does not tell us whether all needed material was recovered. This chapter's `reciprocal_rank()` returns the per-query value; an aggregate must say which queries were included.
+
+For Lin's bug, retrieval found the policy, but context selection kept only the order. Raising Top-K is not a direct repair for that filter. Comparing the retrieved and selected counts, then inspecting the fixture source IDs, focuses the investigation on `context.build`. If the material reaches the answer step intact and the conclusion is still wrong, we investigate that next. Metrics support testable hypotheses; they are not automatic proof of causation.
+
+## 8. Give both versions the same exam
+
+Lin can finally compare versions under controlled conditions: the same questions, order records, policies, expectations, and fresh run state. One version must not receive newer evidence while another receives older evidence, and the answer key must not change after we see which version wins.
+
+[`regression.py`](code/regression.py) actually executes both versions. It does not fill in prewritten answers, timings, or fees. The suite has a fingerprint covering inputs, environments, labels, allowed paths, and ordering; the gate refuses to compare different fingerprints. This fingerprint is not a quality score. It prevents two different exams from being compared without acknowledgment.
+
+Run the deliberately broken candidate:
+
+```bash
+python stages/10-evaluation-observability/code/regression.py --candidate candidate
+```
+
+The baseline passes **8/8** cases, while the candidate passes **5/8**. The three regressions are the seven-day, day-30, and day-31 cases that need the full policy. Correctly handling denial and service failure does not compensate for losing tasks the assistant previously handled. The command ends with exit code **1**, meaning the gate rejected the candidate. That rejection is the experiment's expected outcome, not a failure to start the script.
+
+The gate inspects individual cases before relying on an average:
+
+```python
+for score in candidate.scores:
+    if before[score.case_id].passed and not score.passed:
+        reasons.append(f"regressed:{score.case_id}")
+    if score.case_id in candidate.critical_ids and not score.passed:
+        reasons.append(f"critical_failed:{score.case_id}")
+```
+
+A formerly passing case that now fails is a regression. A failed critical case independently blocks acceptance. Improving an easy case while breaking an important one cannot hide behind an unchanged average. This example also requires a 100% pass rate because its eight regression cases are small, explicit, and solvable. An open-ended capability benchmark may need a different threshold. Decide thresholds, protected behaviors, and tolerance before comparing candidates.
+
+A crashing runner still contributes a failed `runner_error` trial, and evaluation continues with the remaining cases. Do not remove failed runs from the denominator. Computing quality only over requests that happened to finish produces an impressively misleading report. When internal execution details are unavailable, the failure is recorded rather than replaced with an invented tool trajectory.
+
+The repaired version retains the necessary policy evidence:
+
+```bash
+python stages/10-evaluation-observability/code/regression.py --candidate fixed
+```
+
+Both sides now pass 8/8, the gate prints `ACCEPT`, and the process exits with **0**. This establishes that these eight behaviors were preserved. It does not establish perfect model quality or complete business coverage.
+
+To keep the scores together with the corresponding traces, save a comparison:
+
+```bash
+python stages/10-evaluation-observability/code/regression.py --candidate fixed --output-dir stage10-results
+```
+
+The directory contains two score reports, the gate result, trace files named by `run_id`, and a `manifest.json` recording Python, dependencies, and source fingerprints. Existing directories are not overwritten; choose a new directory for the next experiment. The exported reports retain bounded diagnostic fields and scores, not raw questions, answers, or tool arguments. A failing case can therefore be linked to its actual run without automatically replicating all user content into an evaluation archive.
+
+## 9. Preserved behavior is not yet evidence of better speed or cost
+
+Lin's context optimization was meant to reduce waiting and resource use. Once behavior is intact, comparing those costs makes sense. A version that works faster by omitting necessary evidence is not simply doing the same task more efficiently.
+
+The most direct measurement is end-to-end elapsed time. Here it comes from a real clock, not a convenient constant such as `18 ms`. A mean is useful, but many fast requests can conceal a few very slow ones. We also report **P95 latency**: sort the sample and take the value at the 95th-percentile position. This implementation explicitly uses the nearest-rank convention:
+
+```python
+return sorted(values)[math.ceil(fraction * len(values)) - 1]
+```
+
+With 100 observations and `fraction=.95`, that selects the 95th. With only eight observations, rounding upward selects the eighth—the maximum. This is a property of the current sample, not a guarantee for future traffic; ties can also put more than 95% of samples at or below the chosen value. Other tools interpolate quantiles, so definitions must match before comparisons do. Millisecond differences across eight tiny local cases are sensitive to scheduling noise, and this example does not use them as a release performance gate.
+
+Tool metrics need equally precise denominators. `average_tool_requests` counts attempts, including rejected and failed requests. Failure and rejection counts are reported separately. Whether a rejection was correct comes from the case expectation, not from the word “rejected” alone. Counting only successful calls would make the cost of error paths disappear.
+
+Model requests, tokens, and money are distinct measurements. The local substitute makes no model requests, so `model_calls=0`. Real provider usage is accumulated only when returned. Missing usage remains `None`, not zero. `estimated_cost_usd` also stays unknown without a configured, verifiable pricing model, and aggregation reports cost coverage alongside it. A token count is not a final invoice: caching and other billing categories can matter. We do not invent dollar amounts to make a report look complete.
+
+At this point three common terms are easier to place. A record that a request was rejected is a **log**. Connected operations explain the path to that rejection in a **trace**. A day's rejection rate or P95 latency is a **metric**. These describe different scales of the same system, not three competing products. The [OpenTelemetry signal documentation](https://opentelemetry.io/docs/concepts/signals/) provides the formal background.
+
+## 10. Automate what can be checked; do not pretend the rest was checked too
+
+Lin opens a passing answer whose structured decision says `eligible` while its prose says the order cannot be refunded. Can our current grader miss that contradiction? Yes. A structured field cannot certify an entire paragraph merely by existing. An honest evaluation scope is more useful than naming every number an “answer quality score.”
+
+For this support task, a human reviewer can ask concrete questions. Does the explanation interpret the inclusive 30-day boundary correctly? Does it confuse eligibility with an already executed refund? Does it invent a policy when none was supplied? Does it translate a service outage into a business denial? These criteria are more reproducible than “is the answer excellent?” When scale demands it, another model can assist using the same rubric: an **LLM-as-a-judge**. That judge can also be wrong.
+
+A judge should receive the task, permitted evidence, candidate answer, and explicit criteria. The candidate answer is data, not an instruction to change the rubric. Paired comparisons also need attention to presentation-order bias, preference for length, style preferences, and blind spots shared with the generator. Calibrate on human-labeled examples, inspect disagreements, and record judge versions. Replacing a human with another model does not eliminate the need to validate the grader. [Anthropic's discussion of Agent evaluations](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) likewise emphasizes combining code, model, and human grading while examining actual transcripts.
+
+The grader must not quietly retrieve missing policy evidence or repair the answer before scoring it. That would measure “assistant plus rescue system,” not what the user received. A rescue workflow can be a legitimate design, but it then belongs inside the evaluated system, with its own measured costs and behavior.
+
+The dataset needs maintenance as well. Repeatedly inspected development cases inevitably influence prompts and rules. Keep separate validation cases that were not used for tuning, and add appropriately privacy-treated examples of new failures. Real model outputs vary; temperature zero is not a promise of identical generations across model versions or service conditions. Run repeated trials, retain each run ID, and report per-case reliability rather than trying ten times and saving only the best attempt.
+
+One definition matters here: **offline evaluation means evaluation on prepared tasks outside live user traffic, not necessarily without network access.** It can call a real model. Our standard-library demonstration is additionally offline in the networking sense and deterministic, which is useful for testing the control and grading machinery. The real-model trial in the next section answers a different question about actual generation. Neither layer substitutes for the other.
+
+## 11. Let a real model take the same exam
+
+The tools, execution record, and scoring contract are now familiar. [`deepseek_observability.py`](code/deepseek_observability.py) lets DeepSeek propose tool calls while the application still executes the same local order and policy functions. The model receives the question and real tool results, not the case's expected answer. Its final response is a JSON answer that the application can validate.
+
+The provider call is wrapped in a model span; the relevant request is:
+
+```python
+response = client.chat.completions.create(
+    model=model, messages=messages, tools=tool_definitions(),
+    tool_choice="auto", temperature=0, max_tokens=1000,
+)
+```
+
+After a proposal, the application validates the tool name, JSON arguments, permissions, and budget, then returns the result with the matching `tool_call_id`. The [DeepSeek tool-calling guide](https://api-docs.deepseek.com/guides/tool_calls/) describes that exchange. A schema describes the interface to the model; it is not a reason to skip local validation. This example does not claim provider strict mode is enabled. Final-answer fields, types, lengths, duplicate JSON keys, and citation lists are still checked locally.
+
+A run permits at most four model requests and six tool requests. An over-budget batch is rejected before partially executing it. Repeated call IDs are rejected. Automatic SDK retries are disabled so one recorded application call does not conceal multiple retry attempts. The client has a 30-second request timeout, which is not a guarantee of forcibly terminating remote computation, and a multi-round run is not limited to 30 seconds in total.
+
+Empty, truncated, or malformed responses, exhausted budgets, and provider errors produce a failed run with a stable error code and a retained trace. Reasoning content required for protocol continuation remains in the in-memory message exchange rather than being copied into telemetry. Missing usage or an API failure with unknown consumption leaves the token total unknown.
+
+Install the optional dependencies:
 
 ```bash
 python -m pip install -r stages/10-evaluation-observability/code/requirements.txt
 ```
 
-Windows Command Prompt (CMD):
+For Bash or zsh, select a model available to your account that supports tool calls:
 
-```bat
-set "DEEPSEEK_API_KEY=your_key_here"
-set "DEEPSEEK_MODEL=your_available_deepseek_model"
-python stages/10-evaluation-observability/code/deepseek_observability.py
+```bash
+export DEEPSEEK_API_KEY="your_key_here"
+export DEEPSEEK_MODEL="your_available_model"
+python stages/10-evaluation-observability/code/deepseek_observability.py --case within-window
 ```
 
-PowerShell:
+PowerShell uses `$env:DEEPSEEK_API_KEY="your_key_here"` and `$env:DEEPSEEK_MODEL="your_available_model"`. Windows CMD uses `set "DEEPSEEK_API_KEY=your_key_here"` and `set "DEEPSEEK_MODEL=your_available_model"` before the same Python command. Keep actual keys out of source files and commits.
 
-```powershell
-$env:DEEPSEEK_API_KEY="your_key_here"
-$env:DEEPSEEK_MODEL="your_available_deepseek_model"
-python stages/10-evaluation-observability/code/deepseek_observability.py
+The CLI selects a known case rather than accepting an arbitrary question and grading everything against one refund answer. Try `missing-policy` or `foreign-order` to observe other paths. One real-model trial may pass or fail; inspect its trace, structured conclusion, and prose together. It is neither proof about every provider version nor a replacement for deterministic boundary checks.
+
+## 12. Keep the same questions when moving to observability tooling
+
+Our handwritten record has established what needs to be observed. A larger application also needs indexing, cross-service relationships, and longer-lived storage. **OpenTelemetry** provides APIs, SDKs, and exporters for the common instrumentation work. Translate the components into actions: application code creates spans, an exporter sends them, a Collector can receive and process them, and a backend stores and queries them. Installing an SDK does not automatically create a monitoring website.
+
+[`otel_demo.py`](code/otel_demo.py) uses the actual Python SDK and a console exporter around a local order lookup. It sends nothing to a remote observability service. Parent-child relationships are established through the current span context:
+
+```python
+with tracer.start_as_current_span("support.inspect", record_exception=False,
+                                  set_status_on_exception=False) as root:
+    root.set_attribute("run.id", session.trace.run_id)
 ```
 
-The score from this live run checks the current model’s observed trajectory. It should not become the only CI gate: model versions, service state, and nondeterminism can change. Treat it as an integration check for Trace collection and Host behavior; use fixed data, a fixed runner, and deterministic cases for long-term regression decisions.
+This is the outer inspection scope; the lookup opens another scope inside it in the complete example. The same `SupportSession.dispatch()` performs the business operation. Only the controlled run ID, result category, and document count are attached. Automatic exception-content recording is disabled, and errors are marked explicitly where needed so a library exception is not silently exported in full. The [OpenTelemetry Python instrumentation guide](https://opentelemetry.io/docs/languages/python/instrumentation/) explains these SDK facilities.
 
----
+Run the example to see actual SDK spans on the console:
 
-## 9. Move from teaching code to production by replacing storage and export, not boundaries
-
-This chapter’s `Trace` is an in-memory Python data class so the concepts are easy to see. Production systems usually export spans to an OpenTelemetry-compatible Collector or observability platform: an **exporter** sends spans from the application, while a **collector** receives, processes, and forwards them. The resulting data can be queried by `run_id`, service version, model version, Tool name, error type, and latency.
-
-When replacing the implementation, preserve the earlier boundaries:
-
-```text
-Keep:    explicit Span boundaries, parent-child links, default minimization,
-         and errors that do not change business semantics
-Replace: in-memory Trace -> SDK / exporter / collector / query interface
-Add:     access control, retention, sampling, redaction, cost and version labels
+```bash
+python stages/10-evaluation-observability/code/otel_demo.py
 ```
 
-Do not collect every Prompt and Tool Result just because telemetry exists, and do not swallow business exceptions to make a dashboard prettier. Observability serves system quality; it must not become a new data-exposure surface or behavior-changing layer.
+An error-free SDK span commonly remains `UNSET`, unlike the `ok` label in our local tracer. Neither is a measure of answer quality. This demonstrates one real local SDK export path; it does not label the handwritten JSON as OTLP or claim to validate a remote distributed deployment.
 
----
+Changing tools must not erase the data rules. Logs, traces, and evaluation artifacts still require access control, retention, and deletion. Production traces may be sampled, but an error-only sample cannot provide an unbiased overall failure rate. Missing traces, sampling choices, and export failures should be reported as measurement limits. Dynamic questions and per-run identifiers also make poor metric labels: each request creates another combination instead of a useful aggregate. That is the practical problem behind high-cardinality labels.
 
-## 10. Only now can we discuss Multi-Agent systems seriously
+Real traffic will contain tasks the fixed cases never covered. Offline evaluation catches known regressions before a change, online observation reveals actual usage and distribution shifts, and human review and user feedback fill gaps in automated checks. Passing eight cases is not a reason to retire the feedback channel.
 
-We can now observe one Agent’s path and compare answers, trajectories, latency, cost, and denial behavior across a dataset. Only now can we ask whether splitting one Agent into several created a benefit or merely added context transfer, calls, and latency.
+## 13. Close the change with evidence
 
-Stage 11 begins there, then covers delegation, handoff, context projection, and bounded team execution:
+We can now answer Lin more precisely than “I tried it and it seemed fine.” The candidate retrieved the policy and then discarded it during context construction. Three of eight previously passing cases regressed, so the gate rejected the change. After the repair, the same cases passed again, and their execution records remain linked to their scores. Actual model prose quality and real user distributions still need separate evaluation; this small report is not a production-readiness certificate.
 
-> **When do we actually need a second Agent?**
+Run all local checks to inspect the measuring machinery itself:
 
-That is [Stage 11: Multi-Agent Systems](../11-multi-agent/README.md).
+```bash
+python stages/10-evaluation-observability/code/checks.py
+```
+
+They check not just that the baseline passes, but that the candidate fails for the intended reason, wrong arguments fail even with correct tool names, invented citations fail, crashed trials stay in the denominator, and equal overall scores can hide individual regressions. The optional SDK integration check explicitly skips when OpenTelemetry is not installed. The local support flow and grader do not depend on it.
+
+Finish with two experiments. Restore both order and policy to the candidate's context, predict which three cases should recover, then run the comparison. Next, keep correct structured fields while deliberately writing contradictory prose, observe why the current machine grader misses it, and write a concrete human-review criterion. The second experiment matters as much as the first: know both what your measurement detects and what it does not.
+
+Lin's next idea is to ask separate specialists to interpret operations material and risk rules for a fuller pilot assessment. We no longer need to applaud merely because two new boxes appeared on a diagram. We can ask what the split improves under the same requirements, and what calls and failure paths it adds. That is the next question in [Stage 11: Delegation and Multi-Agent Collaboration](../11-multi-agent/README.md).

@@ -1,343 +1,382 @@
-# Stage 10：别只看最后一句答得像不像——Evaluation 与 Observability
+# Stage 10：这次改动真的让助手变好了吗？——从一次排错到一份评测报告
 
 > Language: [English](README.md) | **简体中文**
 
-Stage 09 已经把 Validation、Permission、Budget、Retry 和 Deadline 放进了 Runtime。现在有一个顺理成章的问题：修改了 Prompt、Tool、RAG 或 Guardrail 之后，怎么知道系统真的变好了？
+[上一章](../09-reliability-safety/README.zh-CN.md)，我们给 Agent 加上了参数检查、权限、预算和重试限制。它已经不能想做什么就做什么。不过，装了刹车，不等于每次都能把乘客送到正确的地方。产品同事小林准备试用这个客服助手，又提出一个问题：“你昨天说把上下文缩短了，回答会更省事。我们怎么知道它没有把重要内容也一起省掉？”
 
-随手挑几个回答顺眼的问题试一试，只能说明这几个演示碰巧不错。Agent 的质量还存在于它走过的路径中：有没有漏掉关键证据、是否调了不该调的 Tool、花了多少步骤、被护栏拒绝的原因是什么、是否在证据不足时停止猜测。
+这个问题不需要先背监控术语。先想象我们在检查一位新同事的工作：只看他最后写的“已处理”，无法知道他有没有查资料；但即使翻完一次工作记录，也不能证明他遇到别的问题都能处理好。因此我们需要两样东西：一份能还原这次处理经过的记录，以及一组事先写好要求、可以反复检查的题目。前者帮我们找原因，后者帮我们比较改动前后。
 
-这一章建立两种互补能力：
+本章就陪小林处理一次这样的改动。客服助手回答一个退款政策问题，程序没有报错，回答却不对。我们先找到丢掉的信息，再把这个问题变成一条可重复检查的案例，最后判断新版本能不能通过验收。示例全部使用虚构政策和本地订单，不连接支付系统，也没有退款执行能力。先用确定性函数观察这些机制，理解之后再接入真实模型。
 
-| 要回答的问题 | 能力 | 产物 |
-| --- | --- | --- |
-| “这一次 Run 到底发生了什么？” | **Observability（可观测性）** | Trace、Log、Metric |
-| “这次改动是否让一组重要行为变好？” | **Evaluation（评测）** | 固定 Case、评分、回归报告 |
+## 1. 先看一个让人困惑的回答
 
-先用 Trace 解释单次失败，再用 Evaluation 判断整体是否退化。它们不能互相替代：Trace 不是成绩单，Eval Report 也无法自动解释失败原因。
+小林的测试问题是：“`ORDER-42` 能退款吗？”我们给示例设定了一条很小的规则：已经送达的订单，在送达后 **30 天以内，包含第 30 天**，可以按原支付方式办理退货退款。订单属于当前用户，送达至今 7 天。政策存在时，助手应该说明它符合这条教学规则，但不能宣称钱已经退了。这里没有真实商家的其他条款，不能把这条练习规则搬去替现实订单做决定。
 
----
+正确回答至少需要两份材料：订单的送达时间，以及允许退款的政策。少了政策，单凭“才过了 7 天”并不能判断；少了订单，也不能因为政策里写着 30 天就说这笔订单符合条件。如果订单属于别人，还应该在查询边界停下，而不是先把信息查出来再想能不能看。
 
-## 1. 从“护栏已存在”到“护栏可以被证明”
+先从仓库根目录运行旧行为的本地基线，Python 3.10 及以上即可：
 
-Stage 09 中，Tool 没有执行可能有很多原因：模型没有提出调用、参数校验失败、权限被拒绝、预算耗尽、Deadline 到期，或真正的外部依赖失败。只写一条 `tool failed` 日志，会把这些责任边界全部揉在一起。
+```bash
+python stages/10-evaluation-observability/code/demo.py --version baseline
+```
 
-因此，Stage 10 的起点不是选择某个监控产品，而是保留系统已有的边界：
+这次会得到 `decision='eligible'`，表示符合示例政策；回答引用 `order:ORDER-42` 和 `refund-policy-v1` 两个来源。再运行那个“缩短上下文”的候选版本：
+
+```bash
+python stages/10-evaluation-observability/code/demo.py --version candidate
+```
+
+它却回答 `decision='insufficient_evidence'`，表示证据不足。更奇怪的是，过程里的步骤都是 `[ok]`。没有异常，不代表完成了用户的任务；程序可以非常顺利地做错一件事。
+
+这两个版本是我们有意设置的教学对照，不是两款真实模型的性能排名。它们实际调用本地查询函数，只有上下文选择的一处行为不同。先别急着给模型换一个更厉害的名字，输出里已经留了线索：`retrieved` 有订单和政策，`visible to answer step` 却只剩订单。下一步，我们要看清它们究竟在哪里分开了。
+
+## 2. 给这次处理留一张“经过单”
+
+想象小林问：“你查了订单没有？”只回答“查了”还不够。我们更希望知道查询在什么时候开始、有没有拿到结果、是哪次问题触发的，以及查询之后还有什么步骤。这种围绕一次执行组织起来的过程记录，叫作 **Trace（执行追踪）**。它不是模型的隐藏思维过程，而是应用实际观察到的调用和状态。
+
+一份过程记录由许多小段组成。查询一次订单、构造一次上下文、调用一次模型，都可以是一段。每段有自己的开始和结束，这样的一段叫 **Span**。整个任务也可以有一个较大的段，把这些小段包起来。先理解“大步骤包含小步骤”，再看 `parent_span_id` 就不难了：它记录这段工作属于哪段上层工作。
+
+本例的一次查询实际经过请求、参数检查、权限检查和执行。输出中的一部分如下；这些行来自程序真正执行的路径，并不是另外画一棵与评测无关的树：
 
 ```text
-agent.run
-├── context.build
-├── model.generate
-├── policy.authorize
-├── tool.lookup_order
-├── retrieval.search_policy
-└── final response
+└── agent.run [ok] decision=insufficient_evidence
+    ├── route.decide [ok]
+    ├── tool.request [ok] tool=lookup_order attempt=1 outcome=ok
+    │   ├── tool.validate [ok]
+    │   ├── tool.authorize [ok] allowed=True
+    │   └── tool.execute [ok] tool=lookup_order found_count=1
 ```
 
-这里的每一行是一个 **Span**：一次较小、职责明确的工作。由同一个 `run_id` 关联起来的所有 Span 是一条 **Trace**。
-
-三个常见词的分工如下：
-
-| 信号 | 回答的问题 | Agent 中的例子 |
-| --- | --- | --- |
-| Log | “发生了哪件离散事件？” | `permission denied for issue_refund` |
-| Metric | “许多 Run 的总体趋势是什么？” | P95 延迟、Tool 成功率、平均 Tool 次数 |
-| Trace | “这个 Run 按什么顺序走到了结果或失败？” | 此次检索到了什么、调用了哪些 Tool、在哪一步被拒绝 |
-
-例如 `P95 延迟 = 820 ms` 的意思是：95% 的 Run 在 820 毫秒内完成，最慢的 5% 更慢。它比平均值更容易暴露“少数请求卡得很久”的问题。
-
-真实工程中可继续学习 [OpenTelemetry 的 Observability Primer](https://opentelemetry.io/docs/concepts/observability-primer/)。OpenTelemetry 是用于统一记录和导出这类观测数据的一套开放标准。本章先手写一个小实现，目的不是替代 SDK，而是让 Trace 的数据结构和边界清楚可见。
-
----
-
-## 2. 先追踪一个完整 Run，而不是只打印一行日志
-
-[`code/tracing.py`](code/tracing.py) 中的 `Tracer` 会为每个 Span 保存名称、开始时间、耗时、属性、状态，以及 `span_id` / `parent_span_id`。后两个字段保证 Trace 真的是一棵树，而不只是几条恰好排在一起的日志。
-
-下面是一个可直接运行的最小 Trace；它和 [`code/demo.py`](code/demo.py) 使用同一套 API：
+记录方式也很直观：把希望观察的那段工作包在一个 `with` 里。进入时记开始，离开时记结束；业务仍然是原来的业务。在 [`scenario.py`](code/scenario.py) 中，权限检查的开头是：
 
 ```python
-from tracing import CapturePolicy, Trace, Tracer, format_trace
-
-trace = Trace("run-001")
-tracer = Tracer(trace, capture_policy=CapturePolicy(capture_content=False))
-
-with tracer.span("agent.run", workflow="refund_support"):
-    with tracer.span("context.build", question="Can ORDER-42 be refunded?") as span:
-        span["selected_items"] = 3
-
-    with tracer.span("tool.lookup_order", tool="lookup_order") as span:
-        span["status_code"] = 200
-
-print(format_trace(trace))
+with self.tracer.span("tool.authorize") as auth:
+    order = None
+    if name == "lookup_order":
+        order = next((o for o in self.request.orders if o.id == arguments["order_id"]), None)
+        if order is not None and order.owner != self.request.user_id:
+            auth["allowed"] = False
+            raise ToolRejected("access_denied")
+    auth["allowed"] = True
 ```
 
-输出的核心结构是：
+`auth["allowed"]` 只是给这个步骤附上一张结构化小纸条，说明检查结果。这样的键值信息叫作 **属性（attribute）**。允许查询与否仍由这里的普通 Python 条件决定，追踪器没有替应用授权。
 
-```text
-run-001
-└── agent.run [ok]
-    ├── context.build [ok]
-    └── tool.lookup_order [ok]
-```
+每次运行还需要自己的编号。本例中，`run_id` 标识一次应用运行，`trace_id` 标识这份追踪，`span_id` 标识其中一段。我们让一次本地运行对应一份追踪，并记录二者的关联；真实系统可以有更复杂的关联，不能假定这些 ID 永远是同一个东西。编号用于找记录，不是用户身份，也不是权限凭据。
 
-`agent.run` 是父 Span；`context.build` 和 `tool.lookup_order` 是它的子 Span。Span 的名称描述职责；**属性（attribute）**是附在该步骤上的“键—值小纸条”，补充结构化事实，例如 `selected_items=3` 表示选了三条 Context，`status_code=200` 表示请求成功。不要把整段 Prompt 或整个 Tool Result 默认塞进属性里，下一节会说明原因。
+最后有一个容易算错的地方：整个 `agent.run` 的时间已经包含子步骤，不能再把父段和子段的耗时全加起来。那就像把一本书的总价与每一章分摊的价格再加一遍。每段耗时用 [`time.perf_counter()`](https://docs.python.org/3/library/time.html#time.perf_counter) 的差值测量；用于识别发生时刻的时间戳另行记录，避免把秒表读数当作日期。
 
-Instrumentation 是旁观者，不应改变业务结果。如果 `with tracer.span(...)` 内部抛出异常，Tracer 会记录 `status="error"` 和异常类型，然后继续抛出原异常：
+## 3. 一路都是绿色，为什么仍然答错？
+
+有了经过单，我们回到那份消失的政策。查询步骤的 `found_count=1` 表示本地政策函数返回了一份资料；加上订单，构造上下文时一共拿到了两份。但候选版本最终只选择了一份。这不是“模型不愿意看政策”，而是答案生成步骤根本没有收到它。
+
+看懂这个现象后，再看代码就有了目的。候选版本在上下文构建中用了下面的筛选：
 
 ```python
-from tracing import Trace, Tracer
+documents = list(self.documents.values())
+span["found_count"] = len(documents)
+if self.version == "candidate":
+    # Deliberate regression: a context "optimization" drops policy evidence.
+    documents = [doc for doc in documents if doc["kind"] == "order"]
+self.visible_ids = [doc["source_id"] for doc in documents]
+span["selected_count"] = len(documents)
+```
 
-trace = Trace("failed-run")
+它只留下 `kind == "order"` 的资料。政策的类别是 `policy`，于是被“优化”掉了。筛选操作没有抛异常，所以这个 Span 正常结束；后面的回答函数忠实地发现材料不足，也正常结束。故障不一定是某个函数崩溃，还可能是两个都正常运行的函数之间，传递了错误的数据。
+
+这说明绿色标记要谨慎解释。本章手写追踪器的 `ok` 只表示这一段没有异常逃出，并不表示答案正确、证据充分或业务获准。我们另外记录 `outcome` 和 `decision`，让“程序有没有报错”与“业务上发生了什么”分开。
+
+反过来也成立。试一下没有权限的案例：
+
+```bash
+python stages/10-evaluation-observability/code/demo.py --case foreign-order --version baseline
+```
+
+权限检查会拒绝请求，对应小段留下错误状态；应用把这个预期拒绝转成 `access_denied` 回答，整个运行正常结束，而且案例应该通过。拒绝越权请求是正确行为，不是为了让仪表盘全绿就该修掉的“错误”。如果订单服务暂时失效，则是 `temporarily_unavailable`，不能偷换成“订单不符合政策”。
+
+因此，一条 Trace 能告诉我们哪个边界值得检查，却不会自动给答案打分。我们已经找到了这个例子的原因，接下来还要把“什么才算对”写下来。不过，在开始保存更多记录以前，得先检查记录本身有没有多拿不该拿的东西。
+
+## 4. 排查问题，不等于把用户资料全复印一遍
+
+为了排错，最方便的做法似乎是把用户问题、完整工具返回值、模型输入和异常消息都写进日志。这样当然容易查，别人拿到日志时也一样容易查。上一章已经提醒过，异常里可能带凭证；上下文和工具结果还可能包含订单、联系方式或内部资料。观测数据也需要自己的访问与保留边界。
+
+这次定位政策丢失，实际用到的是“找到了几份”“送进去几份”和几个受控状态，不需要原始订单正文。因此 [`CapturePolicy`](code/tracing.py) 采取一个保守办法：只收应用预先审查过的计数，以及取值有限的标签；未知字段、任意字符串和嵌套对象都不保存。过滤的关键部分是：
+
+```python
+for key, value in attributes.items():
+    if key in NUMERIC_KEYS and type(value) in (int, float, bool):
+        if math.isfinite(value) and 0 <= value <= 10**12:
+            safe[key] = value
+    elif key in LABEL_VALUES and isinstance(value, str):
+        if value in LABEL_VALUES[key]:
+            safe[key] = value
+```
+
+例如 `found_count=2` 可以留下，`outcome="ok"` 可以留下；`prompt="..."` 不在白名单里，不能留下。即使有人把 `{"password": "..."}` 塞进允许计数的字段，类型不符合，也会被丢掉。这解决了只过滤顶层字符串、却把嵌套字典原样记录的漏洞。
+
+白名单仍不是完整的数据泄露防护系统。Span 名称也必须由应用固定，不能把用户问题拼成名称；允许的计数和标签应当来自可信的程序逻辑，不能被当成传递秘密的编码通道。本例没有默认保存文本的哈希：哈希能够帮助比对内容，却不是匿名化保证，候选很少的值仍可能被枚举猜中。需要受控地查看原文时，应另建有授权、脱敏与保留期限的诊断通道，而不是在这里打开“全量打印”。
+
+记录还必须有容量边界。手写追踪器最多接收固定数量的 Span；超过后会增加 `dropped_spans`，并把追踪标为不完整。过滤器自身出错时会增加 `telemetry_errors`，不能用它的新异常盖住原来的业务异常。正常异常传播的核心仍然只是：
+
+```python
 try:
-    with Tracer(trace).span("tool.lookup_order"):
-        raise RuntimeError("connection lost")
-except RuntimeError:
-    pass
-
-span = trace.spans[0]
-assert span.status == "error"
-assert span.attributes["error_type"] == "RuntimeError"
+    yield mutable
+except BaseException:
+    status = "error"
+    raise
 ```
 
-这个片段刻意不保存 `connection lost` 的原始异常文本。对模型可见的安全错误、面向工程师的受控诊断，以及 Trace 属性应有不同的数据边界；这与 Stage 09 的 Safe Error 原则一致。
+这里的 `raise` 把同一个异常继续交给外层。记录状态不是吞掉错误，记录失败也不是让业务假装成功。本章测试会专门破坏过滤器，检查业务异常仍然能被调用者收到。
 
-现在就可以运行并观察结构：
+还有一种记录错误与隐私无关：把所有调用共用一个“当前 Span”列表，交错执行时可能把一段工作记到另一段下面。实现用 [`ContextVar`](https://docs.python.org/3/library/contextvars.html) 保存当前执行上下文中的父段，并在离开时恢复；测试也验证了交错的异步任务不会串联父子关系。这是 Python 的上下文局部状态，和“发给大模型的 Context”不是同一个概念。它不自动解决跨进程传播，后面映射到观测工具时还会碰到这个边界。
 
-```bash
-python stages/10-evaluation-observability/code/demo.py
-```
+## 5. 找到了一个问题，还需要一张可重复使用的考卷
 
----
+小林现在知道候选版本漏了政策，却还不能只凭修复这个问题就放心。也许修好普通退款后，第 30 天的边界又坏了；也许助手遇到任何问题都查订单，连“你好”也要折腾一次数据库。我们需要把几个重要场景写成一组固定题目，每次改动都重新作答。
 
-## 3. Trace 是数据系统，先设计它能保存什么
+这样的一道题叫 **评测案例（Eval Case）**。它不仅有用户问题，还包含测试时的环境和预期行为。比如“送达 7 天、政策可用”与“送达 7 天、政策缺失”，问题文字可以完全一样，正确行为却不同。只保存 Prompt、不保存环境条件，就不算一份足以复现的题目。
 
-Trace 很适合排查问题，也因此很容易收集到 Prompt、用户资料、检索文档、密钥或 Tool 参数。可以把它看作一次 Run 的“维修记录”：需要知道哪一步花了多久、是否成功，却不必默认把用户说过的每一句话复印进记录里。可观测性本身同样需要最小化、访问控制和保留策略。
+在 [`cases.py`](code/cases.py) 中，八道题围绕同一个客服任务展开：
 
-`CapturePolicy` 就是写入这份维修记录前的过滤器。每个 Span 的属性先交给它处理，再保存到 Trace。
-
-本章的默认 `CapturePolicy` 不保存字符串原文，而保存其长度和前 12 位 SHA-256 摘要：
-
-```python
-from tracing import CapturePolicy
-
-policy = CapturePolicy(capture_content=False)
-safe = policy.sanitize({"prompt": "private text", "selected_items": 3})
-
-assert safe == {
-    "prompt_sha256": "66c279b1e928",
-    "prompt_chars": 12,
-    "selected_items": 3,
-}
-```
-
-`prompt_chars=12` 只是原文长度；`prompt_sha256` 则是 `private text` 计算出的固定“指纹”。不需要理解 SHA-256 的数学细节：同一段文字每次会得到同一个指纹，文字变化后指纹通常也会变化。因此我们能判断“两个 Run 是否用了同一段内容”或“某次 Context 是否改变”，但默认不会把原文写入 Trace。
-
-Hash 不是隐私的万能解法。所谓**低熵值**，可以理解为候选很少、很容易枚举的值，例如 `yes/no`、国家代码或只有几个选项的状态；别人可以逐个计算候选值的 Hash 来猜原文。因此 Hash 是减少默认暴露的手段，不是绕过数据治理的理由。
-
-确有受控排障需求时，才显式打开内容捕获，并给出硬长度上限：
-
-```python
-from tracing import CapturePolicy
-
-policy = CapturePolicy(capture_content=True, max_text_chars=4)
-assert policy.sanitize({"prompt": "abcdef"})["prompt"] == "abcd"
-```
-
-生产系统还需要确定谁可以看 Trace、保存多久、哪些字段必须**脱敏**（把密钥等内容替换成 `[REDACTED]`），以及怎样**采样**。采样指只记录一部分普通 Run，例如每 100 次保留 1 次；错误或高风险 Run 可以保留更多结构化信息，但这不等于放宽原文捕获规则。本章的内存列表没有替你解决这些运维问题，它只把“默认不抓全文”变成了一个可测试的起点。
-
----
-
-## 4. Eval Case 先定义“正确行为”，再讨论分数
-
-Evaluation 不是把用户问题再问一遍，而是为一个重要行为写下可重复检查的期望。一个 `EvalCase` 包含稳定 ID、问题、答案中必须出现的片段、期望的 Tool 序列，以及是否应当 abstain；一次 `AgentRun` 则是被测 Agent 实际产生的答案、Tool、检索来源和运行指标。
-
-下面代码中的 `assert` 是 Python 的断言：条件为假时程序会报错。教学示例用它把“我们认为应当成立的结果”直接写成可运行检查。
-
-下面的完整片段展示退款 Case 如何分别比较答案、轨迹和 abstention：
-
-```python
-from evaluation import AgentRun, EvalCase, score_case
-
-case = EvalCase(
-    id="refund-within-window",
-    question="Can ORDER-42 be refunded to the original payment method?",
-    expected_answer_contains=("30 days", "original payment method"),
-    expected_tools=("lookup_order", "search_refund_policy"),
-)
-run = AgentRun(
-    answer="Orders within 30 days may use the original payment method.",
-    tools=("lookup_order", "search_refund_policy"),
-    retrieved_ids=("refund-policy",),
-    latency_ms=18,
-)
-
-score = score_case(case, run)
-assert score.answer_ok
-assert score.tool_trajectory_ok
-assert score.abstention_ok
-assert score.passed
-```
-
-`expected_tools` 在教学实现中是**有顺序且完全相等**的元组：多调、漏调、换序都会让 `tool_trajectory_ok=False`。这很适合动作路径本来就确定的退款流程。若业务允许两条都正确的路径，应为各路径分别建 Case，或在项目中写一个明确的自定义 Evaluator；不要偷偷放宽规则，让“任何路径都算对”。
-
-`expected_answer_contains` 同样只是一个窄而稳定的确定性检查，不是对自然语言质量的完整判断。它的价值在于：当规则本来可以精确表达时，先让失败可复现、可解释。
-
----
-
-## 5. 让报告同时看答案、过程、资源与检索组件
-
-对每个 Case，`score_case()` 分别得到 `answer_ok`、`tool_trajectory_ok` 和 `abstention_ok`；三者同时为真，Case 才通过。于是“最后答案碰巧正确、但中间乱调 Tool”的 Agent 不会和正常路径得到同一分数。
-
-[`code/evaluation.py`](code/evaluation.py) 的 `evaluate()` 再汇总为：
-
-```python
-EvalReport(
-    scores=...,                       # 每个 Case 的三个独立结果
-    pass_rate=...,                    # 通过 Case / 全部 Case
-    unnecessary_tool_rate=...,        # 不必要 Tool 调用 / 全部 Tool 调用
-    average_tool_calls=...,           # 每个 Case 的平均 Tool 数
-    average_latency_ms=...,           # 每个 Case 的平均延迟
-    average_estimated_cost_usd=...,   # 每个 Case 的估算成本
-)
-```
-
-`unnecessary_tool_rate` 的分子是 Greeting 等“不应调用 Tool”的 Case 中的所有 Tool，以及其他 Case 超出期望数量的 Tool；分母是全部实际 Tool 调用。它不能代替轨迹评分：调用了错误 Tool 但次数恰好相同，仍会由 `tool_trajectory_ok` 失败。
-
-不要只在端到端总分下降后猜原因。前几章已有可独立测量的组件，应分别保留其指标：
-
-| 组件 | 可直接检查的内容 |
-| --- | --- |
-| Stage 02 Router | route accuracy |
-| Stage 04 Retriever | Recall@K、MRR、关键来源是否被取回 |
-| Stage 07 Context | 必需内容保留、无关内容比例、遗漏 |
-| Stage 09 Tool / Guardrail | 参数、权限拒绝原因、Retry、Budget |
-| Agent trajectory | Tool 顺序、步数、不必要动作 |
-| Final answer | 正确性、证据约束、abstention |
-
-例如 Retriever 的 `Recall@K` 只问一个明确问题：“前 K 条结果是否包含标注的相关文档？”
-
-```python
-from evaluation import recall_at_k
-
-score = recall_at_k(["a", "b", "c"], {"b", "x"}, k=2)
-assert score == 0.5
-```
-
-如果关键文档根本不在 Top-K，后面的模型回答再流畅也不能弥补这项检索失败。
-
-`MRR`（Mean Reciprocal Rank，平均倒数排名）也衡量检索排序：相关文档排第 1 名得分为 `1`，排第 2 名得分为 `1/2`，排得越靠后得分越低；再对多个查询取平均。
-
-本地回归检查在这里运行：
-
-```bash
-python stages/10-evaluation-observability/code/checks.py
-```
-
----
-
-## 6. 能确定的规则先用确定性 Evaluator
-
-Evaluator 也需要选择。一个实用顺序是：先写能被明确判定的规则，再把真正开放的语义问题交给人工或 LLM Judge。
-
-| 评测问题 | 优先方式 | 原因 |
+| 案例 | 已知条件 | 预期行为 |
 | --- | --- | --- |
-| 是否调用了正确 Tool、参数是否正确、是否超 Budget | 确定性规则 | 有精确答案，便宜且可重复 |
-| 相关文档是否进入 Top-K | Recall@K / MRR | 有标注来源，可直接计算 |
-| 证据不足时是否 abstain | Case 的布尔期望加答案边界 | 行为要求明确 |
-| 开放式答案是否完整、表达是否清楚 | 人工评审或 LLM Judge | 难以写成单一字符串规则 |
+| 问候 | 用户说 hello | 打招呼，不查工具 |
+| 正常窗口内 | 送达 7 天 | 说明符合教学规则，并引用订单和政策 |
+| 第 30 天 | 恰在包含边界上 | 仍符合规则 |
+| 窗口外 | 送达 31 天 | 说明不符合这条规则 |
+| 政策缺失 | 只有订单，没有政策 | 说明证据不足，不猜测 |
+| 未覆盖的问题 | 询问月球配送 | 退款政策不能支持回答 |
+| 他人的订单 | 订单不属于当前身份 | 拒绝访问，不执行查询处理 |
+| 查询服务故障 | 本地模拟超时 | 说明暂时无法查询，不做资格判断 |
 
-LLM Judge 有用，但它也有成本、随机性和模型版本漂移。应记录 Judge 的提示、版本、温度和评分标准，并抽样与人工判断对照。不要让另一个概率模型去裁决原本可以用 `==` 或集合运算回答的问题。
+这些是小而明确的回归题，不代表真实客服流量的全部分布。我们特意同时写“应当查询”和“不必查询”，“可以判断”和“必须停下”，避免系统为了一个单向指标学会什么都查或什么都拒绝。
 
-Evaluator 只能观察和评分，不能在背后帮被测 Agent 调 Tool、补 Context 或修复答案。否则测到的是“Agent 加上作弊器”的组合系统。
+现在才看案例的数据结构：
 
----
-
-## 7. Offline Eval 告诉你是否回归，Online Trace 帮你面对真实流量
-
-固定 Dataset 在开发和 CI 中反复运行，叫 **Offline Eval**。它用于阻止已修复的 Bug 再次出现：一次真实的错误路径被修好后，应新增 Case，而不是只在 issue 里写一句“已修复”。
-
-真实流量中的延迟、失败率、拒绝率、用户分布和成本，属于 **Online Signal**。它告诉你系统在生产中的实际状态，但不能替代受控对比，因为用户已经经历了失败。
-
-当离线 Case 失败时，再取同一个 `run_id` 的 Trace：
-
-```text
-retrieval.search_policy [ok]  -> 找到 refund-policy
-context.build [ok]            -> 没有把它放入模型上下文
-model.generate [ok]           -> 回答“证据不足”
+```python
+@dataclass(frozen=True)
+class EvalCase:
+    id: str
+    request: Request
+    expected_decision: str
+    allowed_paths: tuple[tuple[ToolRecord, ...], ...]
+    required_evidence: tuple[str, ...] = ()
+    critical: bool = False
 ```
 
-Eval 告诉你“退款 Case 回归了”；Trace 告诉你“问题发生在 Context 构建，而不是 Retriever 或模型”。同样，Stage 09 的 `policy.authorize`、`approval.review` 和 `tool.execute` 应放在不同 Span 中，才能区分未提议、参数无效、权限拒绝、审批拒绝和真正执行失败。
+`request` 是给被测程序的题目与本地环境，`expected_decision` 是评分者持有的参考判断，`allowed_paths` 是这道题允许的工具行为，`required_evidence` 是需要引用的来源。标记 `critical` 的案例用于单独保护关键边界；本例将他人订单和政策缺失标为关键案例。
 
----
+参考答案不能偷偷发给被测程序。因此评测循环真正执行的是：
 
-## 8. 真实 DeepSeek Run：记录轨迹，再对这一条运行评分
-
-离线 Case 是稳定回归基线，但真实模型仍需被观察。[`code/deepseek_observability.py`](code/deepseek_observability.py) 提供了一个完整的 DeepSeek Tool Calling 示例：模型提出 `lookup_order` 和 `search_refund_policy`；Host 运行本地教学 Tool 并返回 Tool Result；Tracer 记录 `agent.run`、`model.generate` 和每个 `tool.*` Span；最后将实际答案和 Tool 序列转成 `AgentRun`，交给同一个 `score_case()`。
-
-流程是：
-
-```text
-user task
-    ↓
-DeepSeek model.generate
-    ↓ tool call
-Host local Tool + tool.* span
-    ↓ tool result
-DeepSeek model.generate
-    ↓
-AgentRun + Trace + deterministic score
+```python
+run = runner(case.request)
 ```
 
-Tool Calling 的消息顺序可参考 [DeepSeek Tool Calls 官方指南](https://api-docs.deepseek.com/guides/tool_calls/)。示例中的订单和退款政策都在本地函数中，不会访问支付系统，也不会产生真实退款。
+它没有把整个 `case` 交出去。模型侧则连整个 `Request` 都看不到：用户问题进入消息，订单和政策只有通过工具才返回。这既避免测试替身直接读参考标签，也保留了工具查询这一步的实际意义。
 
-安装依赖：
+一次实际作答叫一次 **trial（试验运行）**，它有新的 `run_id`，返回 `AgentRun`。同一道题反复运行，题目 ID 不变，运行 ID 必须变化。这样才不会把昨天的失败记录误当成今天的成功。
+
+## 6. 不只问答对没有，还要问凭什么答对
+
+假如助手根本没查资料，碰巧说“7 天以内可以按原方式退款”，对这道题的最后一句也许猜中了。但换一份政策就未必。因此我们把结果拆开检查，而不是只在答案里搜索有没有 `30 days`。后者甚至分不清“允许 30 天内退款”和“不允许 30 天内退款”，关键词可以相同，意思却相反。
+
+示例要求答案携带 `decision`、面向用户的 `text` 和 `evidence_ids`。`decision` 是模型或本地替身的判断，不是应用已经替它证明正确；需要拿它与参考答案比较。`insufficient_evidence`、`access_denied` 和 `temporarily_unavailable` 也分开，避免用一句“不能处理”掩盖不同原因。
+
+评分者分别检查五件事：
+
+| 检查 | 具体含义 |
+| --- | --- |
+| execution | 运行是否拿到了合格答案，而非未处理的运行错误 |
+| decision | 结构化判断是否等于案例期望 |
+| evidence | 引用是否符合题目要求，且确实被查询并交给了回答步骤 |
+| trajectory | 工具名称、参数和结果状态是否属于明确允许的路径 |
+| diagnostics | 这次评测所需的追踪是否完整且关联正确 |
+
+最后一项是“测量材料是否够用”，不是语言质量。本章不在离线验收中采样；如果记录已经丢失，就不能把“没看到不当调用”当成“没有不当调用”。在实际产品里，业务分数和可观测性覆盖率可以分开报告，但这里的发布门禁要求两者都满足约定。
+
+证据检查的核心是集合关系：
+
+```python
+evidence_ok = (
+    citations == set(case.required_evidence)
+    and citations <= set(run.visible_ids)
+    and citations <= set(run.retrieved_ids)
+)
+```
+
+第一行检查这道窄题需要的引用是否齐全，后两行检查这些来源是不是真的进入过本次处理。第一行使用精确集合是本例的明确约定；开放研究任务可能接受多组可靠来源，不能照搬成“只有作者预先想好的两个链接才算对”。同样，来源 ID 存在也不能证明一句复杂的自然语言断言一定被来源支持。
+
+工具路径也不要死背一条。订单查询与政策读取在正常退款题里可以交换顺序，案例列出了两条都合法的路径；同名工具查了错误订单、结果失败却当成功、或多查了一遍，仍然会被识别。某些流程只需要检查“审批在执行前”，不必规定所有无关步骤的排列。评分规则应该保留业务需要的约束，而不是把唯一一条演示轨迹误当成唯一正确答案。
+
+这组机器检查仍有盲区：结构化判断和引用都对，自由文字却可能与它们矛盾。`checks.py` 有意验证这个反例，提醒我们 `passed=True` 只代表上述约定通过，不是“每一句话都已经验证”。后面还会讨论如何评审文字质量。检查规则本身也需要测试，不能因为它负责打分，就默认它永远不会判错。
+
+## 7. 检索、上下文和回答，要分开量
+
+现在我们能说候选版本在哪几项上失败了，但“证据相关问题”仍然有几种不同位置。资料根本没找到，找到后没传给回答步骤，传过去后解释错误，是三种不同的改进任务。把它们统称为“RAG 效果不好”，通常只会让你在错误的位置调参数。
+
+回忆 Stage 04 的检索。假设一道题标注了两份相关文档，前两条结果里只找到其中一份，那么 **Recall@2（前两条的召回率）** 是 `1/2`。它问的是相关文档找回了多大比例，不是模型有多大概率答对。实现只需要集合交集：
+
+```python
+return len(set(ranked_ids[:k]) & relevant_ids) / len(relevant_ids)
+```
+
+分子是前 `k` 条中不同的相关来源数量，分母是标注的相关来源总数。重复返回同一份文档，不能给召回率重复加分。没有任何相关文档的题，本例返回 `None` 表示这个正向召回指标不适用；这类题应该另外检查系统会不会乱给答案，而不是奖励它一个毫无意义的 100%。
+
+如果更关心第一份有用资料排在什么位置，可以看倒数排名：第一名得 1，第二名得 `1/2`，都没找到得 0。把多个有相关文档的查询取平均，就是 **MRR（平均倒数排名）**；它不能替代“相关材料是否找全”。本章的 `reciprocal_rank()` 计算单个查询的值，平均时要明确哪些查询被纳入。
+
+再回到小林的案例，检索已经找到政策，问题出在上下文只留下订单。此时继续调检索的 Top-K 并不直接解决筛选错误。我们查看 `found_count`、`selected_count` 与具体来源的对照，就能把排查范围缩小到 `context.build`。如果这些材料都齐全，但结论仍错，才继续看回答步骤和输入组织。指标帮助提出可验证的排查方向，不会自动证明因果。
+
+## 8. 让同一组题考两个版本，而不是只挑顺眼的答案
+
+有了题目与评分规则，小林终于可以比较改动前后。这里的比较必须公平：相同问题、相同订单和政策、相同参考规则；每次新建运行状态。不能让一个版本拿到最新政策，另一个拿过期材料，也不能在看完结果后偷偷换题。
+
+[`regression.py`](code/regression.py) 会实际运行基线与候选版本，而不是手填答案、延迟或费用。它会给案例内容计算指纹，内容包括输入、环境、标签和允许的路径；指纹不同，门禁拒绝比较。这个指纹不是质量证明，只用于避免把两份不同考卷的成绩直接放在一起。
+
+运行带缺陷的候选版本：
+
+```bash
+python stages/10-evaluation-observability/code/regression.py --candidate candidate
+```
+
+预期结果是基线通过 **8/8**，候选通过 **5/8**。失败的是 7 天、第 30 天和第 31 天三道需要完整政策的题。候选仍能拒绝越权、处理服务故障，但这不能抵消原来会答的问题变成不会答。这个命令会以退出码 **1** 结束，表示门禁拒绝；这是演示要观察的结果，不是脚本没有成功启动。
+
+门禁先找逐题退化，而不是只看一个平均分：
+
+```python
+for score in candidate.scores:
+    if before[score.case_id].passed and not score.passed:
+        reasons.append(f"regressed:{score.case_id}")
+    if score.case_id in candidate.critical_ids and not score.passed:
+        reasons.append(f"critical_failed:{score.case_id}")
+```
+
+原来通过、现在失败，就是一条退化；关键案例失败，单独拒绝。即使某道普通题变好、另一道关键题变坏，平均分恰好没变，也不会蒙混过关。本例还要求通过率达到 100%，因为只有八道明确可解的小型回归题；开放能力评测并不总适合这个阈值。阈值、关键案例和允许的误差应该在比较前确定。
+
+如果某个被测程序直接崩溃，评测循环会保留一个 `runner_error` 失败结果，再继续其他题，不能把这道题从分母中删掉。否则“只对成功请求计算通过率”很容易得到漂亮得不真实的成绩。失去的内部细节会被标记为失败，不会补画一条虚假的工具轨迹。
+
+修复版恢复必要的政策材料，重新运行：
+
+```bash
+python stages/10-evaluation-observability/code/regression.py --candidate fixed
+```
+
+这次两边都是 8/8，门禁 `ACCEPT`，退出码 **0**。这证明我们保住了这八条行为，并不证明实际模型或所有业务场景已经完美。
+
+为了让小林能把失败题与对应经过单放在一起看，可以保留一次对比结果：
+
+```bash
+python stages/10-evaluation-observability/code/regression.py --candidate fixed --output-dir stage10-results
+```
+
+目录中有两份成绩、门禁结果、按 `run_id` 命名的追踪，以及记录 Python、依赖与源码指纹的 `manifest.json`。已有同名目录会被拒绝覆盖；下一次选择新的目录即可。保存的是受限诊断字段与评分，不包含问题原文、回答全文或原始工具参数。这让你能找回哪条案例在哪次运行失败，而不必把所有用户内容默认扩散到评测产物中。
+
+## 9. 答案没退步，是否就可以说“更快、更便宜”？
+
+小林最开始希望缩短上下文，不只是为了代码更短，还希望减少等待和调用开销。到这里才适合谈资源指标：先确认行为没有坏，再比较代价。用漏掉一半必要信息换来的快，并不是同一种任务完成得更好。
+
+最直观的指标是整次任务用了多久。本章用实际秒表测量，不预设一个看起来合理的 `18 ms`。平均值容易理解，但可能被多数很快的请求掩盖少数慢请求。因此我们还看 **P95 延迟**：把本次样本从小到大排序，在 95% 对应的位置取一个值。这里采用明确的“最近秩”算法：
+
+```python
+return sorted(values)[math.ceil(fraction * len(values)) - 1]
+```
+
+100 个样本、`fraction=.95` 时取第 95 个；只有 8 个样本时，向上取整后就是第 8 个，也就是最大值。这并不是对未来请求的保证，重复值也可能让“低于等于该值”的比例超过 95%。不同统计工具可能使用插值算法，比较前应对齐定义。八道离线小题的毫秒差异容易受本机调度影响，本例不拿它当发布性能门槛。
+
+工具指标也要说清分母。报告里的 `average_tool_requests` 统计实际请求次数，包含被拒绝和执行失败的请求；另外分别报告失败数与拒绝数。一个拒绝是应该发生的，还是误拒绝，要结合案例期望判断。不要直接把所有拒绝都算质量损失，更不要只统计成功工具，让异常路径从代价里消失。
+
+模型调用次数、输入输出 token 和费用则是另一组信息。本地替身没有请求模型，`model_calls=0`；真实请求如果服务返回 usage，我们才累加 token。缺少 usage 时用 `None` 表示未知，不拿 0 冒充“没消耗”。`estimated_cost_usd` 同样默认未知，汇总时同时给出费用覆盖率。没有配置可核对的计费口径，就不生成虚假的美元数字。模型账单还可能区分缓存等收费类别，token 数本身不是最终账单。
+
+到这里再回头看三个常见词就容易了：一条记录说“某请求被拒绝”，这是 **Log（日志）**；一组步骤说明这次请求如何到达拒绝，这是 **Trace**；统计一天的拒绝比例或 P95，这是 **Metric（指标）**。它们看的是同一系统的不同尺度，不是三个互相竞争的产品。[OpenTelemetry 的信号说明](https://opentelemetry.io/docs/concepts/signals/)给出了这些概念的正式背景。
+
+## 10. 机器能判的先判，不能判的别装作已经判了
+
+小林翻开一个通过的答案，发现它结构化写着 `eligible`，自由文字却说“不允许退款”。前面的代码检查会漏掉这种矛盾吗？会。我们没有让一个字段名自动承担整段语言的真实性。承认评测范围，远比把每一项都命名成“答案质量 100 分”有用。
+
+对于这份客服回答，人工可以用几条具体问题复核：是否正确解释了 30 天包含边界？是否把“可以申请”说成“已经退款”？没有政策时有没有编造规则？是否把服务故障说成业务拒绝？这些问题比“表达是否优秀”更容易让两位评审者达成一致。需要规模化时，可以让另一个模型按相同准则辅助评审，这就是 **LLM-as-a-judge**，但它也会误判。
+
+模型裁判的输入应是题目、允许使用的证据、被测回答和明确准则，被测回答本身只能当数据。不能因为答案里写着“请判满分”，裁判就改变标准。比较两份回答时，还要注意顺序偏差、偏爱长答案、对自己同类风格的偏好，以及相同模型共有的盲点。先用人工标注的小样本校准，再追踪分歧与裁判版本；不能只因为换了一个模型负责打分，就省掉验证评分器这件事。[Anthropic 对 Agent 评测的讨论](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents)也强调组合代码、模型与人工评测，并检查实际运行记录。
+
+还有一条边界不能越过：评分者不能偷偷帮助手补查政策、改答案，然后评价改过的版本。否则你测的是“助手加补救程序”的能力，和用户实际拿到的产品不同。如果确实增加了补救流程，就把它作为被测系统的一部分重新衡量成本与行为。
+
+题库也不是越刷越可信。开发期间反复查看的题目，很容易影响提示词和规则；应另留未参与调参的验证案例，并在隐私处理后将实际遇到的新失败补进题库。真实模型有波动，温度设为 0 也不应当作跨版本、跨服务时刻必然逐字相同的保证。需要重复试验，记录每次的运行编号、服务与提示版本，报告每题稳定程度，而不是多试十遍只留下最好的一遍。
+
+这里顺便澄清一个词：**离线评测指的是用准备好的题目在真实用户流量之外评估，不等于不能联网。** 它完全可以调用真实模型。我们的标准库演示恰好又是无需联网的确定性测试，用于证明控制与评分逻辑；下一节的真实模型试验，则用同一题目检查实际生成行为。这两层都需要，但不能互相冒充。
+
+## 11. 现在让真实模型做同一道题
+
+工具、经过单和评分规则都讲清楚以后，换成真实模型就不会像突然进入另一门课。[`deepseek_observability.py`](code/deepseek_observability.py) 让 DeepSeek 决定工具调用，应用仍调用同样的本地订单和政策函数。模型收到的不是案例参考答案，而是问题与实际工具结果；最后返回一份可解析的 JSON 答卷。
+
+下面是实际请求中与模型调用有关的部分，外层 Span 对这次等待计时：
+
+```python
+response = client.chat.completions.create(
+    model=model, messages=messages, tools=tool_definitions(),
+    tool_choice="auto", temperature=0, max_tokens=1000,
+)
+```
+
+模型提出调用后，应用验证工具名、JSON 参数、权限和预算，再回传对应 `tool_call_id` 的结果。[DeepSeek 的工具调用指南](https://api-docs.deepseek.com/guides/tool_calls/)说明了这个往返。schema 是给模型的接口描述，不是跳过应用校验的理由。本例也没有声称启用了服务端 strict 模式；最终 JSON 的字段、类型、长度、重复键和引用列表都由本地代码继续检查。
+
+每次运行最多 4 轮模型请求、6 次工具请求；一批请求超过剩余预算时，不先执行半批再报错。重复调用编号会被拒绝。客户端关闭自动重试，避免一次应用调用在统计里悄悄变成多次服务请求。单次请求配置 30 秒客户端超时，但这不是把远端计算硬性杀死的保证；多轮任务总等待也不能简单声称只有 30 秒。
+
+空回答、截断回答、格式错误、预算耗尽与服务异常都会形成带错误码的运行结果，追踪仍会返回给评测者。模型的原始推理字段若协议要求续传，只在内存消息往返中保留，不写入本章遥测。usage 未返回或请求失败而用量不明时，token 汇总保持未知。
+
+先安装可选依赖：
 
 ```bash
 python -m pip install -r stages/10-evaluation-observability/code/requirements.txt
 ```
 
-Windows 命令提示符（CMD）：
+Bash / zsh 中设置账号实际可用、支持工具调用的模型名称：
 
-```bat
-set "DEEPSEEK_API_KEY=your_key_here"
-set "DEEPSEEK_MODEL=your_available_deepseek_model"
-python stages/10-evaluation-observability/code/deepseek_observability.py
+```bash
+export DEEPSEEK_API_KEY="your_key_here"
+export DEEPSEEK_MODEL="your_available_model"
+python stages/10-evaluation-observability/code/deepseek_observability.py --case within-window
 ```
 
-PowerShell：
+PowerShell 使用 `$env:DEEPSEEK_API_KEY="your_key_here"` 和 `$env:DEEPSEEK_MODEL="your_available_model"`；Windows CMD 使用 `set "DEEPSEEK_API_KEY=your_key_here"` 和 `set "DEEPSEEK_MODEL=your_available_model"`，再执行同一条 Python 命令。不要把真实密钥写入代码或提交到仓库。
 
-```powershell
-$env:DEEPSEEK_API_KEY="your_key_here"
-$env:DEEPSEEK_MODEL="your_available_deepseek_model"
-python stages/10-evaluation-observability/code/deepseek_observability.py
+这里通过 `--case` 选择已定义的题目，而不是输入任意问题，却始终套用同一套退款标准。可以改成 `missing-policy` 或 `foreign-order` 看其他路径。一次真实试验可能通过，也可能失败；要连同追踪、结构化判断和自由文字一起查看。它不能证明所有模型版本都能完成任务，也不能替代前面的确定性边界测试。
+
+## 12. 换成观测工具以后，仍然记录同样的事情
+
+手写经过单已经解释了需要保存什么。真实应用通常还需要检索、跨服务关联和长时间保存，这时可以用 **OpenTelemetry** 的 API、SDK 与导出组件来承担通用工作。先把名字翻译成动作：应用创建 Span，导出器把 Span 送出去，Collector 可以集中接收和处理，后端负责存储与查询。安装 SDK 并不等于已经有了一个监控网站。
+
+[`otel_demo.py`](code/otel_demo.py) 使用真正的 Python SDK 和控制台导出器，把一次本地订单读取包在两层 Span 里，不发送给远程平台。SDK 里的父子关系通过当前上下文建立：
+
+```python
+with tracer.start_as_current_span("support.inspect", record_exception=False,
+                                  set_status_on_exception=False) as root:
+    root.set_attribute("run.id", session.trace.run_id)
 ```
 
-这次 live run 的分数用于检查当前模型的实际轨迹，并不应该直接充当 CI 的唯一 Gate：模型版本、服务状态和随机性都可能变化。把它当作“Trace 是否完整、Host 是否正确收集轨迹”的集成检查；长期回归判断仍以固定 Dataset、固定 Runner 和确定性 Case 为主。
+这里展示外层检查；完整示例在里面再打开一段工具读取。业务仍由同一个 `SupportSession.dispatch()` 执行。只记录受控的运行编号、结果类别和资料数量。这里显式关闭自动记录异常全文，必要时手动设置错误状态，避免把第三方库的异常消息自动导出。更多配置可参考 [OpenTelemetry Python 手动埋点文档](https://opentelemetry.io/docs/languages/python/instrumentation/)。
 
----
+运行它会在终端输出真实 SDK 生成的 Span：
 
-## 9. 从教学代码走向生产：保留边界，替换存储与导出
-
-本章的 `Trace` 是内存中的 Python 数据类，方便看清概念。生产环境通常需要把 Span 导出到 OpenTelemetry 兼容的 Collector 或观测平台：**exporter** 负责从应用发送 Span，**collector** 负责接收、处理并转发这些数据。随后可按 `run_id`、服务版本、模型版本、Tool 名称、错误类别和延迟查询。
-
-替换实现时，前面的边界不应丢失：
-
-```text
-保留：明确 Span 边界、父子关系、默认最小化、错误不改变业务语义
-替换：内存 Trace → SDK / exporter / collector / 查询界面
-补充：访问控制、保留期限、采样、脱敏、成本与版本标签
+```bash
+python stages/10-evaluation-observability/code/otel_demo.py
 ```
 
-不要为了遥测而记录所有 Prompt 和 Tool Result，也不要为了让仪表盘好看而吞掉业务异常。可观测性服务于系统质量，不能成为新的数据泄露面或行为改变点。
+注意 SDK 中没有异常的 Span 常保持 `UNSET`，而不是我们手写实现使用的 `ok`；它们都不是答案质量分。这个例子演示一条真实 SDK 的本地导出路径，不是把手写 JSON 宣称成 OTLP，也不声称已经验证跨服务网络导出。
 
----
+换了工具，前面的数据边界不能丢。日志、追踪和评测产物都要有访问控制、保存期限与删除规则；生产里可能只抽样记录一部分正常请求，但不能用只保留错误的样本计算总体失败率。Trace 缺失、采样偏差和导出失败需要作为测量限制报告。会变化的用户问题和运行编号也不宜成为指标标签，否则每次请求都产生新组合，很难汇总，这就是常说的标签高基数问题。
 
-## 10. 现在才可以严肃讨论 Multi-Agent
+真实流量还会带来题库没有覆盖的问题。离线评测负责在改动前尽量发现退化，线上观测负责发现实际使用条件的变化，用户反馈与人工复核负责补齐自动检查的盲区。三者互相补充，不是过了八道题以后就可以关掉反馈入口。
 
-到这里，我们既能观察一个 Agent 的路径，也能用数据集比较答案、轨迹、延迟、成本和拒绝行为。现在才有资格问：把一个 Agent 拆成多个 Agent，真的带来了收益，还是只增加了 Context 传递、调用次数和延迟？
+## 13. 带着证据结束这次改动
 
-Stage 11 会从这个问题开始，讨论 Delegation、Handoff、Context Projection 和有边界的团队执行：
+现在回头看小林最初的问题，我们可以给出比“我试过了，挺好”更具体的回答：候选版本查到了政策，却在构造上下文时把它过滤掉；八道固定题中有三道原本通过的题退化，因此门禁拒绝。修复后重新执行，同一组题恢复通过，关联的经过单也能找到。实际模型的文字质量与真实用户分布仍需要另外评估，不能借这份小型成绩单宣称已经全面上线就绪。
 
-> **什么时候确实需要第二个 Agent？**
+可以运行全部本地检查，看看测量工具本身有没有守住约定：
 
-这就是 [Stage 11：Multi-Agent Systems](../11-multi-agent/README.zh-CN.md)。
+```bash
+python stages/10-evaluation-observability/code/checks.py
+```
+
+检查不仅验证基线正确，还验证候选真的被拒绝、同名工具错误参数会失败、引用不存在的来源不能通过、崩溃案例留在分母里，以及平均分相同也可能存在逐题退化。可选 OpenTelemetry SDK 未安装时，对应集成检查会明确跳过；本地客服流程与评分不依赖它。
+
+最后做两个小实验。先把候选版恢复为同时保留订单和政策，预测哪三道题会变好，再运行对比验证。然后让答案保留正确 `decision` 和来源，却写一段相反的文字，观察现有机器评分为什么发现不了它，并为人工评审写下一条明确准则。第二个实验和第一个一样重要：既要知道测到了什么，也要知道没测到什么。
+
+小林接着想把运营资料和风险规则交给不同的“专家”，准备更完整的试点评估。我们现在不会只因为架构图多了两个方框就鼓掌，而是会问：用同一组要求比较，它改善了哪些行为，又增加了哪些调用与失败路径？这就是[下一章：从任务委托到多 Agent 协作](../11-multi-agent/README.zh-CN.md)要继续回答的问题。

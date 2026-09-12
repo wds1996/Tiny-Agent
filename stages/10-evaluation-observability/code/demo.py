@@ -1,61 +1,29 @@
-from __future__ import annotations
+"""Run one inspectable story, without credentials or network calls."""
+import argparse
 
-from evaluation import AgentRun, EvalCase, evaluate
-from tracing import CapturePolicy, Trace, Tracer, format_trace
-
-
-def deterministic_agent(case: EvalCase) -> AgentRun:
-    if "hello" in case.question.lower():
-        return AgentRun("Hello.", (), latency_ms=5, estimated_cost_usd=0.0001)
-    if "refund" in case.question.lower():
-        return AgentRun(
-            "Orders within 30 days may use the original payment method.",
-            ("lookup_order", "search_policy"),
-            retrieved_ids=("refund-policy",),
-            latency_ms=18,
-            estimated_cost_usd=0.0012,
-        )
-    return AgentRun(
-        "I do not have enough evidence to answer reliably.",
-        ("search_policy",),
-        abstained=True,
-        latency_ms=12,
-        estimated_cost_usd=0.0008,
-    )
+from cases import default_cases
+from evaluation import score_case
+from scenario import VERSIONS, run_offline
+from tracing import format_trace
 
 
 def main() -> None:
-    trace = Trace("run-001")
-    tracer = Tracer(trace, capture_policy=CapturePolicy(capture_content=False))
-
-    with tracer.span("agent.run", workflow="refund_support"):
-        with tracer.span("context.build", question="Can ORDER-42 be refunded?") as span:
-            span["selected_items"] = 3
-
-        with tracer.span("tool.lookup_order", tool="lookup_order") as span:
-            span["status_code"] = 200
-
-    print("trace:")
-    print(format_trace(trace))
-    print("safe span attributes:", trace.spans[0].attributes)
-
-    cases = [
-        EvalCase("greet", "hello", ("hello",), ()),
-        EvalCase(
-            "refund",
-            "Can this refund use the original payment method?",
-            ("30 days",),
-            ("lookup_order", "search_policy"),
-        ),
-        EvalCase(
-            "unknown",
-            "What is the policy for lunar delivery?",
-            ("not have enough evidence",),
-            ("search_policy",),
-            should_abstain=True,
-        ),
-    ]
-    print("\neval:", evaluate(cases, deterministic_agent))
+    cases = {c.id: c for c in default_cases()}
+    parser = argparse.ArgumentParser(description="Inspect one real local execution and its score.")
+    parser.add_argument("--case", choices=tuple(cases), default="within-window")
+    parser.add_argument("--version", choices=VERSIONS, default="candidate")
+    args = parser.parse_args()
+    case = cases[args.case]
+    run = run_offline(case.request, version=args.version)
+    print("question:", case.request.question)
+    print("answer:", run.answer)
+    print(format_trace(run.trace))
+    print("retrieved:", run.retrieved_ids)
+    print("visible to answer step:", run.visible_ids)
+    score = score_case(case, run)
+    print("passed:", score.passed, "failed checks:", score.failures)
+    print("latency_ms (this machine):", round(run.latency_ms, 3))
+    print("model calls: 0; no model bill, no invented cost estimate")
 
 
 if __name__ == "__main__":

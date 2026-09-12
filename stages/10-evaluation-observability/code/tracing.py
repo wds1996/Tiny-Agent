@@ -1,109 +1,141 @@
+"""Local diagnostic spans, not an OTLP implementation or an audit database."""
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-import hashlib
+import math
+from threading import Lock
 import time
 from typing import Any, Iterator, Mapping
+from uuid import uuid4
+
+# Immutable context-local state avoids one shared mutable nesting stack.
+_ACTIVE: ContextVar[tuple[str, str] | None] = ContextVar("stage10_span", default=None)
+NUMERIC_KEYS = frozenset({
+    "found_count", "selected_count", "attempt", "allowed", "prompt_tokens",
+    "completion_tokens", "model_calls", "message_count", "input_chars",
+})
+LABEL_VALUES = {
+    "outcome": frozenset({"ok", "rejected", "failed", "missing", "dropped"}),
+    "decision": frozenset({"greeting", "eligible", "ineligible", "insufficient_evidence",
+                           "access_denied", "temporarily_unavailable"}),
+    "tool": frozenset({"lookup_order", "search_refund_policy", "unknown"}),
+}
 
 
-SAFE_STRING_ATTRIBUTE_KEYS = frozenset({"error_type"})
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class CapturePolicy:
-    capture_content: bool = False
-    max_text_chars: int = 120
+    """Only reviewed counters and enumerated labels are retained; no raw text."""
 
     def sanitize(self, attributes: Mapping[str, Any]) -> dict[str, Any]:
-        safe: dict[str, Any] = {}
+        safe = {}
         for key, value in attributes.items():
-            if isinstance(value, str):
-                if key in SAFE_STRING_ATTRIBUTE_KEYS:
+            if key in NUMERIC_KEYS and type(value) in (int, float, bool):
+                if math.isfinite(value) and 0 <= value <= 10**12:
                     safe[key] = value
-                elif self.capture_content:
-                    safe[key] = value[: self.max_text_chars]
-                else:
-                    safe[f"{key}_sha256"] = hashlib.sha256(
-                        value.encode("utf-8")
-                    ).hexdigest()[:12]
-                    safe[f"{key}_chars"] = len(value)
-            else:
-                safe[key] = value
+            elif key in LABEL_VALUES and isinstance(value, str):
+                if value in LABEL_VALUES[key]:
+                    safe[key] = value
         return safe
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Span:
     span_id: str
     parent_span_id: str | None
     name: str
+    sequence: int
     started_at: float
     duration_ms: float
-    attributes: Mapping[str, Any]
+    attributes: dict[str, Any]
     status: str
 
 
-@dataclass(slots=True)
+@dataclass
 class Trace:
     run_id: str
+    trace_id: str = field(default_factory=lambda: uuid4().hex)
     spans: list[Span] = field(default_factory=list)
+    dropped_spans: int = 0
+    telemetry_errors: int = 0
 
 
 class Tracer:
-    def __init__(self, trace: Trace, *, capture_policy: CapturePolicy | None = None) -> None:
+    def __init__(self, trace: Trace, *, capture_policy: CapturePolicy | None = None,
+                 max_spans: int = 128, clock=time.perf_counter) -> None:
+        if type(max_spans) is not int or max_spans < 1:
+            raise ValueError("max_spans must be a positive integer")
         self.trace = trace
-        self.capture_policy = capture_policy or CapturePolicy()
-        self._active_span_ids: list[str] = []
-        self._next_span_number = 0
+        self.policy = capture_policy or CapturePolicy()
+        self.max_spans = max_spans
+        self.clock = clock
+        self._lock = Lock()
+        self._sequence = 0
 
     @contextmanager
     def span(self, name: str, **attributes: Any) -> Iterator[dict[str, Any]]:
-        started = time.perf_counter()
+        # Names are fixed application code, never a question or model-supplied tool name.
+        if not isinstance(name, str) or not name or len(name) > 80:
+            raise ValueError("invalid application span name")
+        with self._lock:
+            self._sequence += 1
+            sequence = self._sequence
+            keep = sequence <= self.max_spans
+            if not keep:
+                self.trace.dropped_spans += 1
+        active = _ACTIVE.get()
+        parent = active[1] if active and active[0] == self.trace.trace_id else None
+        span_id = uuid4().hex[:16]
+        token = _ACTIVE.set((self.trace.trace_id, span_id))
+        started, wall_time = self.clock(), time.time()
         mutable = dict(attributes)
-        self._next_span_number += 1
-        span_id = f"{self.trace.run_id}-{self._next_span_number}"
-        parent_span_id = self._active_span_ids[-1] if self._active_span_ids else None
-        self._active_span_ids.append(span_id)
         status = "ok"
         try:
             yield mutable
-        except Exception as exc:
+        except BaseException:
             status = "error"
-            mutable["error_type"] = type(exc).__name__
             raise
         finally:
-            self._active_span_ids.pop()
-            duration_ms = (time.perf_counter() - started) * 1000
-            self.trace.spans.append(
-                Span(
-                    span_id=span_id,
-                    parent_span_id=parent_span_id,
-                    name=name,
-                    started_at=started,
-                    duration_ms=duration_ms,
-                    attributes=self.capture_policy.sanitize(mutable),
-                    status=status,
-                )
-            )
+            _ACTIVE.reset(token)
+            if keep:
+                try:
+                    safe = self.policy.sanitize(mutable)
+                except Exception:
+                    # A broken diagnostic filter must not mask a business exception.
+                    safe = {}
+                    with self._lock:
+                        self.trace.telemetry_errors += 1
+                record = Span(span_id, parent, name, sequence, wall_time,
+                              max(0.0, (self.clock() - started) * 1000), safe, status)
+                with self._lock:
+                    self.trace.spans.append(record)
 
 
 def format_trace(trace: Trace) -> str:
-    """Render the recorded parent-child structure without exposing attributes."""
-
     children: dict[str | None, list[Span]] = {}
-    for span in trace.spans:
-        children.setdefault(span.parent_span_id, []).append(span)
+    ids = {s.span_id for s in trace.spans}
+    for span in sorted(trace.spans, key=lambda s: s.sequence):
+        parent = span.parent_span_id if span.parent_span_id in ids else None
+        children.setdefault(parent, []).append(span)
+    lines = [f"run={trace.run_id} trace={trace.trace_id}"]
 
-    lines = [trace.run_id]
-
-    def visit(parent_span_id: str | None, prefix: str) -> None:
-        siblings = children.get(parent_span_id, [])
-        for index, span in enumerate(siblings):
-            is_last = index == len(siblings) - 1
-            branch = "└── " if is_last else "├── "
-            lines.append(f"{prefix}{branch}{span.name} [{span.status}]")
-            visit(span.span_id, prefix + ("    " if is_last else "│   "))
+    def visit(parent: str | None, prefix: str) -> None:
+        group = children.get(parent, [])
+        for i, span in enumerate(group):
+            last = i == len(group) - 1
+            branch = "└── " if last else "├── "
+            labels = " ".join(f"{k}={v}" for k, v in span.attributes.items())
+            lines.append(f"{prefix}{branch}{span.name} [{span.status}] {labels}".rstrip())
+            visit(span.span_id, prefix + ("    " if last else "│   "))
 
     visit(None, "")
+    if trace.dropped_spans or trace.telemetry_errors:
+        lines.append(f"INCOMPLETE: dropped={trace.dropped_spans}, errors={trace.telemetry_errors}")
     return "\n".join(lines)
+
+
+def trace_dict(trace: Trace) -> dict[str, Any]:
+    """Export only attributes already filtered at recording time."""
+    from dataclasses import asdict
+    return asdict(trace)
