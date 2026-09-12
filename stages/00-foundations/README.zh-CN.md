@@ -1,328 +1,217 @@
-# Stage 00：先把一次模型调用讲明白
+# Stage 00：先让助手查清一条天气记录——从模型回答到工具调用
 
 > Language: [English](README.md) | **简体中文**
 
-如果你第一次学 Agent，我想先劝你做一件看起来很“慢”的事：先别急着写 Agent。
+小林正在做一个出行练习页面，想在页面上加一句天气提示。她的要求很简单：“请读取 Tokyo 的教学天气记录，告诉我摄氏温度和天气状况。”这里的记录是课程准备的一份固定数据，不是此刻东京的真实天气。我们先把这样一件小事做清楚：这句话交给模型之后，谁理解需求，谁查记录，最后又是谁把查到的结果说给小林听？
 
-这听起来有点反直觉。你打开这个仓库，本来就是为了学 Agent，结果第一章却让你盯着一次普通的模型调用看半天，好像报名了游泳课，教练第一节课只让你站在池边研究水。但这一步很重要，因为后面所谓的 Tool、Runtime、Memory、Workflow，说到底都建立在同一个事实之上：**你的 Python 程序在调用一个模型服务，而模型服务只会根据当前输入生成下一段输出。**
+如果你会写 Python 函数、使用字典，并能在终端运行脚本，就可以跟着做。暂时不用安装一个 Agent 框架，也不用准备天气服务账号。我们会调用真实的 DeepSeek，但天气数据由本地 Python 提供。模型服务和天气来源是两件不同的事：前者帮助理解和表达，后者提供这次任务所需的事实。
 
-本章我们不背一串名词，而是顺着程序真正遇到的问题往前走。先让模型回答一句话；接着发现自然语言不适合直接给程序使用，于是引入 Structured Output；然后发现结构化结果仍然不能替你查询外部数据，于是再引入 Tool Calling。到最后，你会完成一次完整的 `model → tool → model` 往返。
+先把 Agent 理解成一个会围绕任务使用信息和工具的程序。它不只是让模型“说得像办过事”，还需要真正执行，并把结果交回去。本章先做出其中最小的一次往返。我们会三次处理小林的同一个要求：先看看只有模型时缺什么，再让程序读懂这项要求，最后让程序实际查出记录。每次只补上眼前缺的那一块。
 
-<p align="center">
-  <img src="../../assets/zh/stage00-00.png" alt="Agent 简易流程示例" width="100%" />
-</p>
+## 1. 助手说“查到了”，记录就真的被查了吗？
 
----
+假设我们把小林的话发给模型，它回答：“Tokyo 是 18°C，多云。”这句话看起来已经够用了，但作为写程序的人，需要追问一个问题：这个 18 是从哪里来的？我们的代码还没有读取任何天气记录，也没有把记录放进请求里。模型即使恰好说中了，也不能据此证明发生过查询。
 
-## 1. 先建立一个不会害你的心智模型
+**大语言模型（LLM）** 可以先理解成一个根据输入生成内容的模型。它通过训练学到了语言和一些知识，但这不意味着它知道当前 Python 变量的值，更不意味着它能够自动翻看你的文件。我们调用的模型运行在远端服务中，手边这份教学记录不会因为“在同一个项目里”就自动进入它的视野。
 
-我们从最简单的情况开始。假设用户问：
-
-> 为什么语言模型给出的回答只是一个“提案”，而不是 Python 程序已经执行的动作？
-
-程序做的事情其实很朴素：
-
-```text
-用户输入
-   ↓
-Python 组织请求
-   ↓
-模型服务生成响应
-   ↓
-Python 读取响应
-```
-
-这里最值得你记住的，不是 API 名字，而是“谁做了什么”。模型负责生成输出，Python 程序负责真正的程序行为。模型可以说“邮件已经发送”，但如果你的代码里没有调用邮件系统，世界上并不会因此多出一封邮件。
-
-可以把模型想成坐在玻璃房里的顾问。它能看你递进去的材料，能告诉你“建议调用天气接口”“建议发邮件”“建议把这个字段改成 42”，但真正能碰到数据库、文件系统和第三方 API 的，仍然是玻璃房外的应用程序。**模型有表达能力，不等于拥有执行权限。**
-
-这条边界看起来基础，却是后面几乎所有 Agent 安全设计的起点。
-
-把这条边界画出来，大致就是下面这样：
+这像是打电话请一位同事帮忙。对方可以理解“查东京天气”这句话，但如果记录还放在你的抽屉里，又没有给他任何查询办法，他不能隔着电话把抽屉翻开。第一步不是让他更自信，而是分清楚：目前他拿到了什么，尚未拿到什么。
 
 <p align="center">
   <img src="../../assets/zh/stage00-01.png" alt="模型生成与程序执行的权限边界" width="70%" />
 </p>
 
-### 1.1 先把环境准备好
+对本章的自定义 Python 工具，模型负责提出请求，应用负责执行函数。应用就是我们写的 Python 程序，并不是另一个模型。某些模型服务也提供由服务端执行的内置工具，那是另一种执行安排；这里没有启用它们，不能把两种情况混在一起。
 
+我们先做一个诚实的起点：明确告诉模型，它还没有教学记录，也没有查询工具，请它说明缺少什么，不要猜温度。这样就能先观察一次普通模型调用，而不是一开始就把“理解、查询、回答”揉成一团。要打这通电话，先把电话号码和通话凭证准备好。
 
-本章示例使用 Python 3.10 及以上版本。先安装依赖：
+## 2. 先让 Python 能联系上模型服务
+
+我们通过 **API** 调用 DeepSeek。这个词在这里不神秘：它就是服务约定好的程序接口，你按约定提交请求，它按约定返回结果。Python 使用的 **SDK** 则是一套帮你发送请求、读取响应的客户端库，不需要手工拼每一条网络报文。
+
+先确认终端已经进入 Tiny-Agent 仓库根目录，也就是能看到 `stages/` 的那个目录。本章需要 Python 3.10 或更新版本。下面的命令建立一个独立的依赖环境，避免课程依赖和其他项目挤在一起：
 
 ```bash
+python --version
+python -m venv .venv
+```
+
+在 macOS 或 Linux 的终端中激活环境，然后安装依赖：
+
+```bash
+source .venv/bin/activate
 python -m pip install -r stages/00-foundations/code/requirements.txt
 ```
 
-然后配置 DeepSeek 的 API Key 和模型。在 [DeepSeek 平台](https://platform.deepseek.com/api_keys) 创建 Key；本章通过 DeepSeek 的 OpenAI 兼容接口调用模型：
+Windows PowerShell 的激活命令是 `.\.venv\Scripts\Activate.ps1`，安装命令相同。如果环境不允许执行激活脚本，可以直接用 `.\.venv\Scripts\python.exe` 代替下面命令里的 `python`，不用为了做练习去放宽系统执行策略。
+
+接着在 [DeepSeek 平台](https://platform.deepseek.com/api_keys) 准备 API Key。Key 是调用凭证，不是模型名字；不要把真实 Key 写进源文件、提交到 Git，或者发进截图。下面把它放到当前终端的环境变量中。macOS / Linux 使用：
 
 ```bash
-export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_API_KEY="替换为你的密钥"
 export DEEPSEEK_MODEL="deepseek-v4-flash"
 ```
 
-PowerShell 对应写法是：
+PowerShell 使用：
 
 ```powershell
-$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_API_KEY="替换为你的密钥"
 $env:DEEPSEEK_MODEL="deepseek-v4-flash"
 ```
 
-模型目录和账户权限会变化，所以示例仍把 `DEEPSEEK_MODEL` 作为显式配置。`deepseek-v4-flash` 是当前示例值；如需其他模型，请改为你账户可用的 DeepSeek 模型。
+环境变量是启动程序时可以读取的配置，不是已经写入模型的一段提示词。新开终端后可能需要重新设置；示例也不会自动加载 `.env` 文件。模型 ID 请以账户实际可用且支持本章接口的模型为准，示例值可对照 [DeepSeek 的 Responses API 说明](https://api-docs.deepseek.com/zh-cn/guides/responses_api/)。这些入口会产生真实 API 请求，可能消耗账户额度；后面的离线检查不需要 Key。
 
-依赖包仍叫 `openai`，是因为 DeepSeek 官方支持使用这个兼容 SDK。代码会使用 `DEEPSEEK_API_KEY` 和 `base_url="https://api.deepseek.com"` 创建客户端，因此请求实际发往 DeepSeek，而不是 OpenAI。
-
-三个示例都会先检查环境变量：
+创建客户端的关键部分在 [`common.py`](code/common.py)：
 
 ```python
-def required_env(name: str) -> str:
-    value = os.getenv(name)
-    if value is None or not value.strip():
-        raise RuntimeError(f"Set {name} before running this example.")
-    return value.strip()
+return OpenAI(
+    api_key=api_key,
+    base_url="https://api.deepseek.com",
+    timeout=30.0,
+    max_retries=0,
+)
 ```
 
-这不是 AI 特有技巧，就是普通的软件工程：**尽量在边界处尽早失败。** 如果 API Key 没配好，最好一启动就告诉你，而不是让程序跑到第五层函数以后再报一个不知所云的错误。
+类名为什么叫 `OpenAI`，却在调用 DeepSeek？因为 DeepSeek 提供兼容接口，可以使用 `openai` 客户端库。这里决定服务地址的是 `base_url`，凭证也必须是 DeepSeek 的 Key。客户端对象只是准备好联系服务；创建它，不等于已经请求模型生成。
 
----
+`timeout` 配置网络等待超时，`max_retries=0` 表示本例不由 SDK 自动重试。前者不是“整个程序一定在 30 秒内结束”的硬保证，后者方便我们看清一次调用失败就是一次失败。主程序用 `with create_client() as client:` 在使用结束后关闭客户端连接。先记住这些配置是在管理网络访问，不是在给模型增加能力；现在可以真正发出小林的请求了。
 
-## 2. 第一次真正的模型调用
+## 3. 第一次调用：它理解了要求，却还没有记录
 
-运行：
+调用前，先分别准备两类文字。一类来自应用，规定这次怎样回答：当前没有天气记录，不允许猜数，也不能声称查过文件。另一类来自小林，就是要处理的问题。我们把前者放进 `instructions`，后者放进 `input`，让来源和用途保持清楚。
+
+[`first_llm_call.py`](code/first_llm_call.py) 发出请求的部分是：
+
+```python
+response = client.responses.create(
+    model=model,
+    instructions=INSTRUCTIONS,
+    input=request_for(city, language),
+    max_output_tokens=4096,
+)
+```
+
+`model` 指定使用哪个模型；`INSTRUCTIONS` 是刚才那段应用要求；`request_for(city, language)` 按所选城市和语言产生用户请求。默认城市是 `Tokyo`，语言是中文。`max_output_tokens` 设置输出上限，不是要求它一定写满这么长。函数调用返回时，我们拿到的 `response` 是服务响应，而不是 Python 查询到的天气。
+
+从仓库根目录运行：
 
 ```bash
 python stages/00-foundations/code/first_llm_call.py
 ```
 
-完整程序在 [`code/first_llm_call.py`](code/first_llm_call.py)。下面把创建客户端和发送请求连在一起看：
+一个符合要求的回答可能是：“还没有提供 Tokyo 的教学天气记录，请先提供记录，才能确定温度和天气状况。”这是期望的回答类型，不是逐字固定输出。模型可能换一种说法，也可能没有遵守要求；如果它直接报出温度，先问它的输入里有没有依据，而不是把语气坚定当成查询成功。
+
+程序会先检查响应是否完成，是否有可用文字，再打印答案和部分元数据。所谓元数据，就是关于这次响应的信息，例如响应编号、模型名称和用量；它不是天气事实。在 [`common.py`](code/common.py) 中，完成状态的检查很短：
 
 ```python
-from openai import OpenAI
-
-client = OpenAI(
-    api_key=required_env("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com",
-)
-model = required_env("DEEPSEEK_MODEL")
-
-response = client.responses.create(
-    model=model,
-    instructions=(
-        "You are a patient programming teacher. Explain the idea accurately, "
-        "use one concrete analogy, and avoid unexplained jargon."
-    ),
-    input=(
-        "In no more than 120 words, explain why a language model response is "
-        "a proposal produced by a model rather than an action performed by my "
-        "Python program."
-    ),
-)
+def require_completed(response: Any) -> None:
+    if response.status != "completed":
+        raise RuntimeError(f"Response did not complete: {response.status}")
 ```
 
-虽然导入的类叫 `OpenAI`，这里使用的是 DeepSeek 服务。原因是 DeepSeek 提供了兼容接口，可以直接复用 `openai` Python SDK；真正决定请求发往哪里的，是创建客户端时传入的 `base_url`。
+为什么有了返回值还要检查？因为请求返回了，不代表生成完整结束。例如输出被截断时，就不能把半句答案当成完整结果。同样，`completed` 只说明生成流程完成，不保证它说对了；没有文字时，也不能假装拿到了答案。`require_text()` 继续拒绝空文本以及本应回答却又提出工具调用的响应。
 
-这几行代码可以分成两步理解：先创建一个知道“向哪里发送请求、用什么凭证”的 `client`，再调用 `client.responses.create(...)` 发起一次模型请求。
+所以这里已经有三件不同的事：网络调用是否成功、生成是否完成、内容是否有依据。第一版程序只检查前两类中的基本条件，**没有自动核验自然语言的事实正确性**。小林的要求被听见了，但天气还没有被查询。
 
-| 名称 | 含义 |
-|---|---|
-| `api_key` | 调用服务时使用的身份凭证。这里从 `DEEPSEEK_API_KEY` 环境变量读取，避免把密钥写进代码。 |
-| `base_url` | API 服务地址。`https://api.deepseek.com` 表示请求发送给 DeepSeek。 |
-| `model` | 本次调用使用的模型 ID，从 `DEEPSEEK_MODEL` 环境变量读取。 |
-| `instructions` | 应用程序给模型的回答规则，例如角色、风格和限制。 |
-| `input` | 这一次真正交给模型处理的问题或数据。 |
-| `response` | 服务返回的响应对象，其中既有生成文本，也有状态、模型名称和 Token 用量等信息。 |
+## 4. 它这一次到底看到了什么？
 
-第一次看到这种调用时，很多人会下意识把它理解成：
+小林可能会问：“我明明把记录写在项目里了，为什么还要提供？”原因是模型的输入和应用的存储不是同一个地方。对这次普通调用，我们只发送了应用要求和用户请求，没有发送本地天气字典。我们把一次调用真正提供给模型的信息叫作 **上下文（Context）**。它像这次递到同事手里的材料，不是整间办公室里的所有文件。
 
-```text
-输入一个字符串 → 输出一个字符串
-```
+`instructions` 和 `input` 都会成为这次输入的一部分，但不是可以随便互换的两段文字。小林可以在请求里表达想查哪个城市，却不能仅靠一句“忽略规则”就获得应用的文件访问权。提示词有助于引导模型；真正的执行限制，稍后仍需要 Python 检查。把不同来源写进不同参数，是让输入关系清楚，不是一个能防住所有错误的魔法开关。
 
-这个理解勉强能用，但很容易把后面学歪。更准确的理解是：**你向模型服务提交了一次请求，拿回了一个 Response 对象。** 文本只是这个响应对象里的一部分。
+模型把文本处理成较小的单位，通常称为 **token**。先把它当成服务用来计算输入长度、输出长度和部分用量的单位即可；一个 token 不固定等于一个汉字或一个英文单词。输入有长度限制，输出也有上限，所以“把所有东西全发过去”并不是没有成本的办法。本例只问一个短问题，暂时不需要设计复杂的上下文管理。
 
-所以示例不会直接 `print(response.output_text)` 然后宣布下课，而是先检查状态：
+第一份程序也会打印服务报告的用量：
 
 ```python
-if response.status != "completed":
-    raise RuntimeError(f"The response did not complete: {response.status}")
-
-if not response.output_text.strip():
-    raise RuntimeError("The response completed without text output.")
+if response.usage is not None:
+    print("input_tokens:", response.usage.input_tokens)
+    print("output_tokens:", response.usage.output_tokens)
+    print("total_tokens:", response.usage.total_tokens)
+else:
+    print("token usage: not reported")
 ```
 
-为什么这么啰嗦？因为“HTTP 请求没抛异常”“模型响应状态是 completed”“最终确实有可用文本”是三件不同的事。程序越往后走，越应该把这些边界拆开，而不是统统归类成一句“模型好像没答对”。
+没有收到用量，就显示“未报告”，不能把未知写成零。不同模型模式的输出用量还可能包含推理 token，因此不能简单用最终看到的文字长度推算账单；字段定义可对照 [DeepSeek 响应格式](https://api-docs.deepseek.com/zh-cn/api/create-response/)。我们读取的是最终文字，不需要打印模型可能返回的其他推理内容。
 
-### 2.1 `instructions` 和 `input` 为什么要分开
+现在小林又提了个小需求：页面不仅给人看，还要让程序知道“要查哪个城市、是不是还缺数据”。模型刚才那句解释，人容易理解，程序却不好稳定使用。这才是下一步要解决的问题。
 
-这两个参数最容易被刚入门的同学看成“反正都是字符串”。但它们的来源不同。
+## 5. 别让程序猜句子，先给它一张明确的表
 
-`instructions` 更像应用给模型的行为要求：你希望它怎样回答、遵守怎样的约束。`input` 则是这一轮真正要处理的任务或数据。
+假设第一次回答是“我需要读取外部记录”，程序于是检查答案里有没有“需要”。下一次模型写成“请先提供教学数据”，意思没变，你的判断却可能失效。问题不在于程序不够会中文，而是我们把一段可自由改写的文字，当成了稳定的数据接口。
 
-如果把它们混成一大坨：
-
-```python
-prompt = policy + user_question + documents + tool_result
-```
-
-一开始会觉得很省事，等项目长大以后就会发现自己失去了来源信息：哪段是应用规则？哪段是用户说的？哪段只是外部资料？
-
-本章先给 Context（上下文）一个足够实用的定义：
-
-> **某次模型调用真正能看到的全部输入，就是这一轮的 Context。**
-
-`instructions`、用户输入、之后的 Tool Output 都可能进入 Context。注意，这还不是“长期记忆”，也不是“数据库里有什么模型就都知道”。模型只看得到你在这一轮实际给它的东西。
-
-### 2.2 模型输出为什么不能当成事实
-
-语言模型是生成模型。它擅长根据已有信息继续生成合理的内容，但“合理”不等于“真实”。同样一个问题多问几次，措辞甚至结论细节都可能变化。
-
-这带来一个非常朴素的工程结论：凡是程序必须稳定依赖的东西，都不应该靠一句自然语言去猜。
-
-比如模型说：
-
-> This looks important. We probably need current weather data first.
-
-人一眼就看懂，程序却很尴尬。你当然可以写：
-
-```python
-if "important" in answer.lower():
-    priority = "high"
-```
-
-然后模型下一次换成 `urgent`，你的程序就像只认识一个暗号的门卫，当场失业。
-
-于是我们来到下一步。
-
----
-
-## 3. Structured Output：让程序拿到“数据”，而不是猜句子
-
-Structured Output（结构化输出）解决的不是“让回答更像 JSON”，而是**让模型返回满足明确结构约束的数据**。
-
-假设程序希望拿到这样的对象：
+更合适的做法，是先决定程序需要什么字段，再让模型填进去。对小林这项任务，我们要知道目标、城市、是否需要输入之外的数据，以及一条简短说明。这样的结果可以用 **JSON** 表达。JSON 是一种文本数据格式，下面的字段名和字符串使用双引号，`true` 表示布尔值：
 
 ```json
 {
-  "goal": "compare current weather in Tokyo and Paris",
-  "priority": "medium",
+  "goal": "读取教学天气记录",
+  "city": "Tokyo",
   "needs_external_data": true,
-  "reason": "current weather must be retrieved"
+  "reason": "当前输入没有提供天气记录"
 }
 ```
 
-这个结构一旦确定，程序后面就可以写：
+这张表没有温度字段，因为我们现在只在描述要求，还没有查到温度。`needs_external_data` 里的“外部”是相对于模型当前输入而言：记录可以在互联网服务中，也可以只是本地字典，并不意味着一定要上网。
+
+让输出遵循明确字段和类型约束，就是这里说的 **结构化输出（Structured Output）**。只说“请给我 JSON”，主要表达的是格式要求；要知道哪些字段必填、值能是什么，还需要一份数据约定，通常叫 **Schema**。先把它理解成这张表的填写说明，不必急着背一整套规范。
+
+[`structured_output.py`](code/structured_output.py) 用 Pydantic 定义这份约定。Pydantic 是 Python 数据验证库，`BaseModel` 是它提供的基类，不是另一个大语言模型：
 
 ```python
-if task.needs_external_data:
-    ...
+class TaskCard(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+    goal: str = Field(min_length=1, max_length=200)
+    city: Literal["Tokyo", "Paris"]
+    needs_external_data: bool
+    reason: str = Field(min_length=1, max_length=300)
 ```
 
-而不是在一整段话里找关键词。
+先看四个字段。`str` 是字符串，`bool` 是真假值；`Literal` 把城市限制在两个选项中。`Field` 给文字设置长度边界。配置中的 `extra="forbid"` 拒绝未声明字段，`strict=True` 不把这里的字符串 `"false"` 自动当成布尔值，`str_strip_whitespace=True` 会去掉文字两侧空白再验证。这样，一串空格也不能冒充已经填写了目标。严格验证的具体行为可参考 [Pydantic 文档](https://docs.pydantic.dev/latest/concepts/strict_mode/)。
 
-运行：
+约定有了，再让 SDK 按这个类型读取响应：
+
+```python
+response = client.responses.parse(
+    model=model,
+    instructions=INSTRUCTIONS,
+    input=request_for(city, language),
+    text_format=TaskCard,
+    max_output_tokens=4096,
+)
+```
+
+这里的 `INSTRUCTIONS` 要求描述任务，而不是回答天气。`parse()` 会把类型转换为结构化输出配置，并尝试把结果解析成 `TaskCard`；这不是模型服务在运行你的 Python 类。DeepSeek 的 Responses 接口提供 `text.format` 的 JSON Schema 模式，应用侧仍要处理不完整响应、验证失败或没有解析结果的情况。
+
+读取成功后，`response.output_parsed` 才是程序可使用的任务卡。运行第二个入口：
 
 ```bash
 python stages/00-foundations/code/structured_output.py
 ```
 
-完整程序在 [`code/structured_output.py`](code/structured_output.py)。其中最重要的部分其实不是模型调用，而是先把应用需要的数据定义出来：
+现在可以直接读取 `card.city` 和 `card.needs_external_data`，不用搜索句子里的关键词。不过小林还没拿到天气。填表这件事变可靠了一些，并不意味着表里每句话都是真的。先把这个区别看清楚，再去查询。
+
+## 6. 表格填得完整，也可能填错了城市
+
+假设小林选择 Tokyo，模型却交来 `city="Paris"`。这个值属于允许的城市，因此符合 Schema，却不符合这次请求。再假设城市正确，但 `needs_external_data=False`，理由是“我已经知道天气”。布尔类型也没有错，但模型并没有获得这份教学记录。
+
+这说明验证至少有不同层次：JSON 能不能读，是语法问题；字段和类型对不对，是结构问题；有没有正确理解请求、数值有没有来源，是语义和事实问题。不能把“通过验证”当成一个没有范围的勋章，戴上以后就什么都可信了。
+
+本例中，程序本来就知道命令行选择的城市，也知道记录还没有放入输入。因此可以额外验证这两项，而不需要请第二个模型来投票：
 
 ```python
-class Priority(str, Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-
-
-class TaskCard(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    goal: str = Field(min_length=1)
-    priority: Priority
-    needs_external_data: bool
-    reason: str = Field(min_length=1)
+def validate_card_for_request(card: TaskCard, expected_city: str) -> None:
+    if card.city != expected_city:
+        raise RuntimeError("Task card refers to a different city than the request.")
+    if not card.needs_external_data:
+        raise RuntimeError("This request requires a record that was not supplied.")
 ```
 
-这一步的思路很重要：不是“先让模型自由发挥，再想办法从结果里捞字段”，而是**先决定程序真正需要什么，再让模型去填这张表**。
+注意第二个条件只适用于眼前这项任务。如果温度已经写进用户输入，就不能照搬“必须缺外部数据”的规则。这个检查也没有证明 `goal` 和 `reason` 的每一个自然语言细节都正确；它只检查了应用能够明确判断的两件事。
 
-随后调用时，把这个类型告诉 SDK：
+任务卡至此可以告诉程序“需要读取 Tokyo 的记录”，但它本身不会查字典。如果应用已经确定要查哪个城市，直接调用一个 Python 函数当然更简单，并不一定需要模型参与。我们接下来让模型提出查询请求，是为了看清：当应用允许模型选择某项能力时，这份选择怎样真正变成执行，而不是为了把普通查询包装得更神秘。
 
-```python
-response = client.responses.parse(
-    model=model,
-    instructions=(
-        "Turn the request into a task card. Describe only the request itself; "
-        "do not guess the weather or pretend that external data was retrieved."
-    ),
-    input=(
-        "Compare the current weather in Tokyo and Paris and tell me which city "
-        "is warmer."
-    ),
-    text_format=TaskCard,
-)
-```
+## 7. 把“我需要查记录”变成一项可申请的能力
 
-解析成功后，程序拿到的是 `TaskCard`：
-
-```python
-task = response.output_parsed
-if task is None:
-    raise RuntimeError("The response contained no parsed TaskCard.")
-```
-
-这时你终于可以像操作正常业务数据一样操作模型结果。
-
-### 3.1 结构正确和事实正确，差得还很远
-
-这是 Structured Output 最容易被误解的地方。
-
-假设模型返回：
-
-```json
-{
-  "goal": "compare current weather",
-  "priority": "high",
-  "needs_external_data": false,
-  "reason": "the model already knows it"
-}
-```
-
-从 Schema 的角度，这个对象完全可能合法：字段齐、类型对、枚举也没越界。但从任务语义看，“比较当前天气却不需要外部数据”显然值得怀疑。
-
-所以最好把三层校验分开：
-
-| 层次 | 它检查什么 | Schema 能不能单独保证 |
-|---|---|---|
-| 语法 | JSON 能不能被解析 | 可以 |
-| 结构 | 字段、类型、枚举是否合法 | 可以 |
-| 语义 / 事实 | 判断是否合理、事实是否真实 | 不可以 |
-
-这张表很值得记住。Structured Output 像一个认真负责的前台，它可以检查表格有没有漏填、身份证号格式对不对；但它不会顺便替你调查“申请人说的事情到底是真是假”。
-
-因此本节真正要记住的是：
-
-> **Structured Output 解决“程序怎样可靠读取模型输出”，并不自动解决“模型输出为什么值得相信”。**
-
-接下来，天气例子正好暴露出另一个问题：如果模型不应该自己编当前天气，那它从哪里拿数据？
-
----
-
-## 4. Tool Calling：给模型一张“可以申请使用的能力清单”
-
-模型没有你的数据库连接，也不会自动拥有 Python 解释器的控制权。要让它使用外部能力，应用需要把一部分能力描述给它。
-
-一个 Tool 可以先理解成有两面：
-
-```text
-给模型看的
-    name / description / parameters
-
-给程序用的
-    Python handler
-```
-
-模型看到的是“这个能力叫什么、什么时候用、参数长什么样”。真正的 Python 函数仍然在应用程序里。
-
-本章使用固定的教学天气数据：
+先准备真正存放数据的地方。在 [`tool_calling.py`](code/tool_calling.py) 中，两座城市的值是课程固定的，不随今天的天气变化：
 
 ```python
 TEACHING_WEATHER = {
@@ -331,302 +220,179 @@ TEACHING_WEATHER = {
 }
 ```
 
-为什么不直接接实时天气 API？因为这一章要学的是 Tool Calling。如果同时把 OAuth、网络超时、第三方接口变化、额度限制全拉进来，你最后很可能学会的是“网络真烦”，而不是 Tool 的职责边界。固定数据让每次运行都可复现，教学上更干净。
-
-运行：
-
-```bash
-python stages/00-foundations/code/tool_calling.py
-```
-
-完整程序在 [`code/tool_calling.py`](code/tool_calling.py)。
-
-### 4.1 Tool Schema 其实是在教模型“怎么向你提申请”
-
-工具描述大致长这样：
+`temperature_c` 中的 `c` 表示摄氏温度，`condition` 表示天气状况。下面这个普通函数接收城市，返回相应记录，并附上来源说明：
 
 ```python
-WEATHER_TOOL = {
-    "type": "function",
-    "name": "get_teaching_weather",
-    "description": (
-        "Return the deterministic teaching weather record for Tokyo or Paris. "
-        "Use this function whenever the user asks about those teaching records."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "city": {
-                "type": "string",
-                "enum": sorted(TEACHING_WEATHER),
-            }
-        },
-        "required": ["city"],
-        "additionalProperties": False,
-    },
-    "strict": True,
+def get_teaching_weather(city: str) -> dict[str, Any]:
+    if city not in TEACHING_WEATHER:
+        raise ValueError("Unsupported teaching city.")
+    return {"city": city, **TEACHING_WEATHER[city], "source": "fixed teaching record"}
+```
+
+`**` 在这里把原记录的字段放进一个新字典。返回副本可以避免调用者修改结果时，顺手改掉后续查询使用的固定数据。到这一步，程序已经能查询；它只是在等待某个地方真正调用这个函数。
+
+模型并不会因为函数定义存在，就知道它可以请求这项能力。还需要告诉它：工具叫什么、做什么、怎样传参数。**工具调用（Tool Calling）** 的起点，就是应用给模型这样一份能力说明，而不是把 Python 解释器交给它。
+
+先看参数约定：
+
+```python
+WEATHER_PARAMETERS = {
+    "type": "object",
+    "properties": {"city": {"type": "string", "enum": ["Tokyo", "Paris"]}},
+    "required": ["city"],
+    "additionalProperties": False,
 }
 ```
 
-很多人第一次写 Tool 时，只关心参数 Schema，`description` 随手写一句 `query weather`。实际上，description 也是模型判断“什么时候该用这个工具”的依据。如果描述含糊，模型只能猜。
+这里的 `object` 对应一组字段，`properties` 描述字段，`required` 表示城市必填，`additionalProperties=False` 表示不要附带其他参数。`enum` 和前面的 `Literal` 一样，都在表达有限选项，只是属于不同形式的数据约定。
 
-好的 Tool 描述至少应该让模型知道：这个能力返回什么、在什么情况下使用、关键参数是什么意思。如果能力有明显限制，也应该说清楚。本章的限制就很明确：这只是东京和巴黎的**教学记录**，不是实时天气。
+`WEATHER_TOOL` 再给它配上 `get_teaching_weather` 这个名字，以及“读取固定教学记录、返回摄氏温度和天气状况、不是实时天气”的描述。描述会影响模型怎样理解工具用途，不能随便写一句“万能查询”。发送的是说明，不是函数源码，也不是整个天气字典。[DeepSeek 的函数工具格式](https://api-docs.deepseek.com/zh-cn/api/create-response/)中，`name`、`description` 和 `parameters` 就分别承担这些职责。
 
-### 4.2 Function Call 只代表“模型提出了调用请求”
+现在同一件事有了两面：模型看到的是申请办法，应用持有的是查询实现。接下来让小林的要求通过这两面走一遍。
 
-第一轮模型请求如下：
+## 8. 接到申请以后，Python 才开始检查和执行
+
+第三个入口仍然处理相同的用户请求。不过这次请求里带有天气工具说明，并指定模型先申请这个工具：
 
 ```python
 first = client.responses.create(
     model=model,
-    instructions=(
-        "Use the supplied function to read teaching weather records. A function "
-        "call only requests an action; never claim a result before the function "
-        "output is returned."
-    ),
-    input=(
-        "Read Tokyo's deterministic teaching weather record and report the "
-        "temperature and condition."
-    ),
+    instructions=FIRST_INSTRUCTIONS,
+    input=history,
     tools=[WEATHER_TOOL],
     tool_choice={"type": "function", "name": "get_teaching_weather"},
+    max_output_tokens=4096,
 )
 ```
 
-这里我们故意用 `tool_choice` 强制走一遍 Tool Call 流程，因为这一章要观察机制，而不是观察模型“今天愿不愿意主动调用”。
+此时 `history` 只有一项用户消息。`tool_choice` 在本次实验中指定工具，是为了明确观察“提出调用”这一段；它不是证明模型自己选对了工具。工具选择设为 `auto` 时，模型可以回答文字，也可以请求工具，但我们先不让这个变化打断眼前的数据流。
 
-模型返回 Function Call 以后，Python 函数还没有执行。此时发生的只是：
+服务返回的 `first.output` 是一个输出项列表，不保证只装最终文字。我们从中找到 `type == "function_call"` 的项。本例只允许一次调用，零次或多次都会在执行前停止。指定一个工具不等于保证只返回一次；尤其不能依赖 DeepSeek 当前会忽略的 `parallel_tool_calls=False` 来实现这个限制，调用数量由 Python 检查。
 
-```text
-模型：我建议调用 get_teaching_weather(city="Tokyo")
-```
+一项调用请求可能包含下面这些内容。编号只是示意，每次服务返回的值可能不同：
 
-仅此而已。
-
-### 4.3 为什么不能把模型给的函数名直接执行
-
-应用先检查返回的调用：
-
-```python
-calls = [item for item in first.output if item.type == "function_call"]
-if len(calls) != 1:
-    raise RuntimeError(...)
-
-call = calls[0]
-if call.name != "get_teaching_weather":
-    raise RuntimeError(...)
-```
-
-这一步看起来有点死板，但非常关键。模型返回的名字，本质上仍然是外部输入。不要因为它“长得像函数名”，就把它送进 `eval()`、`exec()` 或随便从 `globals()` 里找函数。
-
-接着才是解析和验证参数：
-
-```python
-arguments = parse_arguments(call.arguments)
-city = validate_weather_arguments(arguments)
-```
-
-然后，应用自己执行函数：
-
-```python
-result = get_teaching_weather(city)
-```
-
-注意这个顺序：模型提出 → 程序解析 → 程序验证 → 程序执行。谁控制了这条顺序，谁才真正控制了能力边界。
-
-### 4.4 Provider 侧的严格 Schema，为什么还不够
-
-你可能会问：工具已经 `strict=True` 了，为什么应用还要再验证一次参数？
-
-因为“上游尽量按 Schema 生成”与“执行边界确认自己即将接受的参数”是两个位置的责任。Tool Call 以后可能来自网络响应，也可能被保存、转发、回放，甚至被别的系统构造。真正要调用 Python handler 的那一刻，应用应该对自己接收的参数负责。
-
-这和普通 Web 开发里“前端已经校验过表单，后端为什么还要校验”是一个道理。答案通常是：因为真正承担后果的是后端。
-
-### 4.5 `call_id` 是动作和结果之间的“订单号”
-
-工具执行完以后，结果不能随便塞回模型，而要和原来的调用对应起来：
-
-```python
+```json
 {
-    "type": "function_call_output",
-    "call_id": call.call_id,
-    "output": json.dumps(result, ensure_ascii=False),
+  "type": "function_call",
+  "name": "get_teaching_weather",
+  "arguments": "{\"city\":\"Tokyo\"}",
+  "call_id": "call-1"
 }
 ```
 
-`call_id` 解决的是：**这份结果属于哪一次 Tool Call？**
+`arguments` 此时是 **JSON 字符串**，还不是 Python 字典。所以先用 `json.loads()` 解析；解析失败，或者得到列表而非对象，就停止。再检查字段和城市：
 
-假设同一轮里有：
-
-```text
-call_A → get_teaching_weather(Tokyo)
-call_B → get_teaching_weather(Paris)
+```python
+def validate_weather_arguments(arguments: dict[str, Any]) -> str:
+    if set(arguments) != {"city"}:
+        raise RuntimeError("Weather lookup expects exactly one field: city.")
+    city = arguments["city"]
+    if not isinstance(city, str) or city not in TEACHING_WEATHER:
+        raise RuntimeError("city must be Tokyo or Paris.")
+    return city
 ```
 
-两个工具名完全相同，只看 `name` 根本分不清结果该回给谁。`call_id` 就像订单号，菜名相同不代表是同一桌点的。
+工具说明表达的是模型应当怎样申请；这里检查的是程序实际上收到了什么。两者不是重复劳动。我们还会核对工具名字、调用编号，以及返回城市是否等于小林选择的城市。模型写了另一个名字，不会让程序去 `eval()` 它，也不会让程序到全部函数中随便查找。
 
-### 4.6 第二次模型调用，才真正拿到了 Observation
+所有检查通过后，真正的查询只发生在这一行：
 
-DeepSeek 的 Responses API 是无状态的，不支持 `previous_response_id`。所以第二轮需要重新带上用户请求、Function Call 和它的 Tool Output：
+```python
+result = get_teaching_weather(requested_city)
+```
+
+这条线很值得停下来辨认：上一刻只是模型提出请求，这一刻才是应用读取字典。返回 `18.0`，证明本地函数读到了教学数据；它不证明此刻东京真的是 18°C。这里限定的是一个只读示例，也还不是完整的身份授权系统。
+
+现在 Python 已经知道答案，但电话那端的模型还不知道函数返回了什么。把值存进 `result` 变量，不会自动把它传到远端。最后还差一次明确的回传。
+
+## 9. 把查询结果送回去，还要说清它属于哪次调用
+
+假设同一个工具被用来查 Tokyo 和 Paris，仅靠函数名字就分不清哪份结果属于哪次申请。`call_id` 是这次调用的关联编号，像取餐号：两份套餐名字相同，也不能让柜台随意把它们对调。它不是 Python 函数名，也不是让业务动作自动避免重复的凭据。
+
+工具结果使用原来的编号：
+
+```python
+history.append({
+    "type": "function_call_output",
+    "call_id": call.call_id,
+    "output": json.dumps(result, ensure_ascii=False),
+})
+```
+
+`json.dumps()` 把字典变成可以传输的 JSON 文本，`ensure_ascii=False` 让中文直接保留为中文字符。这里也不能随便换成“查询成功”四个字：模型需要温度和天气状况，回传的内容就必须包含这些实际数据。
+
+在追加结果之前，程序先把第一次模型输出的项目也放回历史里：
+
+```python
+history.extend(item.model_dump(mode="json", exclude_none=True) for item in first.output)
+```
+
+`model_dump()` 是把 SDK 返回的项目转成可发送的数据。为什么保留完整输出项，而不是只手写一个函数名？因为除了函数调用，还可能存在协议续接需要的项目。我们原样保留这些项目，不必在终端展示其中的推理内容。这样，第二次请求同时带着用户原话、模型申请和应用结果，关系是完整的。
+
+DeepSeek 的 Responses API 当前是无状态接口：服务不会替这份请求保存可用 `previous_response_id` 续接的会话。因此，第二次调用要显式带上这些历史项目，不能只把响应编号传回去。这个行为应以服务的[兼容性说明](https://api-docs.deepseek.com/zh-cn/guides/responses_api/)为准，不能因为 SDK 有某个参数，就推断所有兼容服务都实现了它。
+
+最后发出第二次模型请求：
 
 ```python
 final = client.responses.create(
     model=model,
-    instructions=(
-        "Answer only from the returned function output. Make clear that this is "
-        "a deterministic teaching record, not live weather."
-    ),
-    input=[
-        {
-            "role": "user",
-            "content": (
-                "Read Tokyo's deterministic teaching weather record and report "
-                "the temperature and condition."
-            ),
-        },
-        {
-            "type": "function_call",
-            "call_id": call.call_id,
-            "name": call.name,
-            "arguments": call.arguments,
-        },
-        {
-            "type": "function_call_output",
-            "call_id": call.call_id,
-            "output": json.dumps(result, ensure_ascii=False),
-        }
-    ],
+    instructions=FINAL_INSTRUCTIONS,
+    input=history,
     tools=[WEATHER_TOOL],
     tool_choice="none",
+    max_output_tokens=4096,
 )
 ```
 
-`call_id` 用来关联 Tool Call 和它的 Tool Output。由于 API 无状态，应用程序必须在后续请求中显式带上相关的历史输入项。
-
-这一轮模型终于看到了 Python 执行后的真实结果，于是可以根据 Observation 生成最终文字。
-
-整个过程连起来就是：
-
-```text
-用户提出任务
-    ↓
-模型提出 Function Call
-    ↓
-应用检查工具名和参数
-    ↓
-应用执行 Python 函数
-    ↓
-应用返回 Function Call Output
-    ↓
-模型根据 Observation 回答
-```
-
-把 `call_id` 放回这条时间线里，Tool Output 的归属关系会更直观：
+`FINAL_INSTRUCTIONS` 要求只依据返回记录回答，并明确它是教学数据；`tool_choice="none"` 表示这次生成答案，不再请求工具。如果响应仍含新的工具调用或没有可用文字，程序会拒绝把它当成最终答案。到此，模型第一次拥有了来自应用执行的结果，这种用于下一步判断的执行反馈也常被称作 **Observation（观察结果）**。
 
 <p align="center">
   <img src="../../assets/zh/stage00-02.png" alt="Tool Calling 从请求到 Observation 的完整流程" width="70%" />
 </p>
 
-到这里，你已经拥有了 Agent 最小循环的一半。
+现在运行第三个入口：
 
----
-
-## 5. 把几个容易混的词一次分清
-
-学到这里，Structured Output 和 Tool Calling 都长得“结构化”，很容易糊成一团。最简单的区分方式是问：**这个结构最终拿来做什么？**
-
-Structured Output 的目标是“让程序读取模型的判断结果”；Tool Call 的目标是“让模型请求程序执行一个能力”；Tool Output 则是“程序执行以后，把结果作为 Observation 送回模型”。
-
-可以把它们想成公司里的几个东西：Structured Output 像一张填好的表格，Tool Call 像一张申请单，真正的 Tool Execution 是工作人员去办事，Tool Output 则是办完之后拿回来的回执。
-
-一张申请单写得再漂亮，也不会自己跑去仓库搬货。
-
----
-
-## 6. 为什么 Stage 00 到这里就该停了
-
-现在的 `tool_calling.py` 仍然是固定脚本：
-
-```text
-模型第一次调用
-→ 工具执行一次
-→ 模型第二次调用
-→ 结束
+```bash
+python stages/00-foundations/code/tool_calling.py
 ```
 
-如果用户要求：
+终端会按顺序显示模型申请、应用查询结果和模型最终文字。东京的固定工具结果应包含 `temperature_c: 18.0`、`condition: "cloudy"`；最终文字可能表述为“Tokyo 的教学记录为 18°C，多云，这不是实时天气”。只有工具结果固定，模型措辞并不固定。
 
-> 先读取东京的教学天气，再把摄氏度换算成华氏度。
+请再做一次对照：第一份程序拿不到记录时，只能说明缺什么；第三份程序拿到回执后，才有依据报告温度。区别不是提示词更像专家，而是输入里终于有了实际执行结果。不过模型仍可能解释错结果，`require_text()` 不会自动检查它有没有把 18 写成 99。需要相信某个数字时，先看它来自哪份工具结果，而不是只看最终话术。
 
-模型可能需要先调用天气工具，再调用温度换算工具，最后才回答。你当然可以继续加 `second`、`third`、`fourth`，但很快会发现程序在提前假设“到底会有几轮”。
+## 10. 换一座城市，再故意让一次申请出错
 
-这时真正需要的抽象才出现：
+到这里，小林的原始要求已经完成。我们用 Paris 再走一遍，检查自己是否真正理解数据流，而不是只记住了一个东京的答案：
 
-```python
-while run_not_finished:
-    turn = ask_model_for_next_step()
-
-    if turn_requests_tool:
-        execute_and_record_observation()
-    else:
-        return_final_answer()
+```bash
+python stages/00-foundations/code/first_llm_call.py --city Paris
+python stages/00-foundations/code/structured_output.py --city Paris
+python stages/00-foundations/code/tool_calling.py --city Paris
 ```
 
-这个循环就是下一章要写的 Runtime。
+这三条命令分别启动独立程序，不会自动共享前一条的返回值。它们是在同一个任务上比较三种能力：先描述缺口，再提取需求，最后完成一次工具往返。第三份程序本身发出两次模型请求。运行时可以观察 `Paris` 如何从用户输入进入任务卡和调用参数，最后对应到 12°C、`light rain` 的固定结果。加上 `--language en` 可以用英文处理同样的任务。
 
-注意学习顺序：不是因为“Agent 教程都应该有 Runtime”所以我们先造一个 Runtime，而是因为**固定的两次调用已经开始不够用了**，所以 Runtime 这个抽象自然出现。好的工程抽象通常都是被问题逼出来的，不是为了凑目录层级。
+正常路径能跑通，还不够解释程序的边界。假如模型返回 `{"city": 42}`，应当在参数检查时失败；假如它请求未登记的函数，应当连天气函数都不进入；假如它一次申请两次查询，本章脚本也应拒绝，而不是随意执行其中一次。测试这些情况，不需要真的等在线模型犯错。
 
----
+[`checks.py`](code/checks.py) 会给程序预设的响应对象，让原来的处理函数继续运行。这样的预设对象叫测试替身：它检验的是“程序收到这类结果会怎样”，不是“真实模型会不会产生这类结果”。Pydantic 的字段验证会真实执行，测试不会请求付费模型：
 
-## 7. 现在最常见的几个误区
-
-如果你能把下面这些误区讲清楚，说明 Stage 00 已经掌握得差不多了。
-
-**“模型知道工具名，就等于它能执行工具。”** 不对。模型只能生成一个调用请求，真正执行需要应用找到允许的 handler。
-
-**“Structured Output 是合法 JSON，所以内容一定靠谱。”** 不对。结构正确与事实正确是两层问题。
-
-**“Tool Call 返回了，说明动作成功了。”** 仍然不对。Tool Call 只是请求；成功或失败要等 Python handler 真正执行之后才知道。
-
-**“模型说它已经做了，就是做了。”** 这条尤其危险。你永远应该看程序执行轨迹，而不是看模型措辞有多肯定。
-
-这些听起来像常识，但真正的 Agent 系统出事故，往往就是把这些边界悄悄混在了一起。
-
----
-
-## 8. 动手做几个小实验
-
-这里的练习不要求你背定义，建议直接复制 `code/` 下的程序做实验。
-
-先试着给 `TaskCard` 增加一个 `confidence: float`，限制在 0 到 1。然后问自己：模型返回 `0.99`，到底说明了什么？答案是：它说明模型给出了一个很高的自评数值，不等于这个判断被外部证据证明了。
-
-再把 Tool Calling 的城市从东京改成巴黎，观察 `Paris` 是怎样从用户请求进入 Function Call 参数，经过 Python 参数校验，再进入 Tool Output 的。你会发现 Tool Calling 不是“模型神奇地调用了函数”，而是一条非常具体的数据流。
-
-最后，试着在纸上画两个相同工具的调用，把 `call_id` 擦掉。一般几十秒后，你就会理解为什么“这个字段看着多余”往往是因为我们只看了单调用的最简单情况。
-
----
-
-## 9. 本章结束前，自己回答这几个问题
-
-不用背术语，沿着程序执行顺序回答就行：为什么 `response.output_text` 不是整个 Response？`instructions` 和 `input` 的来源有什么不同？Structured Output 到底保证了哪一层正确性？Function Call 在哪一行代码之后才真正变成 Python 执行？`call_id` 关联的是什么？无状态 API 为什么要再次发送历史输入项？为什么教学示例宁愿用固定天气，也不急着接真实天气 API？
-
-如果这些问题你都能顺着代码讲明白，就可以进入下一章。
-
----
-
-## 10. 本章代码
-
-完整可执行代码只保存在这里：
-
-```text
-stages/00-foundations/
-├── README.md
-├── README.zh-CN.md
-└── code/
-    ├── first_llm_call.py
-    ├── structured_output.py
-    ├── tool_calling.py
-    └── requirements.txt
+```bash
+python stages/00-foundations/code/checks.py
 ```
 
-➡️ [Stage 01：把 Tool Loop 变成 Agent Runtime](../01-react-runtime/README.zh-CN.md)
+检查也保留两个很有用的反例：一个结构合法的任务卡，仍可能填错城市；一个最终文字响应，即使完成且非空，仍可能报错温度。前者由本例的任务一致性检查拒绝，后者刻意展示尚未自动验证的范围。测试的价值不是把结果刷成绿色，而是说清绿色到底证明了哪件事。安装了 `openai` 时，还会用本地模拟 HTTP 响应检查 SDK 的结构化请求和解析；没有安装则明确跳过这一项。
+
+运行真实入口遇到问题时，先确定停在哪一层。提示设置环境变量，就检查当前终端；提示缺少依赖，就检查正在使用哪个 Python；服务拒绝请求，就核对 Key、额度、模型权限和接口支持；返回未完成或结构验证失败，就不要继续执行工具。不要为让程序“看起来跑完”而写 `except: pass`，把不完整数据交给下一步。
+
+还有一种失败尤其容易误解：查询已经完成，第二次模型请求却失败了。这时不能说“没有查询过”，也没有必要假装查询结果就是模型最终答案。示例会报错停止，不自动重复整个过程。即使我们还没设计复杂的恢复机制，也应准确描述已经发生的事。
+
+## 11. 小林拿到的，不只是一句话
+
+回头看同一个要求，它经历了三个不同变化。第一次，模型把要求理解成自然语言回答，但没有记录；第二次，要求被整理成程序可以读取的任务卡，却仍没有发生查询；第三次，模型提出工具申请，应用验证并读取记录，再把回执交给模型组织答案。任务卡是需求数据，工具调用是动作申请，工具结果才是执行后的数据。它们都可能长得像 JSON，但责任完全不同。
+
+<p align="center">
+  <img src="../../assets/zh/stage00-00.png" alt="Agent 简易流程示例" width="100%" />
+</p>
+
+现在你应该能指着代码回答三个具体问题：18°C 在哪一行真正进入程序结果？哪一次模型调用才看到了它？如果最终回答声称做过别的操作，程序里有没有对应的执行证据？能顺着这条线回答，比背出一串英文名词重要得多。
+
+小林接着问：“能不能把摄氏温度也换成华氏温度？”这就比一次查询多了一步。当前脚本把两次模型请求写好了，中间只接受一次工具执行；如果步骤数量变了，它不会自动知道怎样继续。带着这个新问题进入 [Stage 01：把 Tool Loop 变成 Agent Runtime](../01-react-runtime/README.zh-CN.md)。

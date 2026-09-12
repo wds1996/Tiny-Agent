@@ -1,4 +1,4 @@
-# DeepSeek exposes an OpenAI-compatible API, so its official Python examples
-# use this SDK with base_url="https://api.deepseek.com".
+# Live examples use DeepSeek's Responses API through the openai client.
+# checks.py needs Pydantic; its real-SDK test is skipped if openai is absent.
 openai>=2,<3
 pydantic>=2.11,<3
