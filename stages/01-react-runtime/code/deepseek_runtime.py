@@ -1,221 +1,186 @@
+"""Use DeepSeek Responses with the same runtime as the offline exercise."""
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import os
 from typing import Any
 
-from runtime import AgentRuntime, ModelTurn, ToolCall, build_tools
+from runtime import (
+    AgentRuntimeError, InvalidModelTurnError, ModelTurn, ToolCall,
+    parse_args, run_exercise,
+)
 
 
-class ProviderResponseError(RuntimeError):
+class ProviderResponseError(AgentRuntimeError):
     pass
 
 
+INSTRUCTIONS = (
+    "Help with the current request. Teaching weather is fixed local data, not live weather. "
+    "For weather, use get_teaching_weather instead of guessing. When Fahrenheit is requested, "
+    "first obtain the reading, then pass that observed Celsius number to celsius_to_fahrenheit. "
+    "Do not request a dependent calculation before its input is available. For a greeting, "
+    "answer without tools. Answer in the user's language, based only on supplied observations. "
+    "A tool request is not a result. Never claim an action completed before receiving its output."
+)
+
+
 def required_env(name: str) -> str:
-    value = os.getenv(name)
-    if value is None or not value.strip():
-        raise RuntimeError(f"Set {name} before running this example.")
-    return value.strip()
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"Set {name} before running the live example.")
+    return value
 
 
 def create_client() -> Any:
+    api_key = required_env("DEEPSEEK_API_KEY")
     try:
         from openai import OpenAI
     except ImportError as exc:
         raise RuntimeError(
-            "The OpenAI-compatible Python SDK is not installed. Run:\n"
-            "python -m pip install -r "
-            "stages/01-react-runtime/code/requirements.txt"
+            "Install: python -m pip install -r stages/01-react-runtime/code/requirements.txt"
         ) from exc
-
     return OpenAI(
-        api_key=required_env("DEEPSEEK_API_KEY"),
+        api_key=api_key,
         base_url="https://api.deepseek.com",
+        timeout=30.0,
+        max_retries=0,
     )
 
 
+def _unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON field.")
+        result[key] = value
+    return result
+
+
+def _reject_constant(value: str) -> None:
+    raise ValueError("Non-finite JSON constant.")
+
+
+def parse_arguments(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, str) or len(raw) > 16_000:
+        raise ProviderResponseError("Tool arguments must be bounded JSON text.")
+    try:
+        arguments = json.loads(raw, object_pairs_hook=_unique_fields, parse_constant=_reject_constant)
+    except (ValueError, RecursionError) as exc:
+        raise ProviderResponseError("Tool arguments are not an unambiguous JSON object.") from exc
+    if not isinstance(arguments, dict):
+        raise ProviderResponseError("Tool arguments must decode to an object.")
+    return arguments
+
+
 class DeepSeekResponsesModel:
-    """Translate between the chapter runtime and the DeepSeek Responses API.
+    """Stateless adapter: continuation items travel with their owning run's messages."""
 
-    DeepSeek's Responses API is stateless, so every request is rebuilt from the
-    complete transcript maintained by AgentRuntime.
-    """
-
-    def __init__(
-        self,
-        model: str,
-        *,
-        client: Any | None = None,
-        instructions: str = (
-            "Use the supplied tools when they are needed. Base the final answer on "
-            "tool outputs and do not invent tool results."
-        ),
-    ) -> None:
-        if not model.strip():
-            raise ValueError("model must not be blank")
+    def __init__(self, model: str, *, client: Any | None = None, instructions: str = INSTRUCTIONS) -> None:
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("model must be a non-empty string.")
         self.model = model
         self.client = client if client is not None else create_client()
         self.instructions = instructions
 
-    def generate(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-    ) -> ModelTurn:
-        request: dict[str, Any] = {
+    def generate(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ModelTurn:
+        request = {
             "model": self.model,
             "instructions": self.instructions,
             "input": self._to_deepseek_input(messages),
             "tools": [self._to_deepseek_tool(tool) for tool in tools],
+            "tool_choice": "auto",
+            "max_output_tokens": 4096,
         }
-
-        response = self.client.responses.create(**request)
-        if response.status != "completed":
-            raise ProviderResponseError(
-                f"The provider response did not complete: {response.status}"
-            )
-
-        calls = self._extract_tool_calls(response)
+        try:
+            response = self.client.responses.create(**request)
+        except Exception as exc:
+            # Keep the cause for controlled debugging, not in the printed user message.
+            raise ProviderResponseError("Model request failed; no automatic retry was made.") from exc
+        if getattr(response, "status", None) != "completed":
+            raise ProviderResponseError("Model response did not complete; no calls will execute.")
+        output = getattr(response, "output", None)
+        if not isinstance(output, list):
+            raise ProviderResponseError("Model response has no output-item list.")
+        calls: list[ToolCall] = []
+        for item in output:
+            kind = getattr(item, "type", None)
+            if kind not in {"function_call", "message", "reasoning"}:
+                raise ProviderResponseError("Unexpected provider output type for this example.")
+            if kind == "function_call":
+                if getattr(item, "status", "completed") not in {None, "completed"}:
+                    raise ProviderResponseError("An individual tool call did not complete.")
+                try:
+                    calls.append(ToolCall(
+                        call_id=getattr(item, "call_id", None),
+                        name=getattr(item, "name", None),
+                        arguments=parse_arguments(getattr(item, "arguments", None)),
+                    ))
+                except InvalidModelTurnError as exc:
+                    raise ProviderResponseError("Malformed tool-call identity.") from exc
+        try:
+            provider_items = tuple(item.model_dump(mode="json", exclude_none=True) for item in output)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ProviderResponseError("Could not preserve the provider's continuation items.") from exc
         if calls:
-            turn = ModelTurn(tool_calls=tuple(calls))
-        else:
-            text = response.output_text
-            if not text or not text.strip():
-                raise ProviderResponseError(
-                    "The provider returned neither function calls nor final text"
-                )
-            turn = ModelTurn(final_text=text)
-
-        return turn
+            # Accompanying text is not treated as a final answer while actions are pending.
+            return ModelTurn(tool_calls=tuple(calls), provider_items=provider_items)
+        text = getattr(response, "output_text", None)
+        if not isinstance(text, str) or not text.strip():
+            raise ProviderResponseError("Completed response has neither calls nor usable text.")
+        return ModelTurn(final_text=text.strip(), provider_items=provider_items)
 
     @staticmethod
-    def _to_deepseek_input(
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        input_items: list[dict[str, Any]] = []
+    def _to_deepseek_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
         for message in messages:
             role = message.get("role")
-            if role in {"system", "developer", "user"}:
-                input_items.append(
-                    {"role": role, "content": str(message.get("content", ""))}
-                )
-                continue
-
-            if role == "assistant":
-                content = str(message.get("content", ""))
-                if content:
-                    input_items.append({"role": "assistant", "content": content})
-                for call in message.get("tool_calls", []):
-                    input_items.append(
-                        {
-                            "type": "function_call",
-                            "call_id": str(call["call_id"]),
-                            "name": str(call["name"]),
-                            "arguments": json.dumps(
-                                call["arguments"], ensure_ascii=False
-                            ),
-                        }
-                    )
-                continue
-
-            if role == "tool":
-                input_items.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": str(message.get("tool_call_id", "")),
-                        "output": str(message.get("content", "")),
-                    }
-                )
-
-        if not input_items:
-            raise ProviderResponseError("The provider turn needs at least one input")
-        return input_items
+            if role == "assistant" and message.get("provider_items"):
+                items.extend(deepcopy(message["provider_items"]))
+            elif role == "assistant" and message.get("tool_calls"):
+                # A scripted transcript can also be translated, without SDK objects.
+                for call in message["tool_calls"]:
+                    items.append({
+                        "type": "function_call", "call_id": call["call_id"],
+                        "name": call["name"],
+                        "arguments": json.dumps(call["arguments"], ensure_ascii=False, allow_nan=False),
+                    })
+            elif role == "tool":
+                items.append({
+                    "type": "function_call_output",
+                    "call_id": message["tool_call_id"],
+                    "output": message["content"],
+                })
+            elif role in {"user", "assistant"}:
+                items.append({"role": role, "content": message["content"]})
+            else:
+                raise ProviderResponseError("Unexpected internal message role.")
+        if not items:
+            raise ProviderResponseError("A model turn needs input.")
+        return items
 
     @staticmethod
     def _to_deepseek_tool(tool: dict[str, Any]) -> dict[str, Any]:
         return {
-            "type": "function",
-            "name": tool["name"],
-            "description": tool["description"],
-            "parameters": tool["parameters"],
-            "strict": True,
+            "type": "function", "name": tool["name"],
+            "description": tool["description"], "parameters": tool["parameters"],
         }
 
-    @staticmethod
-    def _extract_tool_calls(response: Any) -> list[ToolCall]:
-        calls: list[ToolCall] = []
-        for item in response.output:
-            if item.type != "function_call":
-                continue
 
-            try:
-                arguments = json.loads(item.arguments)
-            except json.JSONDecodeError as exc:
-                raise ProviderResponseError(
-                    f"Arguments for function {item.name!r} are not valid JSON"
-                ) from exc
-            if not isinstance(arguments, dict):
-                raise ProviderResponseError(
-                    f"Arguments for function {item.name!r} must be a JSON object"
-                )
-
-            calls.append(
-                ToolCall(
-                    call_id=item.call_id,
-                    name=item.name,
-                    arguments=arguments,
-                )
-            )
-        return calls
-
-
-def format_conversation(
-    *,
-    instructions: str,
-    messages: tuple[dict[str, Any], ...],
-) -> str:
-    """Render the provider-neutral runtime history after the debug trace."""
-
-    lines = ["=== reconstructed model conversation ===", "system (instructions):"]
-    lines.append(f"  {instructions}")
-
-    for message in messages:
-        role = message["role"]
-        if role == "assistant" and message.get("tool_calls"):
-            lines.append("assistant (tool calls):")
-            for call in message["tool_calls"]:
-                arguments = json.dumps(
-                    call["arguments"], ensure_ascii=False, sort_keys=True
-                )
-                lines.append(
-                    f"  {call['name']}({arguments}) "
-                    f"[call_id={call['call_id']}]"
-                )
-        elif role == "tool":
-            lines.append(
-                f"tool ({message['tool_call_id']}): {message['content']}"
-            )
-        else:
-            lines.append(f"{role}: {message.get('content', '')}")
-
-    return "\n".join(lines)
-
-
-def main() -> None:
-    model = DeepSeekResponsesModel(model=required_env("DEEPSEEK_MODEL"))
-    runtime = AgentRuntime(
-        model=model,
-        tools=build_tools(),
-        max_steps=6,
-        verbose=True,
-    )
-    result = runtime.run(
-        "Read Tokyo's teaching weather and convert its temperature to Fahrenheit."
-    )
-    print("\nfinal_answer:", result.answer)
-    print()
-    print(format_conversation(instructions=model.instructions, messages=result.messages))
+def main() -> int:
+    args = parse_args("Live DeepSeek weather exercise; requires credentials and incurs API usage.")
+    try:
+        model = DeepSeekResponsesModel(required_env("DEEPSEEK_MODEL"))
+    except (RuntimeError, ValueError) as exc:
+        print(f"Configuration error: {exc}")
+        return 1
+    print("=== 真实 DeepSeek / live DeepSeek: API usage applies ===")
+    try:
+        return run_exercise(model, args)
+    finally:
+        model.client.close()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

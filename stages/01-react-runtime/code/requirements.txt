@@ -1,2 +1,4 @@
-openai>=2,<3
+# runtime.py and runtime_checks.py need Pydantic, but no model-service credentials.
 pydantic>=2.11,<3
+# Only the live adapter and its optional HTTP-boundary check need the SDK.
+openai>=2,<3
