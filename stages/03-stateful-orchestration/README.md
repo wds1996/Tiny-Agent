@@ -1,1764 +1,399 @@
-# Stage 03: Put the State on the Table — From Workflows to Stateful Orchestration
+# Stage 03: The Brief Is Written. Why Can't We Deliver It Yet? — Making State and Control Flow Explicit
 
 > Language: **English** | [简体中文](README.zh-CN.md)
 
-By the end of Stage 02, we had four useful control patterns: deterministic workflows, routers, planner-executor systems, and an Agent Runtime that can choose its next action from each new observation.
+[Stage 02](../02-workflows-routing-planning/README.md) gave Lin's travel-practice page a way to handle two cities. It could obtain the Tokyo and Paris records, convert temperatures when requested, and produce a brief. If a source failed, it could retain completed results and change the remaining plan. Lin now adds a delivery rule: “Check it before showing it. Neither city should disappear, the units must be right, and readers must know this isn't live weather. Fix a rejected draft, but please don't spend tomorrow fixing it too.”
 
-Each one is manageable on its own. The trouble usually begins when you combine them.
+The challenge is no longer simply whether a tool can run. Which draft are we holding? Was that the draft we checked? Do we need to query the cities again just to fix a missing sentence? When the revision allowance runs out, is it acceptable to return the unfinished draft as though it passed? The application needs a clear account of its current progress, not a model's reassuring “I remember.”
 
-Imagine a support flow that classifies a request, drafts a response, reviews it, revises it if needed, reviews again, and finally stops. In ordinary Python, a first version might look like this:
+We will carry the same weather brief through collection, drafting, checking, revision, and delivery. First we will make the process explicit in ordinary Python, then run the same work with LangGraph. Finally, we will express the model/tool loop from Stage 01 using the same state-and-transition ideas. The purpose is to make execution understandable, not to rename familiar functions until they sound more architectural.
 
-```python
-category = classify(request)
-draft = make_draft(request, category)
-revisions = 0
+## 1. Find the problem in the draft before learning graph terminology
 
-while True:
-    decision = review(draft)
-
-    if decision == "accept":
-        break
-
-    draft = revise(draft)
-    revisions += 1
-
-    if revisions >= 2:
-        raise RuntimeError("too many revisions")
-```
-
-There is nothing wrong with this code. If your process really is this small, I would keep it. Python already has excellent orchestration primitives called `if`, `while`, and functions. Learning graphs does not suddenly make those embarrassing.
-
-The problem arrives when the flow grows.
-
-Soon you have `category`, `draft`, `review_result`, `revisions`, `error`, `completed_steps`, `pending_tool_calls`, and a few more variables that only exist inside certain branches. Months later, the hardest question is often not “what does this function do?” but:
-
-> **What state is this run in right now, and why is the next step this one?**
-
-That is the problem Stage 03 solves.
-
-We are not going to treat a graph as a “more advanced Agent.” We are going to make execution data explicit, then separate two responsibilities: nodes change state; edges decide where execution goes next.
-
----
-
-### Reading and running route
-
-This chapter assumes Stage 00's model/tool boundary, Stage 01's decide–act–observe loop, and Stage 02's finite routes and execution budgets. You should be comfortable reading Python dictionaries, functions, and classes; no LangGraph experience is required.
-
-Read sections 1–12 for the pure-Python mechanism, then 13–19 to map the same flow to LangGraph. Sections 20–29 review design boundaries, and section 30 collects run commands. `langgraph_scripted_agent.py` is the offline comparison example; the complete live comparison implementation is `langgraph_deepseek_agent.py` and needs a DeepSeek key.
-
-Run commands from the `Tiny-Agent` repository root. Mechanism excerpts are not all standalone programs; complete runnable sources live in `code/`, and the relevant dependencies of excerpts are identified below.
-
-
-## 1. Before drawing a graph, find the state that is already hiding in your code
-
-Take the review loop again:
-
-```python
-category = classify(request)
-draft = make_draft(request, category)
-revisions = 0
-review_result = None
-answer = None
-```
-
-Those variables already form an execution snapshot. Python simply does not force you to name that snapshot.
-
-We can make it explicit:
-
-```python
-state = {
-    "request": request,
-    "category": None,
-    "draft": None,
-    "review": None,
-    "revisions": 0,
-    "answer": None,
-}
-```
-
-That gives us the first important definition of this chapter:
-
-> **State is the data the application must know in order to continue the current execution correctly.**
-
-The phrase “in order to continue” matters.
-
-Your database may contain an avatar URL, signup date, loyalty points, and last login IP. If the current orchestration never uses those values, they do not automatically belong in graph state. Meanwhile a tiny field such as `revisions=1` can be crucial because the next transition depends on it.
-
-So state is not “everything the system knows.” It is the execution snapshot that this control flow needs.
-
-A common beginner mistake is to interpret explicit state as “put the whole application into one giant dictionary.” That is not state modeling. That is the software equivalent of putting an entire apartment into one moving box and writing `misc` on the side.
-
-Good state makes control easier to inspect.
-
----
-
-## 2. Graph state and model context are not the same thing
-
-Stage 00 established that a model only sees the context the application actually sends to it.
-
-Graph state is different. It is application-side execution data.
-
-Suppose the state contains:
-
-```python
-state = {
-    "request": "I was charged twice.",
-    "category": "billing",
-    "draft": "I can help review the billing issue.",
-    "revisions": 1,
-    "internal_retry_count": 2,
-}
-```
-
-If one node asks a model to improve the wording, the model input might only be:
-
-```python
-model_input = {
-    "request": state["request"],
-    "draft": state["draft"],
-}
-```
-
-There is no reason the model must see `internal_retry_count`.
-
-Keep the distinction clear:
+Lin selects Tokyo and Paris and enables Fahrenheit. The first draft reads:
 
 ```text
-Graph State
-    = data the application needs to continue execution
-
-Model Context
-    = data actually sent to this model call
+Tokyo: 18.0°C / 64.4°F, cloudy.
+Paris: 12.0°C / 53.6°F, light rain.
 ```
 
-If you merge these ideas, you end up shoving every internal control variable into prompts merely because the application wants to remember it. The model gets more clutter; the application gets less clarity.
+The numbers are correct, but the source notice is missing. On a travel page, that omission could make the records look like a current weather report. This exercise requires the sentence “Fixed teaching data, not live weather.” The draft needs a revision; the two records we already retrieved do not need to be fetched again merely because the wording is incomplete.
 
-State is an application execution structure. Context is a model input structure.
+Imagine doing this work on paper. Collect the records, write the draft, and check it. Deliver an acceptable draft. Revise an unacceptable one while revisions are still allowed, then check the new version. If it remains unacceptable when the allowance is exhausted, keep the draft and say that it did not pass. There are two different ways to finish: successfully deliver, or stop trying. A stopped program has not necessarily completed its task.
 
----
+That gives us a plain-language starting point for **stateful orchestration**: the application carries a clear worksheet and arranges for different steps to continue the work. The worksheet says what is available now; the process says what happens next. Dictionaries, functions, and conditions are already enough to express this. We are making their relationship explicit.
 
-## 3. A node should make one meaningful state change
-
-Once state is explicit, we can split one large procedure into nodes.
-
-A classification node might look like this:
-
-```python
-def classify(state):
-    request = state["request"].lower()
-
-    if "refund" in request or "charged" in request:
-        category = "billing"
-    elif "password" in request or "login" in request:
-        category = "technical"
-    else:
-        category = "general"
-
-    return {"category": category}
-```
-
-Notice that the node does not return the entire state. It returns only the fields it changed.
-
-Its input might be:
-
-```python
-{
-    "request": "I was charged twice.",
-    "category": None,
-    "revisions": 0,
-}
-```
-
-The node returns:
-
-```python
-{"category": "billing"}
-```
-
-The runtime merges that update into the existing state.
-
-The useful mental model is:
-
-```text
-Node:
-State -> Partial State Update
-```
-
-Why not copy the entire state out of every node?
-
-Because a classifier that only owns `category` should not casually overwrite `revisions`, `draft`, or `answer`. Partial updates make responsibility visible in code.
-
-The node is effectively saying:
-
-> “These are the fields I changed. Everything else is somebody else's business.”
-
-That is a much better contract than a comment asking every future contributor to “please be careful.”
-
----
-
-## 4. Nodes do work; edges decide where execution goes
-
-If nodes are workstations, edges are hallways.
-
-A fixed flow is simple:
-
-```text
-START
-  ↓
-classify
-  ↓
-draft
-  ↓
-review
-  ↓
-finish
-  ↓
-END
-```
-
-In code, those transitions look like:
-
-```python
-add_edge("classify", "draft")
-add_edge("draft", "review")
-```
-
-Review is more interesting.
-
-If the draft is accepted, go to `finish`. If it needs work, go to `revise`:
-
-```text
-                 ┌────────── revise ──────────┐
-                 │                             │
-                 v                             │
-draft -------> review -------------------------┘
-                 |
-                 | accept
-                 v
-               finish
-```
-
-That is a conditional edge.
-
-Its job is not to perform the revision. Its job is only to choose one application-approved destination from the current state.
-
-```python
-def route_after_review(state):
-    return state["review"]
-```
-
-The application declares the allowed mapping:
-
-```python
-{
-    "revise": "revise",
-    "accept": "finish",
-}
-```
-
-This should feel familiar from Stage 02. A router can choose a route, but the application still owns the set of valid destinations.
-
-A graph does not erase earlier control boundaries. It gives them a different representation.
-
----
-
-## 5. START and END are structural sentinels
-
-Most state graphs have special structural positions:
-
-```text
-START
-END
-```
-
-They are not business nodes. They describe topology.
-
-```python
-builder.add_edge(START, "classify")
-builder.add_edge("finish", END)
-```
-
-That makes the entry and exit points explicit.
-
-When you inspect a graph, you can ask:
-
-- Where does execution begin?
-- Which paths can terminate?
-- Is a node unreachable?
-- Does a cycle have any exit at all?
-
-You can answer those questions in ordinary Python too, of course. But as control flow grows, you may have to trace nested conditionals, loops, helper functions, and exception paths. A graph makes the execution map easier to inspect directly.
-
----
-
-## 6. Build a tiny graph runtime before using LangGraph
-
-Before reaching for a framework, let us implement the core ourselves.
-
-The builder only needs a few collections:
-
-```python
-class MiniStateGraph:
-    def __init__(self, *, reducers=None):
-        self._nodes = {}
-        self._edges = {}
-        self._conditional_edges = {}
-        self._reducers = dict(reducers or {})
-```
-
-It stores:
-
-```text
-nodes
-fixed edges
-conditional edges
-reducers
-```
-
-Before registering any outgoing edge, the builder rejects an impossible source or a second outgoing transition from the same source:
-
-```python
-def _ensure_no_outgoing_edge(self, source: str) -> None:
-    if source == END:
-        raise ValueError("END cannot have an outgoing edge")
-    if source in self._edges or source in self._conditional_edges:
-        raise ValueError(f"{source!r} already has an outgoing edge")
-```
-
-Node registration is a name-to-function mapping:
-
-```python
-def add_node(self, name: str, node: Node) -> None:
-    if not name or name in {START, END}:
-        raise ValueError(f"invalid node name: {name!r}")
-    if name in self._nodes:
-        raise ValueError(f"duplicate node: {name!r}")
-    self._nodes[name] = node
-```
-
-A fixed edge is a source-to-destination mapping. Its registration method stores that mapping after the shared validation:
-
-```python
-def add_edge(self, source: str, destination: str) -> None:
-    self._ensure_no_outgoing_edge(source)
-    self._edges[source] = destination
-```
-
-For example, `add_edge("draft", "review")` produces:
-
-```python
-self._edges == {"draft": "review"}
-```
-
-A conditional edge stores a router and a route-name-to-destination mapping. The router reads state; the mapping, rather than the router, defines the destinations that the graph permits.
-
-```python
-@dataclass(frozen=True, slots=True)
-class ConditionalEdge:
-    router: Router
-    destinations: dict[str, str]
-
-
-def add_conditional_edges(
-    self,
-    source: str,
-    router: Router,
-    destinations: Mapping[str, str],
-) -> None:
-    self._ensure_no_outgoing_edge(source)
-    if not destinations:
-        raise ValueError("conditional edges need at least one destination")
-    self._conditional_edges[source] = ConditionalEdge(
-        router=router,
-        destinations=dict(destinations),
-    )
-```
-
-For example, `add_conditional_edges("review", route_after_review, {"revise": "revise", "accept": "finish"})` stores both the decision function and this allowed route table:
-
-```python
-{
-    "review": ConditionalEdge(
-        router=route_after_review,
-        destinations={"revise": "revise", "accept": "finish"},
-    )
-}
-```
-
-At this point, the graph runtime should look much less mystical.
-
-Its main questions are basically:
-
-> Which node runs now? What update did it produce? After applying that update, where do we go next?
-
-The runtime itself is not “thinking.”
-
----
-
-## 7. The execution engine still contains a while loop
-
-This is one of the most useful things to inspect.
-
-The core of our handwritten runtime is roughly:
-
-```python
-state = dict(initial_state)
-current = self._next_node(START, state)
-
-while current != END:
-    update = self._nodes[current](dict(state))
-
-    if update is not None:
-        self._apply_update(state, update)
-
-    current = self._next_node(current, state)
-```
-
-`_next_node()` is the missing bridge between those stored structures and the loop. It first checks for a conditional edge, validates the route name, and otherwise follows the fixed edge:
-
-```python
-def _next_node(self, source: str, state: State) -> str:
-    branch = self._conditional_edges.get(source)
-    if branch is not None:
-        route = branch.router(dict(state))
-        try:
-            return branch.destinations[route]
-        except KeyError as exc:
-            allowed = ", ".join(sorted(branch.destinations))
-            raise RuntimeError(
-                f"router from {source!r} returned {route!r}; "
-                f"allowed routes: {allowed}"
-            ) from exc
-
-    try:
-        return self._edges[source]
-    except KeyError as exc:
-        raise RuntimeError(f"{source!r} has no outgoing edge") from exc
-```
-
-So graphs did not abolish `while`.
-
-They move control-flow declarations out of one increasingly complicated loop and into explicit topology.
-
-A conventional loop might eventually become:
-
-```text
-while True:
-    if phase == "draft":
-        ...
-    elif phase == "review":
-        ...
-    elif phase == "revise":
-        ...
-```
-
-The graph writes the transitions directly:
-
-```text
-draft -> review
-review --revise--> revise
-review --accept--> finish
-revise -> review
-```
-
-When the flow becomes sufficiently branched or cyclic, the second representation is easier to inspect.
-
-If your program is only:
-
-```python
-validate()
-save()
-```
-
-please do not introduce a graph runtime just so you can draw two boxes. Replacing a staircase with an airport jet bridge is not automatically an architecture improvement.
-
----
-
-## 8. Partial updates force us to answer an important question: how do values merge?
-
-Suppose the current state is:
-
-```python
-{
-    "draft": "first",
-    "events": ["classified"],
-}
-```
-
-A node returns:
-
-```python
-{
-    "draft": "second",
-    "events": ["revised"],
-}
-```
-
-For `draft`, replacement probably makes sense:
-
-```text
-"first" -> "second"
-```
-
-But what about `events`?
-
-If we replace it too:
-
-```text
-["classified"] -> ["revised"]
-```
-
-we lose the earlier event.
-
-If `events` represents accumulated history, we probably want:
-
-```python
-["classified", "revised"]
-```
-
-That is what reducers define.
-
-Think of `draft` as the current version of one document: the new version replaces the old one. Think of `events` as a logbook: a new entry belongs after the earlier entries. Both are stored in State, but they answer different questions and therefore need different merge rules.
-
-A reducer is the rule for one State field:
-
-```python
-new_value = reducer(old_value, update_value)
-```
-
-For list accumulation:
-
-```python
-def append_events(left, right):
-    return [*left, *right]
-```
-
-Here is the complete merge for this exact State and update. Run it as one block:
-
-```python
-def append_events(left, right):
-    return [*left, *right]
-
-
-def apply_update(state, update, reducers):
-    for key, right in update.items():
-        reducer = reducers.get(key)
-        if reducer is None or key not in state:
-            state[key] = right
-        else:
-            state[key] = reducer(state[key], right)
-
-state = {
-    "draft": "first",
-    "events": ["classified"],
-}
-update = {
-    "draft": "second",
-    "events": ["revised"],
-}
-
-apply_update(state, update, reducers={"events": append_events})
-print(state)
-```
-
-It prints:
-
-```python
-{
-    "draft": "second",
-    "events": ["classified", "revised"],
-}
-```
-
-`draft` has no reducer, so the runtime replaces it. `events` is configured with `append_events`, so the runtime combines the old history with the node's new entry. The node never has to read, copy, and return the old event history itself.
-
-This is the practical value: every Node can return only the fields it owns, while the graph owns the consistent merge rule. When a node returns `"events": ["revised"]`, it does not decide whether that means “replace” or “append”; the update semantics belong to the definition of that State field.
-
----
-
-## 9. The wrong reducer silently changes the meaning of your state
-
-Suppose `messages` is a list representing conversation history.
-
-Without a reducer, one node returns:
-
-```python
-{"messages": ["hello"]}
-```
-
-and the next returns:
-
-```python
-{"messages": ["tool result"]}
-```
-
-The final value may simply be:
-
-```python
-{"messages": ["tool result"]}
-```
-
-Your “history” has become “latest message.”
-
-The opposite mistake is just as dangerous.
-
-Imagine `pending_tool_calls` means the calls that still need execution. If you use an append reducer blindly:
-
-```text
-old pending calls + new pending calls
-```
-
-completed calls may remain in state and get executed again.
-
-So “it is a list” is not enough reason to append.
-
-Ask what the field means:
-
-```text
-latest value?
-accumulated history?
-replaceable set?
-deduplicated collection?
-```
-
-Reducer choice should follow field semantics.
-
-State schemas are not only about types. They are also about update behavior.
-
----
-
-## 10. Follow one workflow through its state transitions
-
-The handwritten example uses a small support workflow:
-
-```text
-request
-  ↓
-classify
-  ↓
-draft
-  ↓
-review
-  ├── accept ──────────────> finish -> END
-  │
-  └── revise -> revise
-                 |
-                 └─────────> review
-```
-
-The initial state is small:
-
-```python
-{
-    "request": "I was charged twice and need a refund.",
-    "revisions": 0,
-    "events": [],
-}
-```
-
-Classification adds:
-
-```python
-{
-    "category": "billing",
-    "events": ["classified as billing"],
-}
-```
-
-Drafting adds:
-
-```python
-{
-    "draft": "I can help review the billing issue.",
-    "events": ["drafted first response"],
-}
-```
-
-The first review deliberately requests a revision:
-
-```python
-{
-    "review": "revise",
-    "events": ["review requested one revision"],
-}
-```
-
-The conditional edge routes execution to `revise`.
-
-That node returns:
-
-```python
-{
-    "draft": state["draft"] + " I will keep the next step specific.",
-    "revisions": state["revisions"] + 1,
-    "events": ["revised response"],
-}
-```
-
-Execution returns to `review`, which now accepts the draft:
-
-```python
-{
-    "review": "accept",
-    "events": ["review accepted response"],
-}
-```
-
-The conditional edge sends the graph to `finish`.
-
-Run it:
+You can run the process without a framework. The `run_plain()` function in [`workflow.py`](code/workflow.py) uses a normal loop and the same checks we will use throughout the chapter. With Python 3.10 or later, run this from the repository root:
 
 ```bash
-python stages/03-stateful-orchestration/code/state_graph.py
+python stages/03-stateful-orchestration/code/workflow.py --language en
 ```
 
-The trace is:
+The output records the missing notice, the revision, and another check, then returns a labeled two-city brief. No model request is made. Understand which draft changed and why it needed another check before assigning technical names to the pieces.
 
-```text
-classify -> draft -> review -> revise -> review -> finish
-```
+## 2. What belongs on the worksheet?
 
-That trace is valuable because “how did we get here?” is now a first-class runtime result instead of something you reconstruct from scattered log lines.
+Pause just after the checker finds the omission. To revise correctly, the next step needs the selected cities, the Fahrenheit option, the collected records, the current draft, the review feedback, and the number of revisions already made. That is this execution's **state**: the data needed to continue this work, not everything the application happens to know.
 
----
-
-## 11. Cycles are normal; unbounded cycles are the problem
-
-The workflow contains a cycle:
-
-```text
-review -> revise -> review
-```
-
-That is not inherently suspicious.
-
-ReAct is cyclic:
-
-```text
-model -> tool -> model -> tool -> ...
-```
-
-Recovery workflows are often cyclic too.
-
-The real question is:
-
-> **Who prevents the cycle from running forever?**
-
-Our handwritten runtime uses an application-owned:
+The `initial_state()` function in [`workflow.py`](code/workflow.py) checks the city and unit options before creating the worksheet. Its returned dictionary is:
 
 ```python
-max_steps
+return {
+    "cities": list(cities), "include_fahrenheit": include_fahrenheit, "language": language,
+    "readings": [], "draft": None, "review": None, "revisions": 0,
+    "events": [], "answer": None, "status": "working",
+}
 ```
 
-and stops when the trace reaches that budget.
+`readings` starts empty because collection has not happened. `None` in `draft` and `review` means that no draft or review exists yet. `revisions=0` means no revision has been performed; it does not mean the draft must be bad. `answer` is filled only after the delivery check succeeds. `events` is a small history we deliberately retain to explain the path.
 
-This is the same engineering idea we used in Stage 01 with `max_steps` and Stage 02 with `max_replans`: dynamic control needs an external bound.
+Current state and history have different jobs. `draft` holds the current document, and `review` holds its current assessment. Neither is an archive of every version. `events`, on the other hand, is intentionally cumulative. Whether to replace or accumulate a value follows its meaning, not merely whether its Python type is a list or dictionary.
 
-The check is deliberately outside every node:
+The worksheet is not automatically the model's context either. A checker needs the revision count; a model may not. Application state can contain internal progress while a model receives only selected inputs. The live example later sends the message history, not a dump of every graph field.
+
+There is one further distinction. Business state does not secretly contain the Python program counter. The scheduler knows which node is active. Printing this dictionary does not save the process or make an interrupted execution resumable. First we will organize the data; then we will organize the transitions that use it.
+
+## 3. Return a change slip rather than carrying away the whole worksheet
+
+After collecting the records, a useful report is “here are the readings,” not a fresh copy of the city selection, revision allowance, draft, and complete history. A function can follow the same rule: read the current state and return only the fields it changed. A function doing one meaningful piece of work can serve as a **node**.
+
+`ReportNodes.collect()` reads each selected city, checks the returned city, finite temperature, and source information, and finally returns only:
 
 ```python
-if len(trace) >= max_steps:
-    raise RuntimeError(f"graph exceeded max_steps={max_steps}")
+return {"readings": readings, "events": ["collected requested records"]}
 ```
 
-Do not ask a node to promise that it will “probably stop soon.”
+This is a **partial update**. It updates `readings` and contributes a new event. It does not request deletion of `cities`, and it does not have a reason to increment `revisions`. Omitting a field normally means leaving its value alone, not clearing it. Partial updates make responsibilities visible, but they are not field-level authorization: this convention alone does not prevent a node from returning other fields.
 
-A component that is already looping is not the ideal authority for deciding whether it is looping.
-
----
-
-## 12. Why compile a graph before running it?
-
-We do not execute the builder directly. We first call:
+The drafting node then uses the saved readings and unit selection to create the display rows. The first draft has a visible defect by default: it omits the source notice. We can inspect the actual problem instead of interpreting a mysterious `draft-v0` marker. Here is the method:
 
 ```python
-graph = builder.compile()
+def write_draft(self, state: State) -> State:
+    notice = NOTICES[state["language"]] if self.draft_style == "complete" else ""
+    return {
+        "draft": {"rows": expected_rows(state), "notice": notice},
+        "review": None, "events": ["wrote draft"],
+    }
 ```
 
-Our handwritten `compile()` performs topology checks.
+`expected_rows()` calculates Fahrenheit from the collected Celsius values rather than hard-coding 64.4. The draft contains `rows`, which will appear on the page, and `notice`, which identifies the data. Returning `review=None` is also deliberate: a new draft invalidates the old assessment. To clear a value, we must explicitly return `None`; omitting `review` would leave the old value in place.
 
-A graph with nodes but no edge from `START` should fail before user traffic reaches it.
+A node need not be one line long, nor should it do everything. Collecting this small brief's readings is a meaningful step; checking one draft is another. Making `strip()` its own node rarely clarifies the process. A better sizing question is whether a failure in the node would correspond to a piece of work we can name and explain.
 
-An edge to an unknown node should also fail early.
+## 4. Replace the draft, but keep adding to the account of what happened
 
-Think of it like a railway map.
+A change slip needs a merge rule. Suppose we currently have `draft=old draft` and `events=[records collected]`. The drafting node returns `draft=new draft` and `events=[draft written]`. Replacing the draft makes sense. Replacing the events would erase the collection record.
 
-It is better to discover a missing track while inspecting the map than when the train arrives at the coordinates where somebody accidentally typed `finsh` instead of `finish`.
+Different fields therefore need different update behavior. The default is replacement. For fields that genuinely accumulate, we provide a merge function called a **reducer**. Here the name means something quite ordinary: given the old value and this new contribution, what should the next value be? Events use:
 
-Compilation cannot prove the business logic is correct. It cannot guarantee a model will behave, an API will stay available, or a tool will be safe.
+```python
+def append_events(left: list, right: list) -> list:
+    return [*left, *right]
+```
 
-It validates structure, not truth.
+The starred expressions put the elements of both lists into a new list without changing either input. Existing `['collected']` plus the new `['drafted']` becomes `['collected', 'drafted']`. A node contributes its own event, not another copy of the entire past.
 
-That distinction matters.
+The relevant merge code in [`state_graph.py`](code/state_graph.py) works on `candidate`, an independent copy of the current state:
 
----
+```python
+candidate = deepcopy(dict(state))
+for key, value in update.items():
+    right = deepcopy(value)
+    reducer = reducers.get(key)
+    candidate[key] = reducer(candidate[key], right) if reducer and key in candidate else right
+return deepcopy(candidate)
+```
 
-## 13. Meet LangGraph, then map the same mechanism
+A field without a reducer, such as `draft`, is replaced as a whole. There is no automatic deep merge of its nested `rows` and `notice`. Returning only `draft={'notice': '...'}` would not preserve the old rows under this rule. Conversely, returning old events plus the new event to an append reducer would append the old events again. Field meaning, returned updates, and reducer choice must agree.
 
-[LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) is LangChain's stateful agent and workflow orchestration framework. It turns State, Nodes, Edges, conditional routing, and cycles into an executable graph, which suits programs that need multi-step, resumable, or observable execution.
+The complete merge is staged before the candidate becomes the new state. If one reducer fails, the original state does not end up with half the fields changed. This is a guarantee about an in-memory update, not a transaction over the outside world. Copying dictionaries cannot undo a file write or external request that the node already performed.
 
-If LangGraph is new to you, start with the official [overview](https://docs.langchain.com/oss/python/langgraph/overview) and [Workflows and agents guide](https://docs.langchain.com/oss/python/langgraph/workflows-agents). They cover the framework API, common workflow patterns, and broader production features.
+The small handwritten engine also gives nodes and routing functions deep copies, reducing accidental mutation through nested lists. That is an implementation choice in this engine, not a general promise that LangGraph isolates every object, and certainly not a security sandbox. The business functions themselves still use the clearer discipline: read inputs and return new values.
 
-This tutorial does not repeat a general LangGraph course. Sections 1–12 already unpacked the graph-runtime mechanism in pure Python. From here, we express the same State, Nodes, Edges, and routing logic with LangGraph, focusing on how agent state and control flow map to framework code.
+## 5. Check this draft, not whether it has already had a turn at revision
 
-Install the Stage 03 dependency:
+With updates defined, the checker can read an actual draft. Our acceptance rule is deliberately narrow: the display rows must match the collected cities, temperatures, and requested units; the source notice must match the page's required sentence. We are not asking a model to grade itself or making “reject once, then accept” the rule.
+
+`review_issues()` inspects `rows` and `notice` and returns concrete failures. The checking node stores those issues together with the content it inspected:
+
+```python
+def check_draft(self, state: State) -> State:
+    issues = review_issues(state)
+    return {
+        "review": {"passed": not issues, "issues": issues, "checked_draft": deepcopy(state["draft"])},
+        "events": ["checked draft: " + (", ".join(issues) if issues else "accepted")],
+    }
+```
+
+`passed` reports whether these explicit rules passed. `issues` identifies failures. `checked_draft` is a copy of the document being assessed. Think of signing off on a specific document, not signing a blank slip that approves all future documents.
+
+For the first draft, the issue is `missing_fixed_data_notice`. Revision supplies the notice, increments the revision count, and clears `review`. The new draft then goes through checking again. Revision reads the existing `readings`; it does not query Tokyo and Paris again. Separating data collection from editing makes unnecessary repeated work much easier to see.
+
+Three modes make the rule observable. `missing-notice` is the default defect, `complete` begins with an acceptable draft, and `stubborn` deliberately keeps omitting the notice even during revision. No number of editing turns makes the third draft correct. That mode tests stopping behavior; it is not a prediction of what a real model will do.
+
+This checker does not solve general writing quality. The document is structured page data, and the checker compares explicit fields and a prescribed sentence. It would not be an adequate truth checker for news or a complex analysis. Free-form output requires acceptance rules appropriate to that output; a convenient equality test is not a universal evaluator.
+
+## 6. After checking, choose from routes the application has declared
+
+Checking records a result. Choosing what follows is a separate responsibility: deliver an acceptable draft, revise while allowed, otherwise keep it and stop. The connections between these steps are **edges**. A fixed edge has one destination. A conditional edge examines the updated state and selects from declared destinations.
+
+`ReportNodes.route_after_check()` selects a route without editing the draft:
+
+```python
+def route_after_check(self, state: State) -> str:
+    review = state["review"]
+    if review is None or review["checked_draft"] != state["draft"]:
+        raise ValueError("The current draft has not been checked")
+    if review["passed"]:
+        return "accept"
+    return "revise" if state["revisions"] < self.max_revisions else "hold"
+```
+
+`max_revisions` belongs to application configuration, not to the draft or model output. A value of 1 permits one revision. The first check and the check after revision are two checks, not two revisions. A zero revision allowance still permits checking and delivering an already-correct first draft.
+
+Now the complete route has a concrete meaning at every stop:
+
+```text
+START → collect → write_draft → check_draft
+                                  ├─ accept → publish → END
+                                  ├─ revise → revise_draft → check_draft
+                                  └─ hold   → hold → END
+```
+
+The cycle is `check_draft → revise_draft → check_draft`. `START` and `END` are structural entry and terminal markers, not functions that fetch data or write text. `hold` also reaches `END`, but sets `status='needs_attention'` and leaves `answer=None`. It does not represent successful delivery.
+
+The conditional edge uses a small mapping:
+
+```python
+builder.add_conditional_edges("check_draft", nodes.route_after_check,
+                              {"accept": "publish", "revise": "revise_draft", "hold": "hold"})
+```
+
+`accept` can lead to `publish`, and `revise` to `revise_draft`. A new string returned by the router cannot conjure up an undeclared node. This is the finite routing idea from Stage 02, now applied to steps within a process.
+
+The publication node also confirms that the checked draft has not changed and rechecks these narrow content rules. In this example, `publish` means turning accepted data into return text; it does not upload a page or send a message. Node names, business outcomes, and actual external effects must not be confused.
+
+## 7. How does the route become executable?
+
+We can now introduce a **graph** as the arrangement of these nodes and edges that the scheduler will follow. It is not another model. Our `MiniStateGraph` stores functions, fixed routes, conditional routes, and reducers, then builds an executable object.
+
+During `compile()`, the small engine checks the entry point, node names, destinations, missing outgoing rules, and nodes unreachable from the entry. It also checks that each node has at least one possible path to `END`. This catches misspellings and completely closed cycles, but does not prove that the routing function will ever choose an exit.
+
+For example, a route table might allow both `again` and `done` while the function always returns `again`. The diagram has an exit, but execution never takes it. That is why the engine also has `max_steps`. It counts completed node executions, not revisions or model calls. After reaching the bound, the engine will not start the next node.
+
+Once a node starts, its central work is still ordinary Python:
+
+```python
+update = self.nodes[current](deepcopy(state))
+candidate = merge_update(state, update, self.reducers)
+```
+
+The engine adopts the merged state, records the completed node, and then chooses the next destination from that new state. Graph execution did not abolish loops; it separated work from the increasingly tangled conditions that decide what follows. This miniature engine runs one node at a time and implements no parallel fan-out.
+
+Run the route:
+
+```bash
+python stages/03-stateful-orchestration/code/state_graph.py --language en --show-updates
+```
+
+The default path is `collect → write_draft → check_draft → revise_draft → check_draft → publish`: six node executions producing a labeled brief. A `StepSnapshot` retains the node name, its partial update, and a detached copy of the merged state so that we can examine which step changed the review result.
+
+If a node or merge fails, `GraphExecutionError` carries the failure location, previously completed nodes, and the last successfully merged state. It does not fabricate a completed update from local variables in a failed node, and it does not undo external work. If collection reads one city but raises while reading the second, it has not yet submitted `readings`. The whole collection node cannot be marked successful. A design needing per-read progress should use smaller commit units.
+
+Node granularity matters partly because it determines where the program can observe and accept a state change.
+
+## 8. Move the same work to LangGraph before changing anything else
+
+Now change the scheduling implementation, not the problem, acceptance rules, or editing policy. **LangGraph** provides a state-graph execution system. It receives the same worksheet and ordinary functions. Two contracts matter first: which fields exist, and how an update to each field is combined with its current value.
+
+[`langgraph_workflow.py`](code/langgraph_workflow.py) describes state with `TypedDict`. At runtime this is still a normal dictionary. Type hints help editors and checking tools understand fields; they do not automatically validate every input or create default values. [Python's TypedDict documentation](https://docs.python.org/3/library/typing.html#typing.TypedDict) explains that distinction. We still use `initial_state()` to validate options and construct initial values.
+
+```python
+class ReportState(TypedDict):
+    cities: list[str]
+    include_fahrenheit: bool
+    language: str
+    readings: list[dict[str, Any]]
+    draft: dict[str, Any] | None
+    review: dict[str, Any] | None
+    revisions: int
+    events: Annotated[list[str], add]
+    answer: str | None
+    status: str
+```
+
+Ordinary fields use replacement. `Annotated[list[str], add]` attaches a rule to the list type: combine contributions using `operator.add`. This does not globally change Python lists. LangGraph reads the annotation to configure the `events` reducer. See its [state and reducer description](https://docs.langchain.com/oss/python/langgraph/graph-api#reducers).
+
+The builder does not duplicate the business logic:
+
+```python
+def build_graph(**options: Any):
+    builder = state_graph_type()(ReportState)
+    connect_report(builder, ReportNodes(**options))
+    return builder.compile()
+```
+
+`connect_report()` registers the same nodes and routes, while `ReportNodes` supplies the same checking and revision functions. Comparing engines therefore changes scheduling, not the acceptance standard. `state_graph_type()` imports the real `StateGraph` and reports a missing dependency; it never substitutes the handwritten engine while calling it LangGraph.
+
+Install the dependencies and run:
 
 ```bash
 python -m pip install -r stages/03-stateful-orchestration/code/requirements.txt
+python stages/03-stateful-orchestration/code/langgraph_workflow.py --language en --show-updates
 ```
 
-First define a state schema:
+LangGraph's `compile()` builds the executable graph and applies the framework's supported structural checks. It does not translate your business functions into a different language or prove that a document is correct. Nor should we assume its static checks exactly match our small engine's stricter topology checks. The behavior comparisons test the update and routing semantics our application relies on.
+
+We can now resolve an important confusion: a graph with no model calls at all can still run in LangGraph. A graph organizes state transitions. Letting a model choose actions dynamically is another design decision. First understand a deterministic workflow; then consider the model-driven case.
+
+## 9. Observe progress and obtain the result without executing twice
+
+Lin wants to know why the draft was revised before delivery. The final `answer` alone does not explain that. `graph.invoke()` returns the state after a run, while `graph.stream()` exposes information as the run proceeds. Both execute the graph. Calling `invoke()` after `stream()` starts another run; it does not retrieve the result of the earlier one.
+
+Streaming offers two views that are easy to confuse. `updates` is the change slip submitted by a node, perhaps containing one new event. `values` is the accumulated worksheet after merging, including earlier events. The [LangGraph streaming documentation](https://docs.langchain.com/oss/python/langgraph/streaming) distinguishes them. The example subscribes to both views during one execution:
 
 ```python
-from operator import add
-from typing import Annotated
-from typing_extensions import TypedDict
-
-class SupportState(TypedDict, total=False):
-    request: str
-    category: str
-    draft: str
-    review: str
-    revisions: int
-    events: Annotated[list[str], add]
-    answer: str
+final = None
+for mode, payload in graph.stream(state, stream_mode=["updates", "values"],
+                                   config={"recursion_limit": recursion_limit}):
+    if mode == "updates" and show_updates:
+        for node, update in payload.items():
+            print(node, "updated:", sorted(update) if isinstance(update, dict) else [])
+    elif mode == "values":
+        final = payload
 ```
 
-The line to notice is:
+In update mode, `payload` is organized by node name. In values mode, it is the current state. After the loop, `final` supplies the result; we do not repeat collection and revision just to read `answer`. The console displays changed field names rather than expanding every internal message by default.
 
-```python
-events: Annotated[list[str], add]
-```
+`recursion_limit` in the configuration bounds LangGraph scheduling rounds. The framework calls a round a **super-step**: sequential nodes occupy different rounds, while multiple concurrently scheduled nodes can belong to one round. This graph has no parallel branches, but the limit still cannot be described as a model-call budget. It is also not Python's function-call recursion depth or a wall-clock deadline.
 
-It tells LangGraph to combine new `events` updates with `operator.add`.
+The business-level `max_revisions` answers “how many edits may we attempt?” The graph bound catches execution that keeps running because of an incorrect route. Exhausting the former can lead to `hold`; exhausting the latter is normally a scheduling error. An unacceptable draft and broken control flow should not both disappear behind “finished.”
 
-Fields without an explicit reducer use replacement semantics by default.
+## 10. The free-text assistant can carry a worksheet too
 
-`TypedDict` describes the fields a state dictionary may contain. `total=False` lets fields produced by later nodes be absent from the initial state; it does not create defaults or perform runtime validation. Because `events` uses `add`, each node must return only its new events. Returning the entire event history would add the old entries a second time.
+The form-based workflow is now clear. The text box can still receive different requests: a greeting, a Tokyo lookup, or a lookup followed by conversion. That is the model/tool loop from Stage 01. We will not give its model control over already-deterministic draft acceptance. We will examine how this familiar dynamic process fits a graph.
 
-That is the same problem we just solved in our miniature runtime.
+The example still uses the same weather source rather than suddenly switching to a multiplication question. Its output is a model reply, **not the structurally checked brief from the earlier workflow**. An application can check model output before using it, but drawing the loop as a graph does not supply that acceptance step automatically.
 
-LangGraph's Graph API describes state in exactly these terms: a state schema defines channels, and reducers define how node updates are applied to those channels.
-
----
-
-## 14. A LangGraph node is still an ordinary Python function
-
-Classification can remain:
-
-```python
-def classify(state: SupportState) -> dict:
-    request = state["request"].lower()
-
-    if "refund" in request or "charged" in request:
-        category = "billing"
-    elif "password" in request or "login" in request:
-        category = "technical"
-    else:
-        category = "general"
-
-    return {
-        "category": category,
-        "events": [f"classified as {category}"],
-    }
-```
-
-Then register it:
-
-```python
-from langgraph.graph import END, START, StateGraph
-
-builder = StateGraph(SupportState)
-
-builder.add_node("classify", classify)
-builder.add_node("draft", draft)
-builder.add_node("review", review)
-builder.add_node("revise", revise)
-builder.add_node("finish", finish)
-```
-
-There is no special graph programming language here.
-
-A node is a function. If it performs deterministic calculation, it is deterministic calculation. If it calls a model, then that particular node is a model node. If it executes a tool, that particular node performs the side effect.
-
-Being a node does not grant a function new authority.
-
-The current LangGraph documentation makes the same basic distinction: state is shared data, nodes perform logic and return updates, and edges determine what runs next.
-
----
-
-## 15. Fixed and conditional edges map almost one-to-one
-
-Fixed transitions:
-
-```python
-builder.add_edge(START, "classify")
-builder.add_edge("classify", "draft")
-builder.add_edge("draft", "review")
-```
-
-Conditional routing:
-
-```python
-builder.add_conditional_edges(
-    "review",
-    route_after_review,
-    {
-        "revise": "revise",
-        "accept": "finish",
-    },
-)
-```
-
-Close the loop:
-
-```python
-builder.add_edge("revise", "review")
-builder.add_edge("finish", END)
-```
-
-Then compile:
-
-```python
-graph = builder.compile()
-```
-
-The mapping is direct:
-
-| Handwritten concept | LangGraph |
-|---|---|
-| state dictionary | state schema |
-| node function | `add_node()` |
-| fixed transition | `add_edge()` |
-| state-based branch | `add_conditional_edges()` |
-| update merge rule | reducer |
-| topology build/check | `compile()` |
-| execution | `invoke()` / `stream()` |
-
-Now the methods are easier to remember because each one corresponds to a mechanism you have already implemented.
-
----
-
-### Run the connected pieces
-
-The `draft`, `review`, `revise`, `finish`, and `route_after_review` definitions used in sections 14–15 live in `langgraph_workflow.py`. Registration statements alone need those definitions. Start a Python shell in that file's `code/` directory, then run this complete entry point:
-
-```python
-from langgraph_workflow import build_graph, initial_state
-
-graph = build_graph()
-result = graph.invoke(initial_state(), config={"recursion_limit": 20})
-print(result["answer"])
-assert result["revisions"] == 1
-assert len(result["events"]) == 6
-```
-
-## 16. `invoke()` returns the accumulated state; `stream()` exposes the path as it runs
-
-A normal execution is:
-
-```python
-result = graph.invoke(
-    initial_state(),
-    config={"recursion_limit": 20},
-)
-```
-
-The returned object contains the accumulated graph state. This uses the imported `initial_state()` function from the preceding example; call it to obtain the initial dictionary.
-
-For learning and debugging, it is often useful to watch node updates:
-
-```python
-for update in graph.stream(
-    initial_state(),
-    stream_mode="updates",
-    config={"recursion_limit": 20},
-):
-    print(update)
-```
-
-With `stream_mode="updates"`, you focus on what each node produced rather than printing the entire accumulated state every time. Current LangGraph documentation explicitly distinguishes update streaming from full state-value streaming.
-
-You might see output shaped like:
+Two types of nodes suffice. `model` reads messages and returns an answer or requests. `tools` executes validated requests and returns observations. Pending requests lead to the tool node; successful tools lead back to the model. An answer or a nonrecoverable error ends the run.
 
 ```text
-{"classify": {"category": "billing", ...}}
-{"draft": {"draft": "...", ...}}
-{"review": {"review": "revise", ...}}
-{"revise": {...}}
+START → model ── tool requests ─→ tools
+          │                       │
+          │                  success → model
+          │
+          └─ answer or error ─→ END
+                    a tool execution error also leads to END
 ```
 
-Streaming does not change the business logic. It only makes execution progress observable.
-
----
-
-Calling `stream()` and then `invoke()` starts two independent runs; it does not retrieve the same run twice. The offline demo compares both interfaces, while the live DeepSeek demo uses a single `stream()` to avoid duplicate requests and tool execution.
-
-## 17. LangGraph's recursion limit serves the same kind of boundary as our max_steps
-
-Our tiny runtime bounds cycles with:
-
-```python
-max_steps=30
-```
-
-LangGraph exposes an execution recursion limit through runtime configuration:
-
-```python
-config = {
-    "recursion_limit": 20,
-}
-```
-
-The implementation details are not identical, but the engineering purpose is similar: do not let a cyclic graph run indefinitely.
-
-This matters even more when a conditional route is model-driven.
-
-A model can keep deciding “one more attempt.”
-
-The runtime needs permission to reply, in effect:
-
-> No. We have already purchased enough optimism for this request.
-
----
-
-## 18. A graph is not an Agent, and our first graph proves it
-
-The support workflow contains no model at all.
-
-Classification is ordinary Python:
-
-```python
-if "refund" in request:
-    category = "billing"
-```
-
-Review is deterministic too:
-
-```python
-needs_revision = state.get("revisions", 0) == 0
-```
-
-Yet the workflow is a perfectly valid graph.
-
-Therefore:
-
-```text
-Graph != Agent
-```
-
-A graph is a representation of state evolution and control transitions.
-
-An Agent is a control pattern in which some decisions are delegated to a model using environmental feedback.
-
-You can build a deterministic graph.
-
-You can build an agentic graph.
-
-You can also build an Agent Runtime without a graph.
-
-Do not fuse those ideas just because frameworks often show them together.
-
----
-
-## 19. Translate the Stage 01 ReAct loop into a graph
-
-The Stage 01 runtime can be drawn as:
-
-```text
-model
-  |
-  +-- final answer --> END
-  |
-  +-- Tool Call
-         |
-         v
-       tools
-         |
-         v
-       model
-```
-
-As a graph:
-
-```text
-             +----------------+
-START ------>|     model      |
-             +-------+--------+
-                     |
-            conditional edge
-              /             \
-             v               v
-          tools             END
-             |
-             +-------------> model
-```
-
-Now responsibilities become very visible.
-
-The `model` node:
-
-```text
-reads messages
-produces Tool Calls or a final answer
-updates pending_tool_calls / final_answer
-```
-
-The `tools` node:
-
-```text
-reads pending_tool_calls
-looks up application-registered tools
-executes them
-writes observations back to messages
-```
-
-The conditional edge:
-
-```text
-pending calls -> tools
-otherwise -> END
-```
-
-That is what the offline [`code/langgraph_scripted_agent.py`](code/langgraph_scripted_agent.py) demonstrates.
-
-Run it:
-
-```bash
-python stages/03-stateful-orchestration/code/langgraph_scripted_agent.py
-```
-
-The example uses a deterministic `ScriptedModel`. On the first turn it requests:
-
-```python
-ToolCall(
-    call_id="call_mul",
-    name="multiply",
-    arguments={"a": 6, "b": 7},
-)
-```
-
-The tool node executes:
-
-```python
-TOOLS["multiply"](**call.arguments)
-```
-
-The result `42` becomes a tool observation, and the model finishes on the next turn.
-
-Same mechanism as Stage 01, different orchestration representation.
-
----
-
-The builder now accepts `model`, defaulting to `ScriptedModel`. Any object implementing `generate(messages) -> ModelTurn` can reuse the same nodes and edges. Adding tools requires updating both the provider schema and tool-node argument validation.
-
-### 19.1 Run the same graph with DeepSeek
-
-The original Stage 03 used only scripted models. There is now a parallel, complete pair: [langgraph_scripted_agent.py](code/langgraph_scripted_agent.py) uses the offline `ScriptedModel`, while [langgraph_deepseek_agent.py](code/langgraph_deepseek_agent.py) uses a live DeepSeek model. Each file defines its own State, Nodes, Edges, Tool, and graph builder so you can compare them line by line. Install the dependencies from section 30, then configure and run from the repository root in the same terminal.
-
-Windows Command Prompt:
-
-```cmd
-set "DEEPSEEK_API_KEY=your-deepseek-api-key"
-set "DEEPSEEK_MODEL=deepseek-v4-flash"
-python stages/03-stateful-orchestration/code/langgraph_deepseek_agent.py
-```
-
-PowerShell:
-
-```powershell
-$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
-$env:DEEPSEEK_MODEL="deepseek-v4-flash"
-python stages/03-stateful-orchestration/code/langgraph_deepseek_agent.py
-```
-
-Bash:
-
-```bash
-export DEEPSEEK_API_KEY="your-deepseek-api-key"
-export DEEPSEEK_MODEL="deepseek-v4-flash"
-python stages/03-stateful-orchestration/code/langgraph_deepseek_agent.py
-```
-
-Client creation follows. `required_env` is the helper in that file that rejects empty environment variables:
-
-```python
-from openai import OpenAI
-from langgraph_deepseek_agent import DeepSeekModel, required_env, build_agent_graph
-
-client = OpenAI(
-    api_key=required_env("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com",
-)
-model = DeepSeekModel(client=client, model=required_env("DEEPSEEK_MODEL"))
-graph = build_agent_graph(model=model, max_model_steps=4)
-```
-
-`api_key` is the DeepSeek credential, `base_url` selects the service address, and `model` selects an available model.
-
-As in Stage 01, the Adapter rebuilds the full input on each call: user messages, assistant `function_call` items, and `function_call_output` items paired by `call_id`. It sends only the state's messages, leaving control fields such as model_steps in the application. See the [DeepSeek Responses reference](https://api-docs.deepseek.com/guides/responses_api/).
-
-The offline demo has deterministic output:
-
-```text
-final_answer: 6 * 7 = 42
-model_steps: 2
-message roles: ['user', 'assistant', 'tool', 'assistant']
-```
-
-Live wording and turn counts may vary. Look for a model update requesting multiply, a tools update containing 42, then a final answer. At most four model calls are allowed; exhaustion returns an error that the live entry point raises. The separate `recursion_limit=20` counts graph super-steps, usually one node at a time in this sequential graph, rather than model calls.
-
-API errors, malformed JSON, unknown tools, and invalid arguments stop execution without automatic retries. Tool arguments must be exactly two finite numbers a and b; repeated call IDs are rejected. These checks preserve the execution boundary established in earlier chapters.
-
-
-## 20. Converting a while loop into a graph does not change authority
-
-Inside the graph, the proposal-only part of the node is:
-
-```python
-def model_node(state):
-    turn = model.generate(state["messages"])
-    return {"pending_tool_calls": list(turn.tool_calls)}
-```
-
-The model still only proposes what should happen next.
-
-Actual tool execution still occurs in:
-
-```python
-import math
-from typing import Any
-from langgraph_scripted_agent import AgentState, TOOLS
-
-def tool_node(state: AgentState) -> dict:
-    observations: list[dict[str, Any]] = []
-
-    for call in state.get("pending_tool_calls", []):
-        try:
-            handler = TOOLS[call.name]
-        except KeyError as exc:
-            raise RuntimeError(f"unknown tool: {call.name}") from exc
-
-        if set(call.arguments) != {"a", "b"} or any(
-            type(value) not in (int, float) or not math.isfinite(value)
-            for value in call.arguments.values()
-        ):
-            raise ValueError("multiply requires exactly two finite numbers: a, b")
-        result = handler(**call.arguments)
-        observations.append(
-            {
-                "role": "tool",
-                "tool_call_id": call.call_id,
-                "content": str(result),
-            }
-        )
-
-    return {
-        "messages": observations,
-        "pending_tool_calls": [],
-    }
-```
-
-So:
-
-```text
-model node
-    !=
-tool execution authority
-```
-
-The graph runtime organizes transitions. It does not give the model Python execution rights.
-
-The boundary from Stage 00 still holds:
-
-> The model proposes. The application executes and owns the consequences.
-
-Graph changes orchestration, not authority.
-
----
-
-## 21. So why not turn every Agent into a graph?
-
-Because graphs have a cost too.
-
-A small ReAct loop:
-
-```text
-while True:
-    turn = model.generate(...)
-    ...
-```
-
-can be wonderfully readable.
-
-If the whole control structure is simply:
-
-```text
-model <-> tools
-```
-
-and the state is tiny, an ordinary runtime may already be the best design.
-
-Graphs become more attractive when you start seeing:
-
-```text
-many branches
-shared state across stages
-cycles with different exit conditions
-multiple control paths worth testing independently
-a need to inspect which nodes actually ran
-```
-
-For example:
-
-```text
-classify
-  ├── fast_path
-  ├── plan
-  │     └── execute
-  │           └── review
-  │                 ├── finish
-  │                 └── repair -> review
-  └── reject
-```
-
-You can absolutely write that with `if`, `while`, and `try/except`.
-
-But six months later, the giant loop may become the most senior member of the engineering team: everybody respects it, nobody understands all of it, and nobody wants to touch it before a holiday weekend.
-
-Graph structure earns its keep when it makes a genuinely complicated execution model easier to reason about.
-
----
-
-## 22. State design matters more than an attractive graph diagram
-
-When people first learn graph orchestration, they often focus on nodes and arrows.
-
-Start with state instead.
-
-This is technically possible:
+The state in [`agent_graph.py`](code/agent_graph.py) now contains the fields this process actually needs:
 
 ```python
 class AgentState(TypedDict):
-    everything: dict
-```
-
-It is also a very effective way to hide all semantics again.
-
-A better state exposes the fields that actually drive execution:
-
-```python
-from operator import add
-from typing import Annotated, Any
-from typing_extensions import TypedDict
-from langgraph_scripted_agent import ToolCall
-
-class AgentState(TypedDict, total=False):
     messages: Annotated[list[dict[str, Any]], add]
     pending_tool_calls: list[ToolCall]
     final_answer: str | None
     error: str | None
     model_steps: int
+    tool_calls: int
+    events: Annotated[list[str], add]
+    diagnostic_tag: str
 ```
 
-Even before reading a node, you can see what the runtime cares about.
+`messages` accumulates user requests, model requests, and observations. `pending_tool_calls`, however, means the current unfinished batch. It gets replacement semantics: writing an empty list clears it. If we used `add` for that field too, adding an empty list to old pending calls would leave them pending. A later step could execute them again. History and a to-do list are different meanings, even when both use lists.
 
-That is one of the major benefits of explicit state: the execution model becomes inspectable.
+`model_steps` and `tool_calls` are application counters. `diagnostic_tag` is a local diagnostic label. These stay in the application. The model node deliberately selects `messages` for its input; neither type hints nor promising field names make that selection for us.
 
-A graph can have beautiful arrows and still have terrible state design.
+## 11. Moving code into nodes must not change who executes the tools
 
----
+Start with `ScriptedModel` to inspect the path. It is a test double configured for the demonstration, not an interpreter of arbitrary language. Once it receives a weather observation, it uses that actual Celsius value to construct the conversion request. The real model will use the same nodes rather than a second copy of the graph.
 
-`messages` accumulates new messages; `pending_tool_calls` is replaced and cleared after execution. Appending pending calls could execute old calls again.
+The model node returns the new assistant message and current pending calls. The message reducer retains the earlier history. The tool node validates the entire batch's names and parameters before starting any handler, so a plainly invalid second request does not follow an already-executed first handler. The weather tool accepts supported cities; conversion rejects strings, booleans, and nonfinite numbers. Generated names never go to `eval()`.
 
-## 23. Prefer returned updates over secretly mutating the input state
-
-Consider:
+After execution, the update is:
 
 ```python
-def bad_node(state):
-    state["count"] += 1
-    return state
+return {"messages": observations, "pending_tool_calls": [], "tool_calls": used,
+        "error": error, "events": ["tools failed" if error else "tools completed"]}
 ```
 
-Now the update boundary is unclear.
+`observations` contains only this batch's results, and `pending_tool_calls=[]` clears the batch. If execution fails partway through, earlier completed observations and a safe error are retained, but another model call is not made. Failure is not translated into success, and no automatic retry occurs. Those choices live in the node code; the graph framework does not infer them for us.
 
-Was the original state already mutated before the runtime merged anything? Which fields changed?
+Budgets remain separate as well. `max_model_steps` is checked before a request, and a failed request still counts. `max_tool_calls` is checked before starting a batch, with actual execution attempts counted afterward. A call ID cannot repeat within a run, but correlation-ID uniqueness does not detect repeated business actions carrying different IDs.
 
-A cleaner style is:
+Run the offline double on real LangGraph:
+
+```bash
+python stages/03-stateful-orchestration/code/langgraph_scripted_agent.py --language en --show-updates
+```
+
+The default path is `model → tools → model → tools → model`: five node executions, three model-double calls, and two tool executions. It returns Tokyo's 18.0°C and 64.4°F, with no pending calls left. `--task weather` omits conversion, and `--task greet` executes no tool. You can explicitly add `--engine mini` to run the same nodes with the handwritten scheduler. This is an explicitly selected comparison, not a silent fallback when LangGraph is missing.
+
+Set `--max-model-steps 1` and the weather lookup can complete, but the second model request will not occur. The observation remains in state, `final_answer` stays empty, and the command exits unsuccessfully. Work already performed and successful completion of the whole task are separate facts.
+
+## 12. Connect DeepSeek without moving state out of the current run
+
+Now replace only the object that proposes the next step. The model node still calls `generate(messages)`. `DeepSeekModel` in [`langgraph_deepseek_agent.py`](code/langgraph_deepseek_agent.py) converts messages into provider input and converts the response into `ModelTurn`. Its request is:
 
 ```python
-def increment(state):
-    return {
-        "count": state["count"] + 1,
-    }
-```
-
-Think:
-
-```text
-read snapshot
-compute
-return update
-```
-
-This also makes node tests trivial:
-
-```python
-update = increment({"count": 1})
-assert update == {"count": 2}
-```
-
-You can test node behavior without starting the whole graph.
-
----
-
-The handwritten engine uses `dict(state)`, a shallow copy: nested lists still share references. This is not an isolation sandbox. Return new lists instead of calling `append()` on input events or messages. These graphs keep state in the current process only; no checkpointer is configured, so restarting does not resume a run.
-
-## 24. A conditional edge should not secretly perform the business action
-
-This is a bad smell:
-
-```python
-def route(state):
-    if state["category"] == "billing":
-        send_refund_request()
-        return "finish"
-```
-
-Now the router both decides and executes.
-
-You have mixed:
-
-```text
-routing decision
-+
-business side effect
-```
-
-Prefer:
-
-```python
-def route(state):
-    return state["category"]
-```
-
-and route to a dedicated:
-
-```text
-billing_handler
-```
-
-node.
-
-Then you can test two separate questions:
-
-- Did the router choose the right destination?
-- Did the billing node perform the right action?
-
-This is the same principle from Stage 02: decision and execution should not dissolve into one function just because the function is convenient.
-
----
-
-## 25. How large should a node be?
-
-There is no magic number of lines.
-
-A more useful question is:
-
-> If this node fails, can I clearly say which meaningful step failed?
-
-A node that performs classification, a model call, a database write, a calculation, an email send, and an audit log all at once is difficult to reason about. `node=process_everything` is not much of a diagnosis.
-
-But splitting every tiny expression into its own node is equally unhelpful.
-
-You do not need a graph shaped like a circuit board.
-
-A useful node usually corresponds to a meaningful orchestration unit:
-
-```text
-classify request
-draft response
-review response
-call model
-execute tool batch
-```
-
-Node granularity should help control flow, state boundaries, testing, and observability—not your desire to collect more rectangles.
-
----
-
-## 26. Test the trace, not only the final answer
-
-Suppose the final answer is:
-
-```text
-I can help review the billing issue.
-```
-
-This assertion alone:
-
-```python
-assert result["answer"] == expected
-```
-
-does not prove the workflow behaved correctly.
-
-The intended path might be:
-
-```text
-classify -> draft -> review -> revise -> review -> finish
-```
-
-A bug could accidentally produce:
-
-```text
-classify -> finish
-```
-
-and still happen to create the same final text.
-
-Our handwritten checks therefore verify the trace:
-
-```python
-assert result.trace == (
-    "classify",
-    "draft",
-    "review",
-    "revise",
-    "review",
-    "finish",
+response = self.client.responses.create(
+    model=self.model, instructions=INSTRUCTIONS, input=to_input(messages),
+    tools=tool_definitions(), max_output_tokens=4096,
 )
 ```
 
-For stateful orchestration, transitions are part of the product behavior.
+`tool_definitions()` describes the weather and conversion capabilities. Their handlers remain in the application. A response must complete, tool arguments must parse as an object, and a response without tool requests must contain nonempty final text. If a response includes requests and accompanying explanatory prose, the adapter continues with the requests; “let me check” is not treated as the final answer.
 
-This continues a principle from earlier stages:
-
-> Correct final text can still come from an incorrect execution path.
-
----
-
-## 27. Framework tests should verify semantics, not merely imports
-
-This test:
+The [DeepSeek Responses interface](https://api-docs.deepseek.com/api/create-response/) is stateless for multi-turn use, so later calls require client-supplied history. The adapter retains each turn's complete output items, including protocol information that may be needed for continuation:
 
 ```python
-import langgraph
+provider_items = tuple(item.model_dump(mode="json", exclude_none=True) for item in output)
 ```
 
-proves the dependency exists.
+These items travel with the current run's messages, not in a shared “previous response” variable across users. The next request includes those output items and tool results paired by `call_id`. Counters and diagnostic labels do not become input merely because they also exist in state. The scheduler neither interprets reasoning text as a control protocol nor prints it in the default console output.
 
-That is not the same as proving the semantics your code relies on still hold.
+This is the same data flow as the earlier chapters: the remote model does not magically remember Python variables. The application supplies what happened. Replacing the model object does not change ownership of history, argument checks, or budgets.
 
-If you depend on a reducer:
-
-```python
-class State(TypedDict):
-    events: Annotated[list[str], add]
-```
-
-then test that separate node updates:
-
-```python
-{"events": ["one"]}
-{"events": ["two"]}
-```
-
-really produce:
-
-```python
-["one", "two"]
-```
-
-If you depend on conditional routing, test the actual branch behavior.
-
-The goal is not to re-test LangGraph for its maintainers. The goal is to protect the framework semantics that this repository teaches and relies on.
-
----
-
-## 28. Graph state is not automatically a history log
-
-State can contain history, but state does not have to be history.
-
-These fields:
-
-```python
-{
-    "category": "billing",
-    "revisions": 1,
-}
-```
-
-represent current values needed by execution.
-
-This field:
-
-```python
-{
-    "events": [
-        "classified as billing",
-        "drafted first response",
-        "review requested one revision",
-    ]
-}
-```
-
-is an accumulated trace we intentionally chose to retain.
-
-Those are different semantics.
-
-Do not assume every old value must remain forever just because state changes over time.
-
-Many fields should overwrite:
-
-```text
-old review decision
--> new review decision
-```
-
-Only fields that actually mean “accumulated history” should use an accumulating reducer.
-
----
-
-## 29. Reduce the whole chapter to four questions
-
-If the chapter has started to feel dense, keep these four questions.
-
-State:
-
-```text
-What data must exist for execution to continue correctly?
-```
-
-Node:
-
-```text
-What meaningful work happens here, and what partial update does it produce?
-```
-
-Edge:
-
-```text
-Which node runs next?
-```
-
-Reducer:
-
-```text
-How is this partial update merged into accumulated state?
-```
-
-Once those four are clear, most of LangGraph's core Graph API stops looking mysterious.
-
----
-
-## 30. Run the chapter examples
-
-Start with the handwritten runtime:
+After installing this chapter's dependencies, set the credential and an actually available model ID in the same terminal. For Bash:
 
 ```bash
-python stages/03-stateful-orchestration/code/state_graph.py
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="your-available-model-id"
+python stages/03-stateful-orchestration/code/langgraph_deepseek_agent.py --language en --show-updates
 ```
 
-Install LangGraph:
+In PowerShell the first two lines are:
+
+```powershell
+$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_MODEL="your-available-model-id"
+```
+
+The entry point explicitly identifies itself as live DeepSeek use, requiring network access and incurring service usage. The client sets `max_retries=0` so SDK retries do not add hidden attempts. `timeout=30.0` configures a client request, not a thirty-second deadline for the entire graph. Missing dependencies, missing credentials, and failed requests do not cause a switch to scripted answers.
+
+A real model may use different wording, numbers of requests, or ordering. The runtime bounds execution but does not verify every final sentence. A model that skips tools and says “99 degrees” can satisfy the nonempty-answer protocol while failing the task. Reaching `END`, satisfying a data contract, and answering correctly are distinct properties.
+
+## 13. Take the same brief through every exit
+
+The experiments now have a purpose beyond repeating a happy path. First supply a complete initial draft and predict that no revision node will run. Then make the reviser stubbornly omit the notice and predict a route to `hold`, not `publish`:
 
 ```bash
-python -m pip install -r stages/03-stateful-orchestration/code/requirements.txt
+python stages/03-stateful-orchestration/code/state_graph.py --draft-style complete --language en
+python stages/03-stateful-orchestration/code/state_graph.py --draft-style stubborn --max-revisions 2 --language en
 ```
 
-Run the same workflow using LangGraph:
+The second command should exit with code 1, retaining its final draft but no accepted answer. That failure is the result we want to observe, not something to fix by deleting the check.
 
-```bash
-python stages/03-stateful-orchestration/code/langgraph_workflow.py
-```
+Next, temporarily change Tokyo's record to 22.0°C. The draft, check, and final result should follow the new data and show 71.6°F. Revision should not fetch both cities again. Finally, change the temperature inside a draft after it has passed review and attempt publication. The old assessment must not approve the changed document. These experiments test data flow, node responsibilities, and the scope of a review result.
 
-Run the graph-shaped ReAct example:
-
-```bash
-python stages/03-stateful-orchestration/code/langgraph_scripted_agent.py
-```
-
-Then run the offline checks:
+Run the automated checks:
 
 ```bash
 python stages/03-stateful-orchestration/code/checks.py
 ```
 
-The checks cover partial updates, reducers, invalid conditional routes, cycle budgets, the handwritten revision loop, equivalent LangGraph workflow behavior, streaming updates, and the model/tool boundary in the ReAct graph.
+They exercise ordinary functions, the handwritten engine, and the provider adapter. With LangGraph installed, they also compare real framework branches and merging, and verify single-run streaming. The optional SDK test uses mocked HTTP and makes no paid request. Missing optional integrations are explicitly skipped; a skip is not evidence that the real framework ran successfully.
 
----
+Returning to Lin's requirement, we can now explain what is in state, what changed, why checking failed, which edge selects the next action, and when execution merely stops rather than succeeds. State still lives in this process: a restart does not automatically continue the run, and the event list is neither durable storage nor a complete observability platform. An accurate boundary tells us what problem remains.
 
-### Troubleshooting and file map
-
-| File | Purpose | Live model call |
-|---|---|---|
-| state_graph.py | Handwritten merge and transition engine | No |
-| langgraph_workflow.py | Same support flow in LangGraph | No |
-| langgraph_scripted_agent.py | Complete offline model → tools graph | No |
-| langgraph_deepseek_agent.py | Complete live DeepSeek model → tools graph | Yes |
-| checks.py | Offline regression checks | No |
-
-For missing modules, install requirements with the same Python interpreter used to run the script. Set environment variables in that same terminal; CMD's `set` and PowerShell's `$env:` are different syntax. For budget exhaustion, inspect the trace and stopping condition before increasing the limit.
-
-Framework reference: [LangGraph Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api). This chapter configures no persistence, concurrent scheduling, or automatic recovery; compilation does not prove business correctness.
-
-
-## 31. Exercises: change control semantics, not just the labels
-
-First, change the support review logic.
-
-Right now the first review always requests one revision. Make it inspect the draft instead: request a revision only if the draft does not contain the phrase `"next step"`.
-
-Do not edit the draft inside the router. The router should only choose `revise` or `accept`.
-
-Next, add an `escalate` path.
-
-If `revisions >= 2` and the draft is still rejected, stop looping and enter an `escalate` node:
-
-```text
-review
-  ├── accept
-  ├── revise
-  └── escalate
-```
-
-Then intentionally remove the reducer from `events`, run the graph, and observe how accumulated history disappears. Restore it and explain why the field's meaning requires accumulation.
-
-Finally, modify `langgraph_scripted_agent.py` so the scripted model first calls `multiply`, then calls a new `add` tool, and only then returns a final answer. Do not change the graph topology. Then make the matching Tool-schema and argument-validation changes in `langgraph_deepseek_agent.py`.
-
-If you can do that cleanly, you have understood an important benefit of the representation:
-
-> The graph describes the control structure; task behavior can evolve inside that structure without rewriting the entire runtime.
-
----
-
-## 32. Closing the chapter: make “where are we now?” a first-class concept
-
-Stage 01 gave us a looping Agent Runtime.
-
-Stage 02 taught us to choose deliberately which decisions belong to models and which should remain ordinary software.
-
-Stage 03 adds another piece: once branches, loops, and intermediate data become difficult to follow, stop hiding execution position inside local variables and nested control flow. Represent it explicitly with:
-
-```text
-State
-+
-Node
-+
-Edge
-+
-Reducer
-```
-
-The value of a graph is not that it makes a system look more agentic.
-
-It solves a more practical problem:
-
-> **When the control flow is complicated enough to need a map, give the program a map it can actually execute.**
-
-If the road is straight, use ordinary Python.
-
-If the system genuinely has shared state, branches, cycles, and paths worth inspecting independently, a graph may earn its complexity.
-
-Architecture is not a badge collection. If a staircase gets you there, you do not need to build an interchange.
+Suppose the next user asks about a newly updated shop policy rather than two weather records already in a dictionary. Does the state graph deliver that missing information to the model? No. It organizes work; it does not create facts. [Stage 04: Retrieval and Agentic RAG](../04-agentic-rag/README.md) takes up the question of where the needed material comes from.

@@ -1,278 +1,197 @@
+"""A sequential, in-memory state graph; not a replacement for LangGraph."""
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any, Iterator
 
 START = "__start__"
 END = "__end__"
-
 State = dict[str, Any]
-Node = Callable[[State], Mapping[str, Any] | None]
+Node = Callable[[State], Mapping[str, Any]]
 Router = Callable[[State], str]
 Reducer = Callable[[Any, Any], Any]
 
 
-@dataclass(frozen=True, slots=True)
-class RunResult:
-    state: State
-    trace: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ConditionalEdge:
-    router: Router
-    destinations: dict[str, str]
-
-
-class MiniStateGraph:
-    """A tiny state-graph runtime for learning graph semantics."""
-
-    def __init__(self, *, reducers: Mapping[str, Reducer] | None = None) -> None:
-        self._nodes: dict[str, Node] = {}
-        self._edges: dict[str, str] = {}
-        self._conditional_edges: dict[str, ConditionalEdge] = {}
-        self._reducers = dict(reducers or {})
-
-    def add_node(self, name: str, node: Node) -> None:
-        if not name or name in {START, END}:
-            raise ValueError(f"invalid node name: {name!r}")
-        if name in self._nodes:
-            raise ValueError(f"duplicate node: {name!r}")
-        self._nodes[name] = node
-
-    def add_edge(self, source: str, destination: str) -> None:
-        self._ensure_no_outgoing_edge(source)
-        self._edges[source] = destination
-
-    def add_conditional_edges(
-        self,
-        source: str,
-        router: Router,
-        destinations: Mapping[str, str],
-    ) -> None:
-        self._ensure_no_outgoing_edge(source)
-        if not destinations:
-            raise ValueError("conditional edges need at least one destination")
-        self._conditional_edges[source] = ConditionalEdge(
-            router=router,
-            destinations=dict(destinations),
-        )
-
-    def compile(self) -> "CompiledMiniStateGraph":
-        self._validate_topology()
-        return CompiledMiniStateGraph(
-            nodes=dict(self._nodes),
-            edges=dict(self._edges),
-            conditional_edges=dict(self._conditional_edges),
-            reducers=dict(self._reducers),
-        )
-
-    def _ensure_no_outgoing_edge(self, source: str) -> None:
-        if source == END:
-            raise ValueError("END cannot have an outgoing edge")
-        if source in self._edges or source in self._conditional_edges:
-            raise ValueError(f"{source!r} already has an outgoing edge")
-
-    def _validate_topology(self) -> None:
-        if START not in self._edges and START not in self._conditional_edges:
-            raise ValueError("graph needs an edge out of START")
-
-        valid_sources = {START, *self._nodes}
-        valid_destinations = {END, *self._nodes}
-
-        for source, destination in self._edges.items():
-            if source not in valid_sources:
-                raise ValueError(f"unknown edge source: {source!r}")
-            if destination not in valid_destinations:
-                raise ValueError(f"unknown edge destination: {destination!r}")
-
-        for source, branch in self._conditional_edges.items():
-            if source not in valid_sources:
-                raise ValueError(f"unknown conditional source: {source!r}")
-            for destination in branch.destinations.values():
-                if destination not in valid_destinations:
-                    raise ValueError(
-                        f"unknown conditional destination: {destination!r}"
-                    )
-
-        for name in self._nodes:
-            if name not in self._edges and name not in self._conditional_edges:
-                raise ValueError(f"node {name!r} has no outgoing edge")
-
-
-class CompiledMiniStateGraph:
-    def __init__(
-        self,
-        *,
-        nodes: dict[str, Node],
-        edges: dict[str, str],
-        conditional_edges: dict[str, ConditionalEdge],
-        reducers: dict[str, Reducer],
-    ) -> None:
-        self._nodes = nodes
-        self._edges = edges
-        self._conditional_edges = conditional_edges
-        self._reducers = reducers
-
-    def invoke(
-        self,
-        initial_state: Mapping[str, Any],
-        *,
-        max_steps: int = 30,
-    ) -> RunResult:
-        if max_steps <= 0:
-            raise ValueError("max_steps must be positive")
-
-        state = dict(initial_state)
-        trace: list[str] = []
-        current = self._next_node(START, state)
-
-        while current != END:
-            if len(trace) >= max_steps:
-                raise RuntimeError(f"graph exceeded max_steps={max_steps}")
-
-            update = self._nodes[current](dict(state))
-            if update is not None:
-                if not isinstance(update, Mapping):
-                    raise TypeError(
-                        f"node {current!r} must return a mapping or None"
-                    )
-                self._apply_update(state, update)
-
-            trace.append(current)
-            current = self._next_node(current, state)
-
-        return RunResult(state=state, trace=tuple(trace))
-
-    def _apply_update(self, state: State, update: Mapping[str, Any]) -> None:
-        for key, right in update.items():
-            reducer = self._reducers.get(key)
-            if reducer is None or key not in state:
-                state[key] = right
-            else:
-                state[key] = reducer(state[key], right)
-
-    def _next_node(self, source: str, state: State) -> str:
-        branch = self._conditional_edges.get(source)
-        if branch is not None:
-            route = branch.router(dict(state))
-            try:
-                return branch.destinations[route]
-            except KeyError as exc:
-                allowed = ", ".join(sorted(branch.destinations))
-                raise RuntimeError(
-                    f"router from {source!r} returned {route!r}; "
-                    f"allowed routes: {allowed}"
-                ) from exc
-
-        try:
-            return self._edges[source]
-        except KeyError as exc:
-            raise RuntimeError(f"{source!r} has no outgoing edge") from exc
-
-
-def append_events(left: list[str], right: list[str]) -> list[str]:
+def append_events(left: list, right: list) -> list:
     return [*left, *right]
 
 
-def classify(state: State) -> dict[str, Any]:
-    request = state["request"].lower()
-    if "refund" in request or "charged" in request:
-        category = "billing"
-    elif "password" in request or "login" in request:
-        category = "technical"
-    else:
-        category = "general"
-
-    return {
-        "category": category,
-        "events": [f"classified as {category}"],
-    }
+def merge_update(state: Mapping[str, Any], update: Mapping[str, Any],
+                 reducers: Mapping[str, Reducer]) -> State:
+    """Stage a new snapshot; a failed reducer does not partially update state."""
+    if not isinstance(update, Mapping) or any(not isinstance(k, str) for k in update):
+        raise TypeError("A node must return a mapping with string keys")
+    candidate = deepcopy(dict(state))
+    for key, value in update.items():
+        right = deepcopy(value)
+        reducer = reducers.get(key)
+        candidate[key] = reducer(candidate[key], right) if reducer and key in candidate else right
+    return deepcopy(candidate)
 
 
-def draft(state: State) -> dict[str, Any]:
-    category = state["category"]
-    response = {
-        "billing": "I can help review the billing issue.",
-        "technical": "I can help troubleshoot the access issue.",
-        "general": "I can help with that request.",
-    }[category]
-    return {
-        "draft": response,
-        "events": ["drafted first response"],
-    }
+@dataclass(frozen=True)
+class StepSnapshot:
+    node: str
+    update: State
+    state: State
 
 
-def review(state: State) -> dict[str, Any]:
-    needs_revision = state.get("revisions", 0) == 0
-    return {
-        "review": "revise" if needs_revision else "accept",
-        "events": [
-            "review requested one revision"
-            if needs_revision
-            else "review accepted response"
-        ],
-    }
+@dataclass(frozen=True)
+class RunResult:
+    state: State
+    trace: tuple[str, ...]
+    steps: tuple[StepSnapshot, ...]
 
 
-def revise(state: State) -> dict[str, Any]:
-    return {
-        "draft": state["draft"] + " I will keep the next step specific.",
-        "revisions": state.get("revisions", 0) + 1,
-        "events": ["revised response"],
-    }
+class GraphExecutionError(RuntimeError):
+    def __init__(self, message: str, *, node: str, state: State, trace: list[str]) -> None:
+        super().__init__(message)
+        self.node = node
+        self.state = deepcopy(state)
+        self.trace = tuple(trace)
 
 
-def finish(state: State) -> dict[str, Any]:
-    return {
-        "answer": state["draft"],
-        "events": ["finished workflow"],
-    }
+class GraphLimitError(GraphExecutionError):
+    pass
 
 
-def route_after_review(state: State) -> str:
-    return state["review"]
+class MiniStateGraph:
+    def __init__(self, *, reducers: Mapping[str, Reducer] | None = None) -> None:
+        self.nodes: dict[str, Node] = {}
+        self.edges: dict[str, str] = {}
+        self.branches: dict[str, tuple[Router, dict[str, str]]] = {}
+        self.reducers = dict(reducers or {})
+        if not all(callable(reducer) for reducer in self.reducers.values()):
+            raise TypeError("Reducers must be callable")
+
+    def add_node(self, name: str, node: Node) -> None:
+        if not isinstance(name, str) or not name.strip() or name in {START, END}:
+            raise ValueError("Invalid node name")
+        if name in self.nodes or not callable(node):
+            raise ValueError("Duplicate node or non-callable node")
+        self.nodes[name] = node
+
+    def _check_source(self, source: str) -> None:
+        if source == END or source in self.edges or source in self.branches:
+            raise ValueError("This sequential graph permits one outgoing rule per source")
+
+    def add_edge(self, source: str, destination: str) -> None:
+        self._check_source(source)
+        self.edges[source] = destination
+
+    def add_conditional_edges(self, source: str, router: Router,
+                              destinations: Mapping[str, str]) -> None:
+        self._check_source(source)
+        if not callable(router) or not destinations:
+            raise ValueError("A conditional edge needs a router and destinations")
+        if any(not isinstance(k, str) or not k for k in destinations):
+            raise ValueError("Route labels must be nonempty strings")
+        self.branches[source] = (router, dict(destinations))
+
+    def compile(self) -> CompiledMiniStateGraph:
+        sources = {START, *self.nodes}
+        targets = {END, *self.nodes}
+        adjacency = {source: [target] for source, target in self.edges.items()}
+        adjacency.update({source: list(branch[1].values()) for source, branch in self.branches.items()})
+        if START not in adjacency:
+            raise ValueError("Missing START edge")
+        if set(adjacency) != sources:
+            raise ValueError("Unknown source or node without an outgoing rule")
+        if any(target not in targets for values in adjacency.values() for target in values):
+            raise ValueError("Unknown edge destination")
+
+        def reachable(start: str) -> set[str]:
+            seen: set[str] = set()
+            todo = [start]
+            while todo:
+                current = todo.pop()
+                if current not in seen:
+                    seen.add(current)
+                    todo.extend(adjacency.get(current, []))
+            return seen
+
+        if not set(self.nodes) <= reachable(START):
+            raise ValueError("Unreachable node")
+        if any(END not in reachable(source) for source in sources):
+            raise ValueError("Every source needs a possible path to END")
+        # Freeze routing tables, not callable internals or external resources.
+        return CompiledMiniStateGraph(
+            dict(self.nodes), dict(self.edges),
+            {key: (fn, dict(paths)) for key, (fn, paths) in self.branches.items()},
+            dict(self.reducers),
+        )
 
 
-def build_support_graph() -> CompiledMiniStateGraph:
-    builder = MiniStateGraph(reducers={"events": append_events})
-    builder.add_node("classify", classify)
-    builder.add_node("draft", draft)
-    builder.add_node("review", review)
-    builder.add_node("revise", revise)
-    builder.add_node("finish", finish)
+class CompiledMiniStateGraph:
+    def __init__(self, nodes: dict[str, Node], edges: dict[str, str],
+                 branches: dict[str, tuple[Router, dict[str, str]]],
+                 reducers: dict[str, Reducer]) -> None:
+        self.nodes, self.edges = nodes, edges
+        self.branches, self.reducers = branches, reducers
 
-    builder.add_edge(START, "classify")
-    builder.add_edge("classify", "draft")
-    builder.add_edge("draft", "review")
-    builder.add_conditional_edges(
-        "review",
-        route_after_review,
-        {
-            "revise": "revise",
-            "accept": "finish",
-        },
-    )
-    builder.add_edge("revise", "review")
-    builder.add_edge("finish", END)
-    return builder.compile()
+    def _next(self, source: str, state: State) -> str:
+        if source not in self.branches:
+            return self.edges[source]
+        router, destinations = self.branches[source]
+        route = router(deepcopy(state))
+        if not isinstance(route, str) or route not in destinations:
+            raise ValueError("Router returned an undeclared route")
+        return destinations[route]
+
+    def stream(self, initial_state: Mapping[str, Any], *, max_steps: int = 30) -> Iterator[StepSnapshot]:
+        if type(max_steps) is not int or max_steps < 1:
+            raise ValueError("max_steps must be a positive integer")
+        if not isinstance(initial_state, Mapping):
+            raise TypeError("initial_state must be a mapping")
+        state = deepcopy(dict(initial_state))
+        trace: list[str] = []
+        source = START
+        while True:
+            try:
+                current = self._next(source, state)
+            except Exception as exc:
+                raise GraphExecutionError("Routing failed", node=source, state=state, trace=trace) from exc
+            if current == END:
+                return
+            if len(trace) >= max_steps:
+                raise GraphLimitError(f"Graph exceeded max_steps={max_steps}",
+                                      node=current, state=state, trace=trace)
+            try:
+                update = self.nodes[current](deepcopy(state))
+                candidate = merge_update(state, update, self.reducers)
+            except Exception as exc:
+                raise GraphExecutionError("Node or merge failed", node=current,
+                                          state=state, trace=trace) from exc
+            state = candidate
+            trace.append(current)
+            yield StepSnapshot(current, deepcopy(dict(update)), deepcopy(state))
+            source = current
+
+    def invoke(self, initial_state: Mapping[str, Any], *, max_steps: int = 30) -> RunResult:
+        steps = tuple(self.stream(initial_state, max_steps=max_steps))
+        state = deepcopy(steps[-1].state if steps else dict(initial_state))
+        return RunResult(state, tuple(step.node for step in steps), steps)
 
 
 def main() -> None:
-    graph = build_support_graph()
-    result = graph.invoke(
-        {
-            "request": "I was charged twice and need a refund.",
-            "revisions": 0,
-            "events": [],
-        }
-    )
-
-    print("trace:", " -> ".join(result.trace))
-    print("answer:", result.state["answer"])
-    print("events:")
-    for event in result.state["events"]:
-        print("-", event)
+    from workflow import build_mini_workflow, initial_state, parse_args, show_result
+    from state_graph import GraphExecutionError as EngineError
+    args = parse_args()
+    graph = build_mini_workflow(draft_style=args.draft_style, max_revisions=args.max_revisions)
+    try:
+        result = graph.invoke(initial_state(args.cities, not args.celsius_only, args.language),
+                              max_steps=args.max_steps)
+    except EngineError as exc:
+        print("stopped before:", exc.node, "completed nodes:", exc.trace)
+        raise SystemExit(1) from None
+    if args.show_updates:
+        for step in result.steps:
+            print(step.node, "updated:", sorted(step.update))
+    show_result(result.state)
+    if result.state["status"] != "completed":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

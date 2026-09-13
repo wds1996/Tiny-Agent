@@ -1,135 +1,66 @@
+"""The same report nodes and routes, executed by LangGraph."""
 from __future__ import annotations
 
 from operator import add
-from typing import Annotated, Literal
-
-from langgraph.graph import END, START, StateGraph
+from typing import Annotated, Any
 from typing_extensions import TypedDict
 
+from workflow import ReportNodes, connect_report, initial_state, parse_args, show_result
 
-class SupportState(TypedDict, total=False):
-    request: str
-    category: str
-    draft: str
-    review: str
+
+class ReportState(TypedDict):
+    cities: list[str]
+    include_fahrenheit: bool
+    language: str
+    readings: list[dict[str, Any]]
+    draft: dict[str, Any] | None
+    review: dict[str, Any] | None
     revisions: int
     events: Annotated[list[str], add]
-    answer: str
+    answer: str | None
+    status: str
 
 
-def classify(state: SupportState) -> dict:
-    request = state["request"].lower()
-    if "refund" in request or "charged" in request:
-        category = "billing"
-    elif "password" in request or "login" in request:
-        category = "technical"
-    else:
-        category = "general"
-
-    return {
-        "category": category,
-        "events": [f"classified as {category}"],
-    }
+def state_graph_type():
+    try:
+        from langgraph.graph import StateGraph
+    except ImportError as exc:
+        raise RuntimeError("Install stages/03-stateful-orchestration/code/requirements.txt first") from exc
+    return StateGraph
 
 
-def draft(state: SupportState) -> dict:
-    response = {
-        "billing": "I can help review the billing issue.",
-        "technical": "I can help troubleshoot the access issue.",
-        "general": "I can help with that request.",
-    }[state["category"]]
-
-    return {
-        "draft": response,
-        "events": ["drafted first response"],
-    }
-
-
-def review(state: SupportState) -> dict:
-    needs_revision = state.get("revisions", 0) == 0
-    return {
-        "review": "revise" if needs_revision else "accept",
-        "events": [
-            "review requested one revision"
-            if needs_revision
-            else "review accepted response"
-        ],
-    }
-
-
-def route_after_review(state: SupportState) -> Literal["revise", "accept"]:
-    return "revise" if state["review"] == "revise" else "accept"
-
-
-def revise(state: SupportState) -> dict:
-    return {
-        "draft": state["draft"] + " I will keep the next step specific.",
-        "revisions": state.get("revisions", 0) + 1,
-        "events": ["revised response"],
-    }
-
-
-def finish(state: SupportState) -> dict:
-    return {
-        "answer": state["draft"],
-        "events": ["finished workflow"],
-    }
-
-
-def build_graph():
-    builder = StateGraph(SupportState)
-
-    builder.add_node("classify", classify)
-    builder.add_node("draft", draft)
-    builder.add_node("review", review)
-    builder.add_node("revise", revise)
-    builder.add_node("finish", finish)
-
-    builder.add_edge(START, "classify")
-    builder.add_edge("classify", "draft")
-    builder.add_edge("draft", "review")
-    builder.add_conditional_edges(
-        "review",
-        route_after_review,
-        {
-            "revise": "revise",
-            "accept": "finish",
-        },
-    )
-    builder.add_edge("revise", "review")
-    builder.add_edge("finish", END)
-
+def build_graph(**options: Any):
+    builder = state_graph_type()(ReportState)
+    connect_report(builder, ReportNodes(**options))
     return builder.compile()
 
 
-def initial_state() -> SupportState:
-    return {
-        "request": "I was charged twice and need a refund.",
-        "revisions": 0,
-        "events": [],
-    }
+def run_stream(graph: Any, state: dict[str, Any], *, show_updates: bool = False,
+               recursion_limit: int = 30) -> dict[str, Any]:
+    """Consume one run, including its final values; never invoke it a second time."""
+    if type(recursion_limit) is not int or recursion_limit < 1:
+        raise ValueError("recursion_limit must be a positive integer")
+    final = None
+    for mode, payload in graph.stream(state, stream_mode=["updates", "values"],
+                                       config={"recursion_limit": recursion_limit}):
+        if mode == "updates" and show_updates:
+            for node, update in payload.items():
+                print(node, "updated:", sorted(update) if isinstance(update, dict) else [])
+        elif mode == "values":
+            final = payload
+    if final is None:
+        raise RuntimeError("Graph produced no state values")
+    return final
 
 
 def main() -> None:
-    graph = build_graph()
-
-    print("=== node updates ===")
-    for update in graph.stream(
-        initial_state(),
-        stream_mode="updates",
-        config={"recursion_limit": 20},
-    ):
-        print(update)
-
-    print("\n=== final state ===")
-    result = graph.invoke(
-        initial_state(),
-        config={"recursion_limit": 20},
-    )
-    print("answer:", result["answer"])
-    print("events:")
-    for event in result["events"]:
-        print("-", event)
+    args = parse_args()
+    graph = build_graph(draft_style=args.draft_style, max_revisions=args.max_revisions)
+    state = run_stream(graph, initial_state(args.cities, not args.celsius_only, args.language),
+                       show_updates=args.show_updates, recursion_limit=args.max_steps)
+    show_result(state)
+    if state["status"] != "completed":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
