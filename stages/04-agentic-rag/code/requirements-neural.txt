@@ -1,0 +1,2 @@
+# Optional: load local, appropriately licensed embedding weights explicitly.
+sentence-transformers>=5,<6

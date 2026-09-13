@@ -1,0 +1,74 @@
+[
+  {
+    "id": "acme-refunds-v2-zh-CN",
+    "file": "acme-refunds-v2.zh-CN.md",
+    "title": "Acme 售后政策（现行版）",
+    "tenant": "acme",
+    "version": "2026-08-01",
+    "status": "published",
+    "language": "zh-CN"
+  },
+  {
+    "id": "acme-refunds-v2-en",
+    "file": "acme-refunds-v2.en.md",
+    "title": "Acme after-sales policy (current edition)",
+    "tenant": "acme",
+    "version": "2026-08-01",
+    "status": "published",
+    "language": "en"
+  },
+  {
+    "id": "acme-delivery-v1-zh-CN",
+    "file": "acme-delivery-v1.zh-CN.md",
+    "title": "Acme 配送与发票说明",
+    "tenant": "acme",
+    "version": "2026-08-01",
+    "status": "published",
+    "language": "zh-CN"
+  },
+  {
+    "id": "acme-delivery-v1-en",
+    "file": "acme-delivery-v1.en.md",
+    "title": "Acme delivery and invoice notes",
+    "tenant": "acme",
+    "version": "2026-08-01",
+    "status": "published",
+    "language": "en"
+  },
+  {
+    "id": "acme-refunds-v1-zh-CN",
+    "file": "acme-refunds-v1.zh-CN.md",
+    "title": "Acme 旧退款页面（归档）",
+    "tenant": "acme",
+    "version": "2026-06-01",
+    "status": "archived",
+    "language": "zh-CN"
+  },
+  {
+    "id": "acme-refunds-v1-en",
+    "file": "acme-refunds-v1.en.md",
+    "title": "Acme former refund page (archived)",
+    "tenant": "acme",
+    "version": "2026-06-01",
+    "status": "archived",
+    "language": "en"
+  },
+  {
+    "id": "other-refunds-v2-zh-CN",
+    "file": "other-refunds-v2.zh-CN.md",
+    "title": "另一商店的退款政策",
+    "tenant": "other-shop",
+    "version": "2026-08-01",
+    "status": "published",
+    "language": "zh-CN"
+  },
+  {
+    "id": "other-refunds-v2-en",
+    "file": "other-refunds-v2.en.md",
+    "title": "Another shop's refund policy",
+    "tenant": "other-shop",
+    "version": "2026-08-01",
+    "status": "published",
+    "language": "en"
+  }
+]

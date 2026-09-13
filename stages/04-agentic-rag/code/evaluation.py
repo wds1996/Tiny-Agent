@@ -1,87 +1,77 @@
+"""Small, passage-level retrieval checks; no labels enter generation prompts."""
 from __future__ import annotations
-
+import argparse
 from dataclasses import dataclass
 from statistics import mean
 from typing import Sequence
 
-from retrieval import HashEmbeddingModel, InMemoryVectorRetriever, make_demo_corpus
+from retrieval import InMemoryVectorRetriever, Scope, lexical_rerank, make_demo_corpus, positive_int
 
 
-def recall_at_k(
-    retrieved_ids: Sequence[str],
-    relevant_document_ids: set[str],
-    *,
-    k: int,
-) -> float:
-    if k <= 0:
-        raise ValueError("k must be positive")
-    if not relevant_document_ids:
-        raise ValueError("relevant_document_ids must not be empty")
-
-    retrieved_documents = {
-        chunk_id.split(":", 1)[0] for chunk_id in retrieved_ids[:k]
-    }
-    hits = len(retrieved_documents & relevant_document_ids)
-    return hits / len(relevant_document_ids)
+def recall_at_k(retrieved_ids: Sequence[str], relevant_ids: set[str], *, k: int) -> float:
+    positive_int(k, "k")
+    if not relevant_ids:
+        raise ValueError("Recall is undefined here without relevant passages")
+    return len(set(retrieved_ids[:k]) & relevant_ids) / len(relevant_ids)
 
 
-def reciprocal_rank(
-    retrieved_ids: Sequence[str],
-    relevant_document_ids: set[str],
-) -> float:
-    if not relevant_document_ids:
-        raise ValueError("relevant_document_ids must not be empty")
-
-    for rank, chunk_id in enumerate(retrieved_ids, start=1):
-        document_id = chunk_id.split(":", 1)[0]
-        if document_id in relevant_document_ids:
-            return 1.0 / rank
-    return 0.0
+def reciprocal_rank(retrieved_ids: Sequence[str], relevant_ids: set[str], *, k: int) -> float:
+    positive_int(k, "k")
+    if not relevant_ids:
+        raise ValueError("Reciprocal rank needs nonempty reference evidence")
+    return next((1 / rank for rank, ident in enumerate(retrieved_ids[:k], 1)
+                 if ident in relevant_ids), 0.0)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class RetrievalCase:
+    name: str
     query: str
-    relevant_document_ids: set[str]
+    scope: Scope
+    relevant_ids: frozenset[str]
 
 
-def evaluate(
-    retriever: InMemoryVectorRetriever,
-    cases: Sequence[RetrievalCase],
-    *,
-    top_k: int = 3,
-) -> tuple[float, float]:
-    recalls: list[float] = []
-    reciprocal_ranks: list[float] = []
+def cases() -> list[RetrievalCase]:
+    result = []
+    for lang in ("zh-CN", "en"):
+        def ids(*topics):
+            doc = f"acme-refunds-v2-{lang}"
+            return frozenset(f"{doc}:{topic}:0" for topic in topics)
+        queries = [
+            ("window", "新订单 原路退款 申请期限", "new orders original-payment refund window", ids("window-new")),
+            ("approval", "提交材料 退款审核手续", "evidence submission refund approval procedure", ids("approval")),
+            ("combined", "新订单原路退款期限与审核材料", "new order refund window and approval materials", ids("window-new", "approval")),
+            ("paraphrase", "钱能沿着付钱的路退回来吗", "Can the money go back the way it came", ids("window-new", "approval")),
+        ]
+        result.extend(RetrievalCase(f"{lang}/{name}", zh if lang == "zh-CN" else en, Scope(language=lang), gold)
+                      for name, zh, en, gold in queries)
+    return result
 
-    for case in cases:
-        results = retriever.retrieve(case.query, top_k=top_k)
-        ids = [item.chunk.id for item in results]
-        recalls.append(
-            recall_at_k(ids, case.relevant_document_ids, k=top_k)
-        )
-        reciprocal_ranks.append(
-            reciprocal_rank(ids, case.relevant_document_ids)
-        )
 
-    return mean(recalls), mean(reciprocal_ranks)
+def evaluate(index: InMemoryVectorRetriever, suite: Sequence[RetrievalCase], *, k: int) -> list[dict]:
+    if not suite:
+        raise ValueError("Evaluation suite must not be empty")
+    rows = []
+    for case in suite:
+        candidates = index.retrieve(case.query, scope=case.scope, top_k=max(6, k))
+        retrieved = [hit.chunk.id for hit in lexical_rerank(case.query, candidates, top_k=k)]
+        gold = set(case.relevant_ids)
+        rows.append(dict(case=case.name, ids=retrieved,
+                         recall=recall_at_k(retrieved, gold, k=k),
+                         rr=reciprocal_rank(retrieved, gold, k=k)))
+    return rows
 
 
 def main() -> None:
-    retriever = InMemoryVectorRetriever(make_demo_corpus(), HashEmbeddingModel())
-    cases = [
-        RetrievalCase(
-            "August 2026 refund original payment 45 calendar days",
-            {"acme-refund-policy-2026-08"},
-        ),
-        RetrievalCase("faiss similarity vector index", {"faiss"}),
-        RetrievalCase("qdrant payload metadata filtering", {"qdrant"}),
-        RetrievalCase("langgraph state conditional edges", {"langgraph"}),
-    ]
-
-    recall, mrr = evaluate(retriever, cases, top_k=2)
-    print(f"mean recall@2: {recall:.3f}")
-    print(f"mean reciprocal rank: {mrr:.3f}")
+    parser = argparse.ArgumentParser(description="Passage Recall@K and MRR@K on visible teaching cases.")
+    parser.add_argument("--k", type=int, default=3)
+    args = parser.parse_args()
+    rows = evaluate(InMemoryVectorRetriever(make_demo_corpus()), cases(), k=args.k)
+    for row in rows:
+        print(f"{row['case']}: recall={row['recall']:.3f}; RR={row['rr']:.3f}; IDs={row['ids']}")
+    print(f"mean Recall@{args.k}={mean(row['recall'] for row in rows):.3f}")
+    print(f"MRR@{args.k}={mean(row['rr'] for row in rows):.3f}")
+    print("Small development set, not held-out model-quality evaluation. Unknown-topic refusal is checked separately.")
 
 
 if __name__ == "__main__":
