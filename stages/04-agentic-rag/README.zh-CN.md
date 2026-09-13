@@ -132,7 +132,7 @@ def embed_query(self, text: str) -> list[float]:
 假设一个小节反复谈原路退款和申请期限，另一个主要谈配送。查询向量与第一个小节的方向通常更接近。**余弦相似度**就是比较向量方向的一种方式：
 
 $$
-\operatorname{cosine}(a,b)=\frac{a\cdot b}{\lVert a\rVert\lVert b\rVert}
+\mathrm{cosine}(a,b)=\frac{a\cdot b}{\lVert a\rVert\lVert b\rVert}
 $$
 
 先把每个向量缩放到长度为 1，再把对应位置相乘并求和，就得到了这个值：

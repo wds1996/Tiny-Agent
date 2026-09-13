@@ -132,7 +132,7 @@ So far, we have turned textual clues into comparable numbers. We have not decide
 A passage about refund timing is likely to point in a direction closer to a refund query than a passage about shipping. **Cosine similarity** compares vector directions:
 
 $$
-\operatorname{cosine}(a,b)=\frac{a\cdot b}{\lVert a\rVert\lVert b\rVert}
+\mathrm{cosine}(a,b)=\frac{a\cdot b}{\lVert a\rVert\lVert b\rVert}
 $$
 
 Normalize both vectors to length one, multiply corresponding coordinates, and sum the products:
