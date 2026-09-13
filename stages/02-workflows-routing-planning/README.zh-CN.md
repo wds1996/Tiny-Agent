@@ -1,734 +1,425 @@
-# Stage 02：别让模型什么都决定——Workflow、Routing 与 Planning
+# Stage 02：页面已经有开关，还要每一步都问模型吗？——工作流、路由与规划
 
 > Language: [English](README.md) | **简体中文**
 
-上一章我们终于把一个真正的 Agent Runtime 跑起来了。模型可以看当前运行记录，决定是调用 Tool 还是直接回答；Runtime 负责执行 Tool、记录 Observation，再把新的状态交还给模型。到这里，很多人会自然产生一个想法：
+[上一章](../01-react-runtime/README.zh-CN.md)，小林的出行练习页面已经能先查 Tokyo 的教学天气，再把 18°C 换算成 64.4°F。模型根据刚拿到的结果提出下一步，运行时检查、执行，再把结果送回去。小林看完却提出一个很实在的问题：“页面上已经有‘同时显示华氏度’的开关了。用户勾上就换算，没勾就不换算，为什么还要问模型？”
 
-> 既然模型已经会决定下一步，那干脆以后所有“下一步”都让模型决定，不就完了？
+这个问题没有推翻上一章的循环。会让模型选择，和每个选择都需要模型，是两回事。就像请了一位懂外语的同事，并不意味着电梯每到一层，都要请他翻译一下按钮上的数字。已经明确的事情，程序自己办，往往更合适。
 
-这个想法很诱人，也很危险。它有点像刚招到一位聪明的新同事，就决定从明天开始让他顺便负责门禁、财务审批、服务器发布和午饭点什么。聪明不等于每件事都应该交给他决定。
+这一章继续做小林的页面。先把开关交给普通代码处理；等页面增加文字输入，再让模型理解用户的表达；等用户希望先看一份两城简报的处理方案，再把步骤写成可检查的计划。中途我们会让一个数据源出故障，看看哪些结果可以保留、后面怎样改。所有天气数值来自本地固定记录，只有最后的 DeepSeek 入口会使用真实模型服务。
 
-这一章我们要解决的问题，正好是 Stage 01 留下来的下一层问题：**Runtime 已经能承载模型决策了，但哪些决策真的值得交给模型？哪些应该继续由普通代码牢牢掌握？**
+## 1. 开关已经告诉我们的事情，就不必再猜
 
-这会带出三个非常常用的控制模式：Workflow、Routing 和 Planning。它们并不是三个孤零零的名词，而是同一个问题的三种答案：**我们到底把多少控制权交给模型？**
+先替小林按一次页面上的按钮：城市选择 Tokyo，勾选“显示华氏度”。此时程序已经知道要查谁、要不要换算。它不知道的是天气记录里的数值，而不是执行顺序。因此，最直接的做法就是读取记录，按开关决定是否换算，最后排成一段文字。
 
-<p align="center">
-  <img src="../../assets/zh/stage02-01.png" alt="Workflow、Routing 与 Planning" width="100%" />
-</p>
+这里把城市、单位选项和输出语言放进一张 `WeatherTask` 任务单。`cities=("Tokyo",)` 表示只查一座城市，括号里的逗号让它成为一个元组；`fahrenheit=True` 表示同时显示华氏度。任务单使用前两章学过的 Pydantic 检查，只接受 Tokyo、Paris，不允许重复城市，也不把字符串 `"false"` 当成布尔开关。
 
----
-
-## 1. 先纠正一个常见误区：Agent 不是“把 if/else 删掉”
-
-先看一个完全不需要模型参与控制的任务：
+看 [`workflow.py`](code/workflow.py) 中真正工作的这一小段：
 
 ```python
-weather = get_weather("Tokyo")
-fahrenheit = celsius_to_fahrenheit(weather["temperature_c"])
-return format_answer(weather, fahrenheit)
+def run_workflow(task: WeatherTask, service: WeatherService) -> str:
+    task = WeatherTask.model_validate(task)
+    readings = []
+    for city in task.cities:
+        reading = service.read(city)
+        if task.fahrenheit:
+            reading = convert_temperature(reading)
+        readings.append(reading)
+    return render_brief(task, tuple(readings))
 ```
 
-这里的顺序很清楚：先查天气，再换算温度，最后格式化答案。步骤固定、依赖固定、失败位置也很容易判断。你当然可以硬塞一个模型进来，让它每一步都回答“接下来应该查天气”“接下来应该换算温度”，但这不会让系统更聪明，只会让一个本来三行能解释清楚的流程，多出延迟、成本和不确定性。
+`service.read()` 读取固定记录，`convert_temperature()` 计算华氏度，`render_brief()` 根据实际结果组织文字。`reading` 始终携带城市、摄氏温度、天气状况和数据来源；换算只是增加一个华氏温度，不会把原始记录覆盖掉。这里的 `if` 不是一个需要被 Agent 淘汰的旧技术，它恰好表达了小林的产品规则。
 
-这类流程就是 **Workflow（工作流）**。它的核心不是“有没有 LLM”，而是**主要控制路径是否由程序预先定义**。
+这样一条由应用预先规定主要路线的处理过程，叫作 **Workflow（工作流）**。它可以有分支，也可以在某一步调用模型润色文字；是否用了模型，不是区分工作流与 Agent 循环的唯一标准。关键是，下一步的路线主要由固定代码决定，还是需要模型结合新信息决定。[工作流与 Agent 的设计讨论](https://www.anthropic.com/engineering/building-effective-agents)也强调先从满足需求的简单结构开始。
 
-这一点值得说得更彻底一些。假设一个工作流里有一步是：
+使用 Python 3.10 或更新版本，在仓库根目录安装本章依赖，再执行这条固定流程：
+
+```bash
+python -m pip install -r stages/02-workflows-routing-planning/code/requirements.txt
+python stages/02-workflows-routing-planning/code/workflow.py --fahrenheit
+```
+
+结果包含 `Tokyo: 18.0°C / 64.4°F`，同时显示 `model calls: 0`。去掉 `--fahrenheit` 再运行，结果就只包含摄氏温度，不会先调用换算函数再把华氏度藏起来。`--cities Paris` 会读取 Paris；`--cities Tokyo Paris` 会处理两座城市并比较温度。它们都不需要语言理解。
+
+开关这条路线已经清楚了。不过，小林随后加了一个输入框。有些用户不想找按钮，只想说一句“读一下东京的教学天气，顺便给我华氏度”。程序这回需要理解的，才真正是语言。
+
+## 2. 加了输入框以后，先弄清用户要去哪一条路线
+
+同一个页面可能收到三种很不同的话：“看一下东京的教学天气”“比较东京和巴黎”“这个页面能做什么”。还有一种更麻烦：“那里现在冷不冷？”最后一句既没有明确城市，又可能在问实时天气，而我们的页面只提供教学记录。
+
+先不用想一个全能模型。页面已有几种处理能力，我们只是需要判断用户想使用哪一种；条件不足时先问清楚，而不是随手挑 Tokyo，热情地回答错问题。这种**从已知目的地中选一个**的工作，就是 **Routing（路由）**。负责提出选择的组件叫 Router，真正进入对应函数仍然是应用的工作。
+
+我们约定四个目的地，名称只是给程序识别用的：
+
+| 目的地 | 页面接下来做什么 |
+| --- | --- |
+| `weather` | 读取一座明确城市的教学记录，可按要求换算 |
+| `compare` | 读取两座城市并比较，可同时显示华氏度 |
+| `help` | 解释页面能力，不查询天气 |
+| `clarify` | 要求补充或调整请求，不查询天气 |
+
+`clarify` 不是故障逃生口。用户确实没说清楚，或者要求本系统没有的实时天气时，澄清本来就是正确的下一步。反过来，模型响应无法解析，不应伪装成“用户没说清楚”；那是另一类错误。
+
+上一章的工具调用已经告诉我们，不能靠一句“我感觉可以查天气”驱动代码。选路也一样，要交回一张结构化任务单。在 [`routing.py`](code/routing.py) 中，主要字段是：
 
 ```python
-summary = model.generate(report)
+class RouteDecision(Contract):
+    route: Literal["weather", "compare", "help", "clarify"]
+    cities: tuple[City, ...] = Field(default=(), max_length=2)
+    fahrenheit: bool = False
+    reason: str = Field(min_length=1, max_length=300)
 ```
 
-它仍然可以是 Workflow。模型只负责这一小步内容生成，至于“什么时候调用模型、调用之后去哪里”，仍然由程序决定。
+`Literal` 限定目的地，`cities` 携带从请求识别出的城市，`fahrenheit` 携带单位要求。`reason` 用来解释这次分类，不是交给后续代码执行的新指令。比如 `compare` 对应两个不同城市；`weather` 对应一个；`help` 和 `clarify` 则不应该偷偷夹带查询城市。
 
-所以判断一个系统是不是 Agent，不要先看它有没有模型，也不要先看有没有 `while` 循环。先问一句：
+`Contract` 是本章几类任务单共同使用的 Pydantic 配置：拒绝额外字段，严格检查类型，并在进入边界时重新验证实例。各个任务单自己的验证函数再检查字段之间的关系。可以把前者理解成检查表格栏目，后者理解成检查“勾了两城对照，是否真的填了两座城”。[Pydantic 的模型说明](https://docs.pydantic.dev/latest/concepts/models/)介绍了字段验证和实例重新验证的区别。
 
-> **下一步主要由谁决定？**
+不过，页面还有原来的下拉框和开关。它们已经给出明确字段，不应该因为增加了输入框，所有请求就都绕道模型服务。
 
-如果答案是“代码提前写好了”，它更接近 Workflow；如果答案是“模型会根据当前观察决定下一步动作”，才真正出现 Agentic control。
+## 3. 能走表单就走表单，只有自由文字才请模型解释
 
----
+我们把两个入口分清楚。表单入口接收经过验证的 `WeatherTask`；文字入口接收用户的一段话。一次请求只能选其中一个，不能同时给出“表单是 Tokyo、文字是 Paris”，再让代码暗中决定听谁的。无论从哪里来，非法输入都应该明确报错，不能在表单校验失败后自动送给模型“修一下”。
 
-## 2. 那什么时候才值得把决定交给模型？
-
-普通代码最擅长处理边界清楚、规则稳定的问题。比如请求以 `weather:` 开头，就交给天气处理器；请求以 `account:` 开头，就交给账户处理器。这种规则根本不需要模型参与：
+组合规则与模型的做法通常叫 **Hybrid Router（混合路由器）**。这里“混合”并不复杂：有可靠的结构字段，就直接选路；只有自由文字，才询问语义路由器。表单分支的核心是：
 
 ```python
-def rule_route(request: str) -> Route | None:
-    normalized = request.strip().lower()
-
-    if normalized.startswith("weather:"):
-        return Route.WEATHER
-    if normalized.startswith("account:"):
-        return Route.ACCOUNT
-
-    return None
+if form is not None:
+    form = WeatherTask.model_validate(form)
+    decision = RouteDecision(
+        route="weather" if len(form.cities) == 1 else "compare",
+        cities=form.cities, fahrenheit=form.fahrenheit,
+        reason="Validated form fields already identify the workflow.",
+    )
+    return RoutingResult(decision, "form")
 ```
 
-如果输入已经给了明确、可靠的信号，直接 `if/else` 通常就是最好的方案。规则可测试、可预测，而且不会某天心情一变把 `weather:` 分到财务部。
+`RoutingResult` 同时记录决策来自哪个入口，便于检查是不是多调用了模型。这里没有分析表单中的自然语言，也没有把用户写出的某个前缀当成权限。表单仍是用户输入，所以城市与开关仍要检查；它只是比自由文字更容易确定含义。
 
-问题出在自然语言。
-
-用户可能不会老老实实写：
-
-```text
-account: duplicate charge
-```
-
-他更可能写：
-
-> 我这个月的账单好像被扣了两次，我也不知道应该找谁。
-
-这时要判断它属于账户问题，程序需要理解自然语言语义。你可以继续堆关键词：
+文字分支会调用 `semantic_router.decide(request)`。模型输出拿回来以后，除了验证结构，我们还做一项很具体的检查：它不能凭空增加请求里没有的城市。
 
 ```python
-if "invoice" in text or "charged" in text or "billing" in text:
-    ...
+def validate_for_request(decision: RouteDecision, request: str) -> RouteDecision:
+    decision = RouteDecision.model_validate(decision)
+    if not set(decision.cities).issubset(mentioned_cities(request)):
+        raise ValueError("the router invented a city absent from the request")
+    return decision
 ```
 
-一开始很好用，后来规则会慢慢长成一棵灌木丛：`charged twice`、`double payment`、`refund`、`money taken again`……你会发现自己正在用字符串规则偷偷手写一个很差的语言理解模型。
+`mentioned_cities()` 只识别本例的 Tokyo、Paris，以及“东京”“巴黎”两个中文别名。这不是一个通用地名识别器。它能够挡住“用户只提 Tokyo，模型却让我们查询 Paris”，但挡不住所有语义错误：用户说“写一首关于 Tokyo 的诗”，模型错误选择天气路线，城市检查仍可能通过。是否理解对了意图，仍然需要用真实问题验证，不能靠 Schema 自动证明。
 
-这就是 **Routing（路由）** 最适合引入模型的地方：**程序已经知道有哪些合法分支，但无法可靠地只靠固定规则理解用户想走哪一条。**
+也不要拿模型返回的 `reason` 去覆盖路线。例如 `route="help"`，理由却写“请执行天气查询”，应用仍只进入帮助分支。程序读取的是经过约定的字段，不是服从任务单里任何像命令的句子。
 
----
+选路解决了“去哪儿”，还没有替小林查到任何数据。下面把这张任务单真正交到处理函数手里。
 
-## 3. Router 的工作不是“执行”，而是“选路”
+## 4. 选完路以后，真的把事情办下去
 
-我们先把 Router 的职责压到最小。
+假如小林点完按钮，只看到“天气模块已收到”，她显然还不能把温度填到页面上。收到和办完不是一回事。我们让天气路线直接复用刚才的工作流，比较路线也调用同一个工作流，只是任务单里有两座城市。帮助和澄清则直接返回对应说明，不碰天气服务。
 
-假设系统只有三条合法路线：
+`dispatch()` 中进入天气工作的部分是：
 
 ```python
-class Route(str, Enum):
-    WEATHER = "weather"
-    ACCOUNT = "account"
-    GENERAL = "general"
+decision = RouteDecision.model_validate(result.decision)
+if decision.route in {"weather", "compare"}:
+    return run_workflow(task_from_decision(decision, language), service)
 ```
 
-模型需要做的，只是从三个选项里选一个。它不应该直接调用数据库，也不应该返回一段“我建议你现在运行 `delete_account()`”之类的自由发挥。最稳妥的结果是一份结构化决策：
+`task_from_decision()` 把选路结果转换成 `WeatherTask`，输出语言由应用参数决定。到这里，模型负责“理解这句话”，程序负责“按已经确定的要求查询和计算”。这比每读一个数字、每做一次换算都再问模型，要少很多不必要的决策点。它没有赋予路由器任意调用函数的能力，也不代替真实业务中的身份授权。
 
-```python
-class RouteDecision(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    route: Route
-    reason: str = Field(min_length=1)
-```
-
-注意这里的设计和 Stage 00 的 Structured Output 是连起来的。模型负责一个语义判断，但这个判断最终要进入程序控制流，所以它应该变成**程序可以验证的数据**，而不是一段散文。
-
-模型给出：
-
-```json
-{
-  "route": "account",
-  "reason": "The request is about a duplicate charge."
-}
-```
-
-应用拿到结果以后，再执行普通代码：
-
-```python
-handler = HANDLERS[routing.route]
-return handler(request)
-```
-
-这里有一个非常重要的分工：
-
-```text
-模型：
-    “我判断它应该去 account。”
-
-应用：
-    “account 是允许的路线之一，我现在调用 account handler。”
-```
-
-模型做语义判断，应用做真实分发。**决策和执行仍然是两层。**
-
-这个边界和 Stage 00 的 Tool Calling 其实是同一个思想，只是换了一个层级。Stage 00 是“模型提议调用哪个 Tool”；这里是“模型提议走哪个分支”。无论提议看起来多合理，真正改变程序控制流的动作仍然由应用完成。
-
----
-
-## 4. 最实用的 Router，往往不是“所有请求都问模型”
-
-现在我们再往前一步。
-
-如果一个请求已经明确写着：
-
-```text
-weather: Tokyo
-```
-
-还要不要发一次模型请求，问它“请判断这是不是天气问题”？
-
-没有必要。那就像快递箱上已经印着“上海”，分拣员还专门打电话问寄件人：“您这个是不是想寄到上海？”——流程很认真，效率很感人。
-
-更合理的方式是**规则优先，语义判断兜底**：
-
-```python
-class HybridRouter:
-    def __init__(self, semantic_router: SemanticRouter) -> None:
-        self.semantic_router = semantic_router
-
-    def route(self, request: str) -> RoutingResult:
-        deterministic = rule_route(request)
-        if deterministic is not None:
-            return RoutingResult(
-                route=deterministic,
-                source="rule",
-                reason="The request contains an explicit route prefix.",
-            )
-
-        decision = self.semantic_router.decide(request)
-        return RoutingResult(
-            route=decision.route,
-            source="semantic",
-            reason=decision.reason,
-        )
-```
-
-这段代码背后的思路比代码本身更重要：**先使用最便宜、最确定、最容易解释的信号；只有当这些信号不足时，才让模型介入。**
-
-运行离线示例：
+先运行离线对照：
 
 ```bash
 python stages/02-workflows-routing-planning/code/routing.py
+python stages/02-workflows-routing-planning/code/routing.py --example clarify
 ```
 
-你会看到三类请求：一个带显式 `weather:` 前缀，直接被规则分流；一个自然语言账单问题，需要语义 Router 判断；一个普通改写请求进入通用路线。
+每次先演示表单入口，显示 `semantic calls: 0`；然后演示一个文字入口。默认文字是比较东京与巴黎，两城结果分别为 18.0°C / 64.4°F 和 12.0°C / 53.6°F，Tokyo 更暖 6.0°C。澄清示例“那里现在冷不冷？”不会产生天气查询，输出中的 `source calls` 是空列表。
 
-示例里的 `ScriptedSemanticRouter` 是确定性的模型替身，它并不假装自己是大模型。我们先用它确认“路由机制本身”没问题，再在后面换成真实模型。这和 Stage 01 用 `ScriptedWeatherModel` 测 Runtime 是同一种测试思路：先把控制逻辑和模型随机性分开。
+这里的 `ScriptedSemanticRouter` 是明确标注的测试替身，只为 `EXAMPLES` 中几句固定输入返回预设任务单，换成任意新句子会报错。它让我们确认分发和数据传递，不代表已经测出了模型的语言理解能力。真实的自由文字会在后面交给 DeepSeek。
 
----
+到此，页面已经可以处理“一句话进入固定流程”。那么，一旦有多个步骤，是不是必须升级成 Planner？还不是。刚才的工作流已经能查询两城、换算和比较，路由器当然也可以把用户交给一个多步骤工作流。规划的价值要从另一个需求说起。
 
-## 5. 为什么 Router 最好返回有限集合，而不是自由文本？
+## 5. 小林想先看看这次准备怎么做
 
-假设你让模型回答：
+小林准备给页面增加一个“先看方案”的演示模式。她希望先看到这一次打算查哪些城市、做哪些换算，再执行。以后步骤变了，也能看见变化发生在哪里，而不是在一长串模型往返里寻找答案。
 
-> 这个请求应该交给哪个模块？
+这时我们把“安排工作”和“实际工作”分开：先得到一张步骤单，检查它能否完成当前任务，再逐项执行。这种提出步骤和依赖的过程，叫作 **Planning（规划）**。提出方案的是 Planner，照着允许的方案办事的是 Executor，也就是执行器。
 
-然后得到：
+先用人的语言给两城华氏简报安排一次：读取 Tokyo，读取 Paris，分别换算，最后比较并组织文字。两个读取之间没有数据依赖，谁先查都行；每次换算却必须等对应读取完成。我们不能先把“将来可能查到的温度”放进计算器。
 
 ```text
-I think the billing support team should probably handle this.
+weather_tokyo      读取 Tokyo
+weather_paris      读取 Paris
+fahrenheit_tokyo   使用 weather_tokyo 的结果换算
+fahrenheit_paris   使用 weather_paris 的结果换算
+brief              使用两份换算后的记录生成比较简报
 ```
 
-人类当然看得懂，但程序又回到了 Stage 00 的老问题：接下来是找 `"billing"` 关键词吗？如果模型改成 `"account support"` 呢？
+左侧是步骤编号，不是温度值。右侧说明工作和输入来源。对于这道小题，普通代码也完全能生成这样的清单；`ScriptedPlanner` 就会这样做。我们让真实模型生成清单，是为了学习如何接住一份模型方案，不是在证明这道固定天气题必须花一次模型调用才做得好。
 
-所以 Route 应该是有限集合：
+与上一章逐轮决定相比，计划式执行让一段工作在执行前就可检查。代价是计划建立在一些假设上，例如数据源可用。我们稍后会亲手打破这个假设。先把步骤单写成程序能读、也能拒绝的形式。
+
+## 6. 计划里填的是结果引用，不是猜出来的结果
+
+如果计划只写“第一步查天气，第二步算一下”，人能理解，执行器却不知道该把哪份记录交给哪次换算。于是每一步需要名字、允许的操作，以及输入来自哪里。`PlanStep` 的字段是：
 
 ```python
-class Route(str, Enum):
-    WEATHER = "weather"
-    ACCOUNT = "account"
-    GENERAL = "general"
+class PlanStep(Contract):
+    step_id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
+    operation: Literal["read_weather", "convert_temperature", "write_brief"]
+    inputs: tuple[str, ...] = Field(default=(), max_length=2)
+    city: City | None = None
+    source: Source | None = None
 ```
 
-这相当于告诉模型：“你可以帮忙判断，但只能从这三个门里选一个，不能临时在墙上画第四扇门。”
+`step_id` 是本次方案内的编号，限制为简单字符，便于引用。`operation` 只能从三个已实现的操作中选。`inputs` 是前面步骤结果的编号；对于读取，它为空，读取使用 `city` 和 `source`；对于换算，它只有一个元素；对于最后的简报，它包含每座城市要使用的最终记录。
 
-这类设计有两个好处。
+本例有 `primary` 和 `backup` 两个读取入口，都通向同一份 `teaching-v1` 固定资料。先把 `source` 理解成“去哪个柜台取资料”，而不是天气发生的时间。正常方案先用主入口，备用入口的使用条件由应用规定，并非模型随便选。
 
-第一，模型输出可以直接验证。如果它返回 `"finance_super_team"`，Pydantic 会拒绝，而不是让程序猜它大概是什么意思。
-
-第二，应用仍然拥有可执行分支。模型不能因为输出了一个新字符串，就凭空创造一个新的系统能力。
-
-所以 Router 的一个好原则是：
-
-> **让模型处理语义模糊，让程序保存控制边界。**
-
----
-
-## 6. Routing 解决的是“走哪条路”，Planning 解决的是“这条路怎么走”
-
-Router 很适合从有限分支中选一个方向，但它不擅长表达一个多步骤任务。
-
-比如：
-
-> 读取东京的教学天气，把摄氏度换成华氏度，然后生成一句简短说明。
-
-如果只有两个互斥模块，Router 当然可以选“天气”。但进了天气模块以后，任务还没结束。你还要决定：
-
-1. 先从哪里读取天气；
-2. 再把哪个结果交给温度换算；
-3. 最后怎样把两份结果组合起来。
-
-这时我们需要的是 **Planning（规划）**。
-
-Planner 的工作，不是直接执行任务，而是把目标拆成一个程序可以检查的步骤序列。我们在示例里定义了四种允许的操作：
+例如这一步只说“换算刚才查到的 Tokyo”，没有填入一个臆测的 18：
 
 ```python
-class Operation(str, Enum):
-    READ_PRIMARY_WEATHER = "read_primary_weather"
-    READ_BACKUP_WEATHER = "read_backup_weather"
-    CONVERT_TEMPERATURE = "convert_temperature"
-    WRITE_BRIEF = "write_brief"
+PlanStep(
+    step_id="fahrenheit_tokyo",
+    operation="convert_temperature",
+    inputs=("weather_tokyo",),
+)
 ```
 
-注意，Planner 仍然没有“想写什么函数就写什么函数”的自由。它只能从应用明确允许的 Operation 中组合计划。
+真正的数值要等 `weather_tokyo` 执行完成后再读取。这样，即使教学记录改为 22°C，计划仍然可以不变，换算结果却应该变成 71.6°F。计划描述依赖，数据来自执行，两者不再混在一句“我预计是 18 度”里。
 
-这点非常重要。一个靠谱的 Planner 不是拿到键盘以后自由写 Python，而更像一个项目经理：它可以决定“先查主数据源，再换算，再生成摘要”，但真正能执行的动作集合，仍然由系统提前定义。
+整张 `Plan` 还带一个简短的 `goal` 和最多五个步骤。`goal` 方便人看，但不能改写原始任务。模型把它写成“只查一座城”也不能让两城任务少查一座。真正验收用的是应用已经确认的 `WeatherTask`。下一节就把这些要求变成执行前的检查。
 
----
+## 7. 执行前先检查整张清单，别干到一半才发现它缺了一页
 
-## 7. Plan 不是一段作文，它应该是可验证的数据
+小林问：“既然有了 Pydantic，不是已经验证过了吗？”它已经帮我们检查字段、类型、有限选项和每种操作的参数形状，但“这一份计划能否完成这一次任务”还需要应用判断。
 
-很多 Planning 示例喜欢让模型输出：
-
-```text
-1. First search for the weather.
-2. Then convert the temperature.
-3. Finally summarize the result.
-```
-
-拿来展示当然很直观，但如果接下来真要由程序执行，这种自然语言计划还不够。
-
-程序至少需要知道：每一步叫什么、做什么、依赖谁。于是我们用一个结构化 `PlanStep`：
+最简单的坏方案是先换算、后查询。即使两步都写得很像样，换算开始时仍然拿不到输入。我们用一个 `known` 表记住当前已经完成、或在这张清单前面会产生的结果。走到某一步，它的所有引用必须已经在表里：
 
 ```python
-class PlanStep(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    step_id: str = Field(min_length=1)
-    operation: Operation
-    depends_on: list[str] = Field(default_factory=list)
-    city: Literal["Tokyo", "Paris"] | None = None
-    source_step: str | None = None
-    conversion_step: str | None = None
+if step.step_id in known:
+    raise PlanRejected("a new step cannot overwrite a completed result")
+if not set(step.inputs).issubset(known):
+    raise PlanRejected("an input refers to a missing or future result")
 ```
 
-一个实际计划大概长这样：
+这里检查的是**整张计划的顺序**，还没有读取天气。检查过程中只推演“哪一步会产生哪类结果”，不制造真实温度。依赖只能向前面找，自己依赖自己、两步互相等待都会被拒绝。这种把生产者放在消费者前面的安排，常叫拓扑顺序；本章不需要图框架，按顺序检查一张短清单就够了。
 
-```text
-weather
-    operation = read_primary_weather
-
-convert
-    operation = convert_temperature
-    source_step = weather
-
-brief
-    operation = write_brief
-    source_step = weather
-    conversion_step = convert
-```
-
-这样一来，“先后关系”不再只存在于模型文字里，而是成为程序能检查的依赖。
-
-例如 `convert` 引用了 `weather`，那 `weather` 必须已经在前面完成；`brief` 要同时引用天气结果和换算结果，这两步就都必须先存在。
-
----
-
-## 8. 为什么 Plan 必须在执行前检查？
-
-这里很容易出现一个危险的错觉：
-
-> 既然 Plan 是模型生成的，那模型应该已经知道自己在干什么吧？
-
-不要这么乐观。模型生成的 Plan 仍然是外部输入。
-
-它可能返回重复的 step ID：
-
-```text
-weather
-weather
-brief
-```
-
-也可能让第一步依赖第三步：
-
-```text
-convert depends_on weather
-weather comes later
-```
-
-这种计划像一个会议通知：“请大家先根据会议结论准备材料，会议结论将在两小时后讨论。”语法完全通顺，执行起来很有哲学意味。
-
-所以 `Plan` 本身要做结构检查：
+光有引用还不够。`known` 同时记住结果属于哪个城市、是否已经包含华氏度。于是我们可以拒绝重复换算、把别的城市混进来，以及最后交付错误单位。简报步骤的检查是：
 
 ```python
-class Plan(BaseModel):
-    goal: str = Field(min_length=1)
-    steps: list[PlanStep] = Field(min_length=1, max_length=5)
+products = [known[key] for key in step.inputs]
+expected = {(city, task.fahrenheit) for city in task.cities}
+if len(products) != len(expected) or set(products) != expected:
+    raise PlanRejected("the brief omits a city or has the wrong units")
 ```
 
-并且验证：
+比如任务要求 Tokyo 与 Paris 都有华氏度，`expected` 就需要两项对应的结果，不能用两个 Tokyo，也不能只交一份 Tokyo，再写一句“Paris 应该也差不多”。`write_brief` 必须在最后；没有最终简报的计划也不完整。
 
-- `step_id` 不能重复；
-- 依赖只能指向已经出现的步骤；
-- `source_step`、`conversion_step` 不能引用未来结果；
-- 计划长度有上限。
+这些关系由 [`validate_plan()`](code/planning.py) 检查，执行器在做任何操作前调用它。因此，哪怕计划前四步看起来都正确，最后一步漏了 Paris，第一条查询也不会先跑。模型可以给独立步骤安排不同顺序，但不能改变必需的输入和交付内容。
 
-这里其实又重复了一次我们整门课已经见过的原则：
+当然，一张依赖正确的清单仍可能碰到服务故障。验证保证的是列明的结构与任务约束，不是给外部世界签发“今天绝不出问题”的证明。先按正常顺序执行，我们才有地方记录现实发生了什么。
 
-> **模型输出是候选数据，应用在使用之前要验证。**
+## 8. 执行器按编号保存结果，再把结果交给下一步
 
-Stage 00 用在 Structured Output 和 Tool Arguments 上，Stage 01 用在 ToolCall 和 ModelTurn 上，现在 Stage 02 用在 Plan 上。你会发现真正稳定的 Agent 系统，往往不是因为模型从不出错，而是因为每一层都清楚知道“我接下来准备信任什么”。
+现在轮到执行器干活。它不再向模型询问“第一步是什么意思”，而是根据 `operation` 进入应用写好的分支。每个读取或换算完成后，用 `step_id` 保存结果。模型没有机会通过计划填写这个结果表，更不能把 `temperature_c=99` 夹进换算步骤。
 
----
-
-## 9. Planner 和 Executor 要分开
-
-当 Plan 验证通过以后，谁来执行？
-
-不是 Planner 自己。
-
-我们把执行交给 `PlanExecutor`：
+[`PlanExecutor`](code/planning.py) 的两个数据处理分支如下：
 
 ```python
-class PlanExecutor:
-    def execute(self, plan: Plan) -> str:
-        results: dict[str, Any] = {}
-
-        for index, step in enumerate(plan.steps, start=1):
-            if index > self.max_execution_steps:
-                raise RuntimeError("execution step budget exhausted")
-
-            results[step.step_id] = self._execute_step(step, results)
-
-        ...
+if step.operation == "read_weather":
+    return self.service.read(step.city, step.source)
+if step.operation == "convert_temperature":
+    return convert_temperature(results[step.inputs[0]])
 ```
 
-Planner 和 Executor 的分工可以这样理解：
+第一行查记录，第二条分支使用前面保存的 `Reading`。`Reading` 保留城市、摄氏度、天气状况、来源和资料版本；换算函数返回增加了华氏度的新记录。最后的 `write_brief` 取得计划引用的记录，再交给与固定工作流相同的 `render_brief()`，所以两种组织方式的计算口径一致。
 
-```text
-Planner：
-    “我建议按 weather → convert → brief 执行。”
+本章的简报文字也由固定格式器产生。这样可以直观看见数值有没有沿着依赖传递，不把“规划是否正确”与“模型最后一句是否措辞准确”混成一项检查。格式器还会核对交付城市、单位与资料版本。它能检查这些明确条件，但不会证明真实数据源的内容一定可信。
 
-Executor：
-    “我先检查这个计划是否合法，然后按允许的 Operation 真正执行。”
+先运行没有故障的版本：
+
+```bash
+python stages/02-workflows-routing-planning/code/planning.py --failure none
 ```
 
-这和 Tool Calling 的边界非常相似。Planner 负责产生“怎么做”的建议；Executor 才拥有“真的做”的权限。
+程序先生成并检查五步方案，再执行五个步骤。终端在运行结束后统一打印保存的方案与执行记录，不提供人工点击确认的界面；程序执行前的计划检查与人工审批不是一回事。最终结果与表单工作流一致：Tokyo 为 18.0°C / 64.4°F，Paris 为 12.0°C / 53.6°F，温差 6.0°C。这里是顺序执行，没有并发；两个读取互不依赖，只表示它们可以交换先后，并不等于 Python 已经同时启动它们。
 
-为什么要分开？因为一旦把两者揉在一起，你很难回答这些问题：
+记住计划清单与执行记录的区别：清单上写了五步，不代表五步全都发生。下面我们故意让第二步拿不到资料，看看程序是否还敢说简报已经完成。
 
-- 计划是否合法，是谁检查的？
-- 某一步到底执行了几次？
-- 模型能不能随手发明一个新操作？
-- 计划说要执行五十步时，谁负责拒绝？
-- 某一步失败后，是继续、结束还是重新规划？
+## 9. Tokyo 已经查到，Paris 的柜台却关门了
 
-这些都不应该靠“Planner 大概会处理好”来回答。
-
----
-
-## 10. 计划中的结果从哪里来？
-
-`PlanExecutor` 维护了一个很朴素的字典：
-
-```python
-results: dict[str, Any] = {}
-```
-
-每一步完成后，结果按 `step_id` 保存：
-
-```python
-results[step.step_id] = self._execute_step(step, results)
-```
-
-后续步骤再通过引用拿到前面的结果。
-
-例如温度换算步骤：
-
-```python
-weather = results[step.source_step]
-temperature_c = float(weather["temperature_c"])
-return {"temperature_f": round(temperature_c * 9 / 5 + 32, 1)}
-```
-
-这说明 Plan 不是单纯的“任务清单”，它还是一个依赖关系。
-
-```text
-weather 产生数据
-      ↓
-convert 消费 weather
-      ↓
-brief 同时消费 weather 和 convert
-```
-
-如果把 Plan 想成菜谱，`depends_on` 不是“步骤编号好看一点”，而是在说：“面粉还没和好之前，先别把面包送进烤箱。”
-
-这一章暂时用普通字典保存运行结果，已经足够看清依赖关系。等控制流程出现分支、循环和更复杂状态时，我们才需要更明确的状态编排方式。
-
----
-
-## 11. Planning 并不意味着“一次计划永远正确”
-
-计划验证通过，只能说明它在结构上能执行；现实世界仍然可能让它失败。
-
-示例里，我们故意安排了一个非常普通的故障：主天气源不可用。
-
-第一次计划是：
-
-```text
-weather = read_primary_weather
-convert = convert_temperature(weather)
-brief   = write_brief(weather, convert)
-```
-
-执行第一步时，Executor 得到：
-
-```text
-primary teaching weather source is unavailable
-```
-
-这时有两种极端做法都不理想。
-
-第一种是“计划失败就彻底崩掉”，哪怕系统明明有备用源。第二种是“让模型无限重新想办法”，直到它自己满意为止。后者听起来很 Agent，实际可能只是把错误变成一个会循环的错误。
-
-更稳妥的做法是 **bounded replanning（有界重新规划）**：只有观察到执行失败以后，才允许 Planner 根据这个新事实重新生成计划，而且重新规划次数由应用限制。
-
-```python
-for attempt in range(max_replans + 1):
-    plan = planner.make_plan(task, failure=failure)
-
-    try:
-        return executor.execute(plan)
-    except StepFailure as exc:
-        failure = exc
-        if attempt == max_replans:
-            raise
-```
-
-第一次失败以后，`ScriptedPlanner` 会把主数据源替换成备用数据源：
-
-```text
-read_primary_weather
-        ↓ failure
-read_backup_weather
-        ↓
-convert_temperature
-        ↓
-write_brief
-```
-
-运行：
+默认故障演示会让 `primary/Paris` 不可用，Tokyo 仍然可查。这个位置是有意选择的：第一步已经完成，第二步失败，比“什么都没做就失败”更能说明哪些结果该保留。
 
 ```bash
 python stages/02-workflows-routing-planning/code/planning.py
 ```
 
-你会看到两次 Plan attempt。第一次在天气读取处失败，第二次使用备用源并得到：
+第一份方案执行到 Paris 就停止。此时，结果表里只有 `weather_tokyo`；调用记录中既有一次成功读取，也有一次失败读取。换算和简报虽然列在方案上，却都没有执行。我们不能因为“计划里有 Paris”就假装已经得到 Paris 的温度。
 
-```text
-Tokyo: 18.0°C / 64.4°F, cloudy.
-```
-
-这里最值得注意的不是“模型会反思”，而是另一件更工程化的事：
-
-> **重新规划是由新的 Observation 触发的控制动作，而且它有明确次数上限。**
-
----
-
-## 12. Replanning 和 Retry 不是一回事
-
-这两个词很容易混。
-
-Retry 通常表示：**同一个动作再做一次。**
-
-```text
-调用 primary weather
-失败
-再调用 primary weather
-```
-
-Replanning 表示：**根据新的观察修改后续方案。**
-
-```text
-调用 primary weather
-失败
-改计划：使用 backup weather
-```
-
-我们这章做的是后者。
-
-这一区分非常实际。如果某一步是“读取数据”，重复执行往往问题不大；如果某一步是“扣款”或“发送邮件”，重复执行的代价就完全不同。Stage 02 暂时不展开副作用和重试策略，只需要把控制语义分清：**重新规划不是把原动作偷偷再执行一次。**
-
----
-
-## 13. 为什么一定要有 Budget？
-
-一旦 Planner 能生成步骤、还能 Replan，系统就拥有了“继续想办法”的能力。听起来很美好，但任何能“继续”的机制都应该问一句：
-
-> 最多继续多久？
-
-示例里有三层很简单的边界。
-
-Plan 自己限制长度：
+应用把这次可识别的失败记成一个小对象：
 
 ```python
-steps: list[PlanStep] = Field(min_length=1, max_length=5)
+@dataclass(frozen=True)
+class Failure:
+    step_id: str
+    city: str
+    source: str
+    code: str = "source_unavailable"
 ```
 
-Executor 限制最多执行多少步：
+这份对象说明哪个读取失败、哪个城市受影响、哪个入口不可用。它来自执行器捕获的 `SourceUnavailable`，不是模型写一句“主源好像坏了”就能伪造的触发条件。一般的参数错误、代码异常或不合格计划，不会被一概当成换数据源的理由。
+
+在我们的固定资料里，备用入口提供的是**同一份教学快照**，所以两城仍有可比的口径。真实业务更换来源时，还要判断时间、单位、覆盖范围和访问条件；“备用”两个字并不保证数据新鲜或者同样可靠。这里没有联网调用两家气象服务，也不因此声称系统已经具有真实容灾能力。
+
+现在事实变了：Tokyo 已经在手里，Paris 的主入口不可用，仍缺 Paris 和两次换算。把这些事实一起交回去，才有可能得到有意义的新方案。
+
+## 10. 改后半段的方案，不把前半段的工作抹掉
+
+收到失败后重新安排后续工作，叫作 **Replanning（重新规划）**。它不是在失败之后对模型说“再努力一点”，而是提供新的执行事实，并要求新的计划仍然服务于同一个目标。
+
+控制器调用规划器时会携带原任务、已完成结果和失败记录：
 
 ```python
-if index > self.max_execution_steps:
-    raise RuntimeError("execution step budget exhausted")
+plan = planner.make_plan(task, completed=dict(run.completed), failures=tuple(run.failures))
+plan = validate_plan(plan, task, run.completed, tuple(run.failures))
+run.plans.append(plan)
 ```
 
-控制器限制最多重新规划多少次：
+规划器拿到的是结果表的副本，其中 `Reading` 是不可变的数据记录。它能够引用 `weather_tokyo`，但不能把应用保存的 18.0 改成另一个数。这里防止的是正常接口意外改写共享数据，不是把同进程 Python 代码放进了安全沙箱。
+
+新的合法清单可以是：
+
+```text
+weather_paris      从 backup 读取 Paris
+fahrenheit_tokyo   使用已完成的 weather_tokyo
+fahrenheit_paris   使用刚完成的 weather_paris
+brief              使用两份换算记录
+```
+
+这次 Tokyo 不再查询，已有结果编号不能被覆盖，换一个新编号重复查询同一城市也会被拒绝。失败的 `weather_paris` 没有成功结果，所以可以在新计划中继续使用这个步骤名。它与上一章的调用编号不是同一个概念；执行记录还带有计划轮次，两次尝试不会混成一次成功。
+
+应用也会拒绝再次选择已经观察到不可用的入口；只有对应城市的主入口实际失败后，才允许该城市使用备用入口。模型不能因为偏爱“backup”这个名字，就绕过这条规则。如果它交回的计划不合法，本次运行结束，不会无限请它改格式。
+
+由此也能分清两个容易混淆的动作：重复读取 `primary/Paris` 是 **Retry（重试）**；改成 `backup/Paris` 并继续未完成工作，是本例的重新规划。如果只有这一条固定的备用规则，普通异常处理同样能完成，未必需要模型。这里保留 Planner，是为了观察“方案是数据，执行结果可以改变后续方案”的机制。
+
+本例只保留当前进程中已经完成的只读结果。如果计划中有付款或发送邮件，不能照搬“重新跑一遍”的办法；如果进程退出，内存记录也不会自动恢复。先明确这段代码做到了什么，不要把一次顺利接着查资料解释成所有长任务都已可靠。
+
+方案可以改了，下一件事就必须说清楚：到底允许改几次、总共允许干多少步？
+
+## 11. 重新规划不能顺便领取一份全新的预算
+
+默认第一次执行了两步：Tokyo 成功，Paris 失败。新方案执行四步：备用读取、两次换算、生成简报。合计是 **六次实际操作尝试**，不是“第二张清单只有四步，所以本次只做了四步”。失败尝试也做过工作，不能从计数里消失。
+
+本章用三个不同的限制表达三件事。每份计划最多五步；`max_replans=1` 表示初始计划以外最多再规划一次；`max_execution_steps=8` 限制整次运行的操作尝试，包括失败读取、换算和最终格式化。它们不是同一个计数器，不能都含糊地叫“最多循环八次”。
+
+执行器每动手一次之前检查共享计数：
 
 ```python
-for attempt in range(max_replans + 1):
-    ...
+if run.execution_steps >= max_execution_steps:
+    raise ExecutionBudgetExceeded("the whole run's execution budget is exhausted")
+run.execution_steps += 1
 ```
 
-这三种 Budget 管的是不同东西：计划有多长、实际执行多少步、失败后最多改几次计划。不要用一个模糊的 `max_iterations` 试图解释所有边界，否则出问题时你会不知道“到底是什么耗尽了”。
+`run` 在整次任务开始时创建，不在每次计划开始时重置。可以把它想成同一张工单的工时表：换了方案，之前花掉的时间不可能自动退回。这里计的是操作次数，不是耗时或金额，名称不同，保证也不同。
 
-Budget 的价值也不只是省钱。它首先是在定义系统行为：**即使模型一直认为“我还能再想想”，应用也有权说到此为止。**
+把上限设为三试一次：
 
----
+```bash
+python stages/02-workflows-routing-planning/code/planning.py --max-steps 3
+```
 
-## 14. 接入真实模型时，控制结构不需要改
+Tokyo 主源、Paris 主源失败、Paris 备用源，正好三次。两座城市的原始结果都保留了，但尚未换算，不能交付要求包含华氏度的完整简报。程序返回 `failed`，`answer` 仍为空，并以退出码 1 结束。这是限制起作用，不是程序偷偷把不完整结果当成功。
 
-到目前为止，我们故意使用 `ScriptedSemanticRouter` 和 `ScriptedPlanner`。它们没有语言理解能力，只是为了把控制逻辑跑得可重复。
+`--max-replans 0` 会在第一份计划遇到故障时结束；`--failure both` 会让 Paris 的备用入口也失败。两者都不会输出比较成功的假象。执行预算已经耗尽时，控制器甚至不会再请求一份注定无法执行的新计划。
 
-真正接入模型时，我们只替换“做语义判断”的部分，不改 Hybrid Router，不改 PlanExecutor，也不改 Budget。
+次数限制也不会打断一个卡住的 Python 函数。它只在下一次操作开始前检查，不是超时、取消或强制终止机制。眼前这些函数很快，足够观察控制流程；接真实模型时还要单独限制模型请求，并处理响应失败。
 
-真实 Provider 集成位于 [`code/deepseek_decisions.py`](code/deepseek_decisions.py)。
+## 12. 把理解文字和提出计划交给真实 DeepSeek
 
-运行真实示例前设置：
+到这里，工作流、路由边界和执行器都能独立工作。现在把两个测试替身换掉：一个真实模型负责把自由文字整理成 `RouteDecision`，另一个模型调用负责提出 `Plan`。可以使用同一个 DeepSeek 模型，但这是两种任务，不是让一段大提示词顺便把所有控制工作都接管。
+
+[`deepseek_decisions.py`](code/deepseek_decisions.py) 复用前两章的 Responses 接口。先用结构化输出请求一张任务单：
+
+```python
+response = self.client.responses.parse(
+    model=self.model, instructions=instructions, input=input_text,
+    text_format=schema, max_output_tokens=4096,
+)
+```
+
+用于选路时，`schema` 是 `RouteDecision`；用于规划时是 `Plan`。应用提供各自的行为规则，不向这个接口注册查询工具。DeepSeek 负责产出候选数据，读取天气仍是后面的执行器在做。[DeepSeek Responses 接口](https://api-docs.deepseek.com/zh-cn/api/create-response/)支持 JSON Schema 格式；SDK 的 `parse()` 还会尝试把响应解析为对应的 Pydantic 对象。
+
+不能只检查“没有网络异常”。适配器要求响应完成、解析类型正确、没有意外工具请求，并重新验证对象；随后控制器再检查当前任务、已完成结果和来源条件。字段关系的 Python 验证函数不会被上传后在模型服务里运行，所以本地检查仍有实际作用。JSON 合法但方案不合格时，本例停止，不把它当成已经发生过的工具故障。
+
+真实规划器拿到的输入也不是一句孤零零的“继续”。它按当前执行事实构造：
+
+```python
+context = {
+    "task": task.model_dump(mode="json"),
+    "completed": {key: asdict(value) for key, value in completed.items()},
+    "failures": [asdict(failure) for failure in failures],
+}
+```
+
+`asdict()` 把数据类转换成普通字典，随后编码为 JSON。这里每次都是完整的新规划请求，所需上下文已经显式包含在输入中，不依赖服务替我们保存旧会话。[DeepSeek 的兼容性说明](https://api-docs.deepseek.com/zh-cn/guides/responses_api/)也明确列出了无状态接口的限制。我们只打印经过验证的决策，不把模型内部推理当执行协议。
+
+两种模型调用共用 `StructuredClient` 的请求计数，默认最多三次：一次选路、一次初始规划，必要时再规划一次。计数在请求发出前增加，失败请求也占次数；SDK 使用 `max_retries=0`，没有隐藏的自动重试。`timeout=30.0` 是客户端一次请求的超时配置，不是整个任务严格三十秒结束的保证。
+
+在当前终端设置密钥和账户可用的模型。下面的模型名是官方示例值，实际可用性以服务和账户为准；不要把密钥写进源文件：
 
 ```bash
 export DEEPSEEK_API_KEY="your-deepseek-api-key"
 export DEEPSEEK_MODEL="deepseek-v4-flash"
+python stages/02-workflows-routing-planning/code/deepseek_decisions.py --mode route
 ```
 
-PowerShell：
+PowerShell 对应为：
 
 ```powershell
 $env:DEEPSEEK_API_KEY="your-deepseek-api-key"
 $env:DEEPSEEK_MODEL="deepseek-v4-flash"
+python stages/02-workflows-routing-planning/code/deepseek_decisions.py --mode route
 ```
 
-Windows CMD：
+`--mode route` 表示只让模型理解请求，随后执行固定工作流。缺少配置或 SDK 会报错，不会悄悄切换为离线答案。还可以用 `--question "读一下巴黎的教学记录，只要摄氏度。"` 替换示例，观察是否真正识别成一城、无需换算。
 
-```cmd
-set "DEEPSEEK_API_KEY=your-deepseek-api-key"
-set "DEEPSEEK_MODEL=deepseek-v4-flash"
-```
+接着选择“先提出计划”的模式，并制造主源失败：
 
 ```bash
-python stages/02-workflows-routing-planning/code/deepseek_decisions.py
+python stages/02-workflows-routing-planning/code/deepseek_decisions.py --mode plan --failure primary --show-decisions
 ```
 
-Router 使用 Structured Output：
+`--show-decisions` 展示通过结构验证的路由和计划数据；不要因此假定它们全部通过业务验证，最终仍要看运行状态。真实模型可以给独立读取安排不同先后，不一定重现离线示例的编号或轨迹。如果它交回非法方案，程序会报告失败，而不是把预先写好的成功答案替换上去。
+
+规划模式开始时，路由器先确定产品要求，再把它转换成任务：
 
 ```python
-response = self.client.responses.parse(
-    model=self.model,
-    instructions=(
-        "Classify the user's request into exactly one route. "
-        "weather: weather or forecast questions. "
-        "account: invoices, billing, refunds, or account records. "
-        "general: everything else."
-    ),
-    input=request,
-    text_format=RouteDecision,
-)
+task = task_from_decision(routing.decision, args.language)
+blocked = (("primary", task.cities[-1]),) if args.failure == "primary" else ()
+service = WeatherService(unavailable=blocked)
+run = run_with_replanning(task, planner=DeepSeekPlanner(model), executor=PlanExecutor(service))
 ```
 
-Planner 同样返回结构化 `Plan`：
+第二行只是注入演示故障，不是让模型宣布哪个服务失效。帮助或澄清路线不会进入这段代码，更不会为了展示 Planner 硬凑一张查询方案。这样从文字、路由、计划、执行到简报，才组成了一个完整且各有职责的过程。
 
-```python
-response = self.client.responses.parse(
-    model=self.model,
-    instructions=(
-        "Create a short executable plan using only these operations: ..."
-    ),
-    input=f"Task: {task}\n{failure_text}",
-    text_format=Plan,
-)
-```
+## 13. 不只看看它会不会成功，还要看看它为什么成功
 
-真实模型偶尔会生成 JSON 合法、但违反业务约束的 Plan，例如给 `write_brief` 额外传入 `city`。`Plan` 验证器会拒绝它；DeepSeek Adapter 会把验证错误带入一次受限的纠正请求，要求模型只修正 Plan。第二次仍不符合约束就报错，不会无限重试。这样既保留了“使用前验证”的边界，也让偶发的结构失误有一次明确、可观察的恢复机会。
+小林最关心的是页面有没有把需求办对。我们可以先把 Tokyo 的教学记录改成 22.0°C，再比较固定工作流和计划执行：二者都应该显示 71.6°F，与 Paris 的温差变成 10.0°C。只检查答案里有没有 `64.4`，很容易奖励一个根本没有使用查询结果的程序。
 
-这就是 Provider Adapter 在本章最重要的意义：模型负责语义工作，但核心控制代码只认识 `RouteDecision` 和 `Plan`。
+再故意让最后一步引用两份未换算的记录，却仍要求华氏度。整份计划应该在任何查询之前被拒绝。最后把执行上限设为三，观察已完成的读取是否还在，最终答案是否仍然为空。这些反例分别检查数据传递、计划验收和停止语义，不是让代码把错误“优雅地忽略掉”。
 
-换句话说，我们不是让 DeepSeek Response 对象一路渗透到业务控制逻辑，而是尽快把它翻译成应用自己的数据结构。
-
----
-
-## 15. Workflow、Router、Planner、Agent Runtime 到底怎么选？
-
-学到这里，最容易出现的新问题是：“这么多模式，我到底用哪个？”
-
-不要按“哪个听起来更高级”选。按任务中真正存在的不确定性选。
-
-| 情况 | 更合适的控制方式 |
-|---|---|
-| 步骤和顺序都稳定 | 确定性 Workflow |
-| 路径有限，但自然语言决定走哪条 | Router |
-| 目标明确，但需要先拆成多个依赖步骤 | Planner + Executor |
-| 下一步必须根据每轮 Observation 动态决定 | Agent Runtime |
-
-举个例子。
-
-“每天 9 点读取固定报表，再生成摘要”通常是 Workflow。
-“用户的问题属于退款、天气还是通用咨询”适合 Router。
-“先规划需要查哪些资料，再按依赖执行多个步骤”适合 Planner。
-“查了一步以后，下一步完全取决于刚得到的内容”更接近 Agent Runtime。
-
-现实系统也可以组合这些模式，但组合之前先把每一种单独想清楚。不要一看到任务复杂，就把所有东西塞进一个“万能 Agent”。万能通常只是“所有责任都混在一起”的礼貌说法。
-
----
-
-## 16. 一个成熟的控制策略，往往是“能不用模型就不用”
-
-现在回头看这一章，真正想建立的不是三种设计模式，而是一种判断习惯：
-
-如果规则已经确定，就写规则。
-如果只有语义分类不确定，就让模型只做分类。
-如果任务需要拆解，就让模型提出受约束的 Plan。
-如果下一步真的必须随着 Observation 动态变化，再让 Runtime 把这个决策权交给模型。
-
-这不是保守，而是把模型放在它真正有优势的位置：处理语义、不完整信息和开放式判断；把可验证、可重复、边界明确的控制逻辑留给普通程序。
-
-一个好 Agent 系统通常不是“模型控制最多”的系统，而是“模型只控制必须由模型判断的那部分”的系统。
-
----
-
-## 17. 运行本章检查
-
-这章的离线检查不需要 API Key：
+运行本章检查：
 
 ```bash
 python stages/02-workflows-routing-planning/code/checks.py
 ```
 
-它验证了几个关键边界：显式路由规则不会多余地调用语义 Router；自然语言请求会进入语义判断；Route 决定以后由普通代码完成 Dispatch；Plan 会拒绝未来依赖和重复 ID；关闭 Replanning 时失败会直接结束；只允许一次 Replan 时可以从主源失败切换到备用源；执行步数 Budget 由应用强制执行。
+检查还覆盖两种语言的固定路由案例、表单不调用模型、澄清不查询、未来引用、重复编号、错误城市、来源限制、跨计划预算以及两城温度相同的情况。伪客户端会检查真实适配器发送的任务、完成记录和失败记录；可选 SDK 检查使用模拟 HTTP，不请求真实服务。它们验证程序接口与控制行为，不测 DeepSeek 实际的理解正确率。
 
-真正值得你看的是失败用例。成功路径只能证明“它能跑一次”，失败用例才在说明“它不会偷偷做什么”。
+检查里保留了“城市存在但意图仍可能读错”的反例。知道一个验证器检查不到什么，与知道它能拦住什么同样重要。真实模型还需要用问候、含糊指代、缺少城市、只要摄氏度和两城对照等输入逐项观察；不能拿几个离线替身的通过结果，宣布语义问题已经解决。
 
----
+回头看，小林的页面并不是一路从“低级流程”升级成“高级 Agent”。同一件工作有不同的分工安排：开关已给答案，就让代码处理；文字含义不明确，就让模型只解释那一小段；需要执行前检查方案，就把方案当数据；每一步都要依据新观察选择时，再使用上一章的循环。它们可以组合，选择依据是问题在哪里，而不是哪个名字更时髦。
 
-## 18. 动手练习
+现在我们也能看到下一处困难。一次处理同时有路由结果、已经完成的读取、失败入口、当前计划、预算和最终简报。再加入草稿审核与修改时，这些状态会越来越难从局部变量里找齐。小林问“这次到底停在哪里、下一步为什么这么走”，我们需要一份更明确的表示。
 
-先改 `routing.py`。给系统增加一个 `DOCUMENT` Route，并设计一个**可靠的确定性信号**，让某些请求不必经过语义 Router。然后再写一句没有显式标记的自然语言，让 Semantic Router 决定是否进入文档路线。做完以后问自己：哪些规则应该硬编码，哪些规则开始变成了脆弱的关键词堆砌？
-
-接着改 `planning.py`。增加一个 `CHECK_UNIT` Operation，放在温度换算之前。要求 Planner 生成的计划必须先确认天气温度单位是 Celsius，再允许转换。不要修改 `PlanExecutor.execute()` 的整体循环，只增加新的受控操作。如果你为了加一个操作不得不把 Executor 的主循环推倒重写，说明抽象还不够稳定。
-
-然后故意写一个坏 Plan，让 `brief` 引用一个不存在的步骤。不要先改验证器，先观察 Pydantic 在哪里拒绝它，再解释为什么这个错误应该在执行前发现。
-
-最后把 `max_replans` 改成 `0`、`1`、`2` 分别运行。你会发现“允许更多 Replan”并不自动提高结果质量，只是扩大了系统继续尝试的空间。控制空间越大，边界就越重要。
-
----
-
-## 19. 本章收尾：Runtime 会循环，还不等于系统已经会编排
-
-Stage 01 解决了“怎样让模型根据 Observation 一轮一轮决定下一步”。Stage 02 又往前走了一步：我们开始主动设计**哪些决定由模型做，哪些由程序做**。
-
-现在我们已经有了四种控制手段：
-
-```text
-固定 Workflow
-语义 Router
-Planner + Executor
-Agent Runtime
-```
-
-它们都能处理多步骤任务，但表达复杂控制流时，我们仍然主要靠 Python 函数、局部变量和循环。只要流程再多一些分支、条件和中间状态，代码会开始变得难以看清“现在到底走到哪一步了”。
-
-下一章就从这个问题开始：把运行中的状态和状态转移明确写出来。
-
-➡️ [Stage 03：显式 State 与 Stateful Orchestration](../03-stateful-orchestration/README.zh-CN.md)
+[Stage 03：把状态摊在桌面上](../03-stateful-orchestration/README.zh-CN.md)就从这个问题继续。

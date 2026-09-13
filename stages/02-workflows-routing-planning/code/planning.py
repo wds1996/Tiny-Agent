@@ -1,273 +1,268 @@
+"""Validate a weather plan, execute it, and replan remaining read-only work."""
 from __future__ import annotations
 
-from enum import Enum
-from typing import Any, Literal, Protocol
+import argparse
+from dataclasses import dataclass, field
+from typing import Literal, Mapping, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 
-
-TEACHING_WEATHER = {
-    "Tokyo": {"temperature_c": 18.0, "condition": "cloudy"},
-    "Paris": {"temperature_c": 12.0, "condition": "light rain"},
-}
-
-
-class Operation(str, Enum):
-    READ_PRIMARY_WEATHER = "read_primary_weather"
-    READ_BACKUP_WEATHER = "read_backup_weather"
-    CONVERT_TEMPERATURE = "convert_temperature"
-    WRITE_BRIEF = "write_brief"
+from workflow import (
+    City, Contract, Reading, Source, SourceUnavailable, WeatherService,
+    WeatherTask, convert_temperature, render_brief,
+)
 
 
-class PlanStep(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    step_id: str = Field(min_length=1)
-    operation: Operation
-    depends_on: list[str] = Field(default_factory=list)
-    city: Literal["Tokyo", "Paris"] | None = None
-    source_step: str | None = None
-    conversion_step: str | None = None
+class PlanStep(Contract):
+    step_id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
+    operation: Literal["read_weather", "convert_temperature", "write_brief"]
+    inputs: tuple[str, ...] = Field(default=(), max_length=2)
+    city: City | None = None
+    source: Source | None = None
 
     @model_validator(mode="after")
-    def validate_operation_inputs(self) -> "PlanStep":
-        if self.operation in {
-            Operation.READ_PRIMARY_WEATHER,
-            Operation.READ_BACKUP_WEATHER,
-        }:
-            if self.city is None:
-                raise ValueError("weather lookup steps require city")
-            if self.source_step is not None or self.conversion_step is not None:
-                raise ValueError("weather lookup steps do not use source references")
-
-        elif self.operation is Operation.CONVERT_TEMPERATURE:
-            if self.source_step is None:
-                raise ValueError("convert_temperature requires source_step")
-            if self.city is not None or self.conversion_step is not None:
-                raise ValueError("convert_temperature accepts only source_step")
-
-        elif self.operation is Operation.WRITE_BRIEF:
-            if self.source_step is None or self.conversion_step is None:
-                raise ValueError(
-                    "write_brief requires source_step and conversion_step"
-                )
-            if self.city is not None:
-                raise ValueError("write_brief does not take city directly")
-
+    def check_shape(self) -> "PlanStep":
+        if len(set(self.inputs)) != len(self.inputs):
+            raise ValueError("input references must not repeat")
+        if self.operation == "read_weather":
+            if self.city is None or self.source is None or self.inputs:
+                raise ValueError("read_weather needs city/source and no inputs")
+        elif self.city is not None or self.source is not None:
+            raise ValueError("derived steps take input references, not city/source")
+        elif self.operation == "convert_temperature" and len(self.inputs) != 1:
+            raise ValueError("conversion needs exactly one input")
+        elif self.operation == "write_brief" and not self.inputs:
+            raise ValueError("the brief needs at least one input")
         return self
 
 
-class Plan(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    goal: str = Field(min_length=1)
-    steps: list[PlanStep] = Field(min_length=1, max_length=5)
+class Plan(Contract):
+    goal: str = Field(min_length=1, max_length=300)
+    steps: tuple[PlanStep, ...] = Field(min_length=1, max_length=5)
 
     @model_validator(mode="after")
-    def validate_dependencies(self) -> "Plan":
-        seen: set[str] = set()
-
-        for step in self.steps:
-            if step.step_id in seen:
-                raise ValueError(f"duplicate step_id: {step.step_id}")
-
-            for dependency in step.depends_on:
-                if dependency not in seen:
-                    raise ValueError(
-                        f"step {step.step_id!r} depends on unavailable "
-                        f"step {dependency!r}"
-                    )
-
-            referenced = {
-                value
-                for value in (step.source_step, step.conversion_step)
-                if value is not None
-            }
-            if not referenced.issubset(seen):
-                missing = sorted(referenced - seen)
-                raise ValueError(
-                    f"step {step.step_id!r} references unavailable steps: {missing}"
-                )
-
-            seen.add(step.step_id)
-
+    def check_ids(self) -> "Plan":
+        if not self.goal.strip():
+            raise ValueError("goal must not be blank")
+        ids = [step.step_id for step in self.steps]
+        if len(ids) != len(set(ids)):
+            raise ValueError("step IDs must be unique within a plan")
         return self
 
 
-class StepFailure(RuntimeError):
-    def __init__(
-        self,
-        *,
-        step_id: str,
-        operation: Operation,
-        message: str,
-    ) -> None:
-        super().__init__(message)
-        self.step_id = step_id
-        self.operation = operation
-        self.message = message
+@dataclass(frozen=True)
+class Failure:
+    step_id: str
+    city: str
+    source: str
+    code: str = "source_unavailable"
+
+
+class PlanRejected(ValueError):
+    pass
+
+
+class ExecutionBudgetExceeded(RuntimeError):
+    pass
 
 
 class Planner(Protocol):
     def make_plan(
-        self,
-        task: str,
-        *,
-        failure: StepFailure | None = None,
-    ) -> Plan:
-        """Return a bounded plan for the task and optional observed failure."""
+        self, task: WeatherTask, *, completed: Mapping[str, Reading], failures: tuple[Failure, ...]
+    ) -> Plan: ...
+
+
+def validate_plan(
+    plan: Plan, task: WeatherTask, completed: Mapping[str, Reading], failures: tuple[Failure, ...]
+) -> Plan:
+    """Check order, result types, source eligibility and the requested final product."""
+    plan = Plan.model_validate(plan)
+    known = {key: (value.city, value.temperature_f is not None) for key, value in completed.items()}
+    blocked = {(failure.source, failure.city) for failure in failures}
+    for index, step in enumerate(plan.steps):
+        if step.step_id in known:
+            raise PlanRejected("a new step cannot overwrite a completed result")
+        if not set(step.inputs).issubset(known):
+            raise PlanRejected("an input refers to a missing or future result")
+        if step.operation == "read_weather":
+            if step.city not in task.cities:
+                raise PlanRejected("the plan requests a city outside the task")
+            if any(city == step.city for city, _ in known.values()):
+                raise PlanRejected("the plan repeats a completed or planned city lookup")
+            if (step.source, step.city) in blocked:
+                raise PlanRejected("the plan selects a source already observed unavailable")
+            if step.source == "backup" and ("primary", step.city) not in blocked:
+                raise PlanRejected("backup requires an observed primary failure for that city")
+            known[step.step_id] = (step.city, False)
+        elif step.operation == "convert_temperature":
+            city, converted = known[step.inputs[0]]
+            if converted or not task.fahrenheit or (city, True) in known.values():
+                raise PlanRejected("conversion is repeated or not requested")
+            known[step.step_id] = (city, True)
+        else:
+            if index != len(plan.steps) - 1:
+                raise PlanRejected("write_brief must be the final step")
+            products = [known[key] for key in step.inputs]
+            expected = {(city, task.fahrenheit) for city in task.cities}
+            if len(products) != len(expected) or set(products) != expected:
+                raise PlanRejected("the brief omits a city or has the wrong units")
+    if plan.steps[-1].operation != "write_brief":
+        raise PlanRejected("the plan does not finish the requested brief")
+    return plan
 
 
 class ScriptedPlanner:
-    """Deterministic planner used to make planning and replanning observable."""
+    """A deterministic builder for these tiny tasks; not a language model."""
 
     def make_plan(
-        self,
-        task: str,
-        *,
-        failure: StepFailure | None = None,
+        self, task: WeatherTask, *, completed: Mapping[str, Reading], failures: tuple[Failure, ...]
     ) -> Plan:
-        del task
+        blocked = {(failure.source, failure.city) for failure in failures}
+        steps: list[PlanStep] = []
+        raw = {r.city: key for key, r in completed.items() if r.temperature_f is None}
+        converted = {r.city: key for key, r in completed.items() if r.temperature_f is not None}
+        for city in task.cities:
+            if city not in raw and city not in converted:
+                key = "weather_" + city.lower()
+                source = "backup" if ("primary", city) in blocked else "primary"
+                steps.append(PlanStep(step_id=key, operation="read_weather", city=city, source=source))
+                raw[city] = key
+        for city in task.cities:
+            if task.fahrenheit and city not in converted:
+                key = "fahrenheit_" + city.lower()
+                steps.append(PlanStep(step_id=key, operation="convert_temperature", inputs=(raw[city],)))
+                converted[city] = key
+        inputs = tuple((converted if task.fahrenheit else raw)[city] for city in task.cities)
+        steps.append(PlanStep(step_id="brief", operation="write_brief", inputs=inputs))
+        return Plan(goal="Produce the requested teaching-weather brief.", steps=tuple(steps))
 
-        lookup_operation = (
-            Operation.READ_BACKUP_WEATHER
-            if failure is not None
-            else Operation.READ_PRIMARY_WEATHER
-        )
 
-        return Plan(
-            goal="Read Tokyo's teaching weather and report Celsius and Fahrenheit.",
-            steps=[
-                PlanStep(
-                    step_id="weather",
-                    operation=lookup_operation,
-                    city="Tokyo",
-                ),
-                PlanStep(
-                    step_id="convert",
-                    operation=Operation.CONVERT_TEMPERATURE,
-                    depends_on=["weather"],
-                    source_step="weather",
-                ),
-                PlanStep(
-                    step_id="brief",
-                    operation=Operation.WRITE_BRIEF,
-                    depends_on=["weather", "convert"],
-                    source_step="weather",
-                    conversion_step="convert",
-                ),
-            ],
-        )
+@dataclass(frozen=True)
+class StepEvent:
+    plan_number: int
+    step_id: str
+    operation: str
+    status: str
+
+
+@dataclass
+class PlanRun:
+    status: str = "running"
+    answer: str | None = None
+    completed: dict[str, Reading] = field(default_factory=dict)
+    failures: list[Failure] = field(default_factory=list)
+    plans: list[Plan] = field(default_factory=list)
+    events: list[StepEvent] = field(default_factory=list)
+    plan_calls: int = 0
+    execution_steps: int = 0
+    error: str | None = None
 
 
 class PlanExecutor:
-    def __init__(
-        self,
-        *,
-        primary_available: bool = False,
-        max_execution_steps: int = 8,
-    ) -> None:
-        if max_execution_steps < 1:
-            raise ValueError("max_execution_steps must be at least 1")
-        self.primary_available = primary_available
-        self.max_execution_steps = max_execution_steps
+    def __init__(self, service: WeatherService) -> None:
+        self.service = service
 
-    def execute(self, plan: Plan) -> str:
-        results: dict[str, Any] = {}
+    def execute(
+        self, plan: Plan, task: WeatherTask, run: PlanRun, *, max_execution_steps: int
+    ) -> str:
+        task = WeatherTask.model_validate(task)
+        plan = validate_plan(plan, task, run.completed, tuple(run.failures))
+        for step in plan.steps:
+            if run.execution_steps >= max_execution_steps:
+                raise ExecutionBudgetExceeded("the whole run's execution budget is exhausted")
+            run.execution_steps += 1
+            try:
+                value = self._execute_step(step, task, run.completed)
+            except SourceUnavailable as exc:
+                run.failures.append(Failure(step.step_id, exc.city, exc.source))
+                run.events.append(StepEvent(run.plan_calls, step.step_id, step.operation, "source_unavailable"))
+                raise
+            except Exception:
+                run.events.append(StepEvent(run.plan_calls, step.step_id, step.operation, "execution_error"))
+                raise
+            run.events.append(StepEvent(run.plan_calls, step.step_id, step.operation, "ok"))
+            if step.operation == "write_brief":
+                return value
+            run.completed[step.step_id] = value
+        raise PlanRejected("missing final brief")
 
-        for index, step in enumerate(plan.steps, start=1):
-            if index > self.max_execution_steps:
-                raise RuntimeError("execution step budget exhausted")
-
-            results[step.step_id] = self._execute_step(step, results)
-
-        final_step = plan.steps[-1]
-        final_result = results[final_step.step_id]
-        if not isinstance(final_result, str):
-            raise RuntimeError("the final plan step must produce text")
-        return final_result
-
-    def _execute_step(
-        self,
-        step: PlanStep,
-        results: dict[str, Any],
-    ) -> Any:
-        if step.operation is Operation.READ_PRIMARY_WEATHER:
-            if not self.primary_available:
-                raise StepFailure(
-                    step_id=step.step_id,
-                    operation=step.operation,
-                    message="primary teaching weather source is unavailable",
-                )
-            return self._read_weather(step.city)
-
-        if step.operation is Operation.READ_BACKUP_WEATHER:
-            return self._read_weather(step.city)
-
-        if step.operation is Operation.CONVERT_TEMPERATURE:
-            weather = results[step.source_step]
-            temperature_c = float(weather["temperature_c"])
-            return {"temperature_f": round(temperature_c * 9 / 5 + 32, 1)}
-
-        if step.operation is Operation.WRITE_BRIEF:
-            weather = results[step.source_step]
-            conversion = results[step.conversion_step]
-            return (
-                f"{weather['city']}: {weather['temperature_c']}°C / "
-                f"{conversion['temperature_f']}°F, {weather['condition']}."
-            )
-
-        raise RuntimeError(f"unsupported operation: {step.operation}")
-
-    @staticmethod
-    def _read_weather(city: str | None) -> dict[str, Any]:
-        if city is None:
-            raise RuntimeError("city must be present after plan validation")
-        record = TEACHING_WEATHER[city]
-        return {"city": city, **record}
+    def _execute_step(self, step: PlanStep, task: WeatherTask, results: Mapping[str, Reading]) -> Reading | str:
+        if step.operation == "read_weather":
+            return self.service.read(step.city, step.source)
+        if step.operation == "convert_temperature":
+            return convert_temperature(results[step.inputs[0]])
+        if step.operation == "write_brief":
+            return render_brief(task, tuple(results[key] for key in step.inputs))
+        raise PlanRejected("unknown operation")
 
 
 def run_with_replanning(
-    task: str,
-    *,
-    planner: Planner,
-    executor: PlanExecutor,
-    max_replans: int = 1,
-) -> str:
-    if max_replans < 0:
-        raise ValueError("max_replans must not be negative")
+    task: WeatherTask, *, planner: Planner, executor: PlanExecutor,
+    max_replans: int = 1, max_execution_steps: int = 8,
+) -> PlanRun:
+    task = WeatherTask.model_validate(task)
+    if type(max_replans) is not int or max_replans < 0:
+        raise ValueError("max_replans must be a nonnegative integer")
+    if type(max_execution_steps) is not int or max_execution_steps < 0:
+        raise ValueError("max_execution_steps must be a nonnegative integer")
+    run = PlanRun()
+    try:
+        for _ in range(max_replans + 1):
+            if run.execution_steps >= max_execution_steps:
+                raise ExecutionBudgetExceeded("no execution budget remains; do not ask for another plan")
+            run.plan_calls += 1
+            plan = planner.make_plan(task, completed=dict(run.completed), failures=tuple(run.failures))
+            plan = validate_plan(plan, task, run.completed, tuple(run.failures))
+            run.plans.append(plan)
+            try:
+                run.answer = executor.execute(plan, task, run, max_execution_steps=max_execution_steps)
+                run.status = "completed"
+                return run
+            except SourceUnavailable:
+                if run.plan_calls == max_replans + 1:
+                    raise
+        raise RuntimeError("unreachable")
+    except Exception as exc:
+        # Failure is observable, not another planning opportunity. Never retry arbitrary errors.
+        run.status = "failed"
+        run.error = type(exc).__name__
+        return run
 
-    failure: StepFailure | None = None
 
-    for attempt in range(max_replans + 1):
-        plan = planner.make_plan(task, failure=failure)
-        print(f"\nplan attempt {attempt + 1}:")
+def print_run(run: PlanRun) -> None:
+    for number, plan in enumerate(run.plans, 1):
+        print(f"plan {number}:")
         for step in plan.steps:
-            print(f"- {step.step_id}: {step.operation.value}")
-
-        try:
-            return executor.execute(plan)
-        except StepFailure as exc:
-            failure = exc
-            print(
-                f"observed failure: {exc.step_id} / "
-                f"{exc.operation.value} / {exc.message}"
-            )
-            if attempt == max_replans:
-                raise
-
-    raise AssertionError("unreachable")
+            details = f"{step.source}/{step.city}" if step.operation == "read_weather" else ",".join(step.inputs)
+            print(f"  {step.step_id}: {step.operation}({details})")
+        for event in run.events:
+            if event.plan_number == number:
+                print(f"    executed {event.step_id}: {event.status}")
+    print("status:", run.status, "plan calls:", run.plan_calls, "execution steps:", run.execution_steps)
+    print(run.answer if run.answer is not None else f"No completed brief: {run.error}")
+    print("retained result IDs:", list(run.completed))
 
 
 def main() -> None:
-    answer = run_with_replanning(
-        "Read Tokyo's teaching weather and convert it to Fahrenheit.",
-        planner=ScriptedPlanner(),
-        executor=PlanExecutor(primary_available=False),
-        max_replans=1,
-    )
-    print("\nfinal answer:")
-    print(answer)
+    parser = argparse.ArgumentParser(description="Offline planning and bounded replanning.")
+    parser.add_argument("--cities", nargs="+", choices=("Tokyo", "Paris"), default=["Tokyo", "Paris"])
+    parser.add_argument("--celsius-only", action="store_true")
+    parser.add_argument("--failure", choices=("none", "primary", "both"), default="primary")
+    parser.add_argument("--max-replans", type=int, default=1)
+    parser.add_argument("--max-steps", type=int, default=8)
+    parser.add_argument("--language", choices=("zh-CN", "en"), default="zh-CN")
+    args = parser.parse_args()
+    blocked = () if args.failure == "none" else (("primary", args.cities[-1]),)
+    if args.failure == "both":
+        blocked += (("backup", args.cities[-1]),)
+    service = WeatherService(unavailable=blocked)
+    task = WeatherTask(cities=tuple(args.cities), fahrenheit=not args.celsius_only, language=args.language)
+    run = run_with_replanning(task, planner=ScriptedPlanner(), executor=PlanExecutor(service),
+                              max_replans=args.max_replans, max_execution_steps=args.max_steps)
+    print("offline planner: no live LLM")
+    print_run(run)
+    print("source calls:", service.calls)
+    raise SystemExit(0 if run.status == "completed" else 1)
 
 
 if __name__ == "__main__":
