@@ -87,6 +87,17 @@ jobs:
             }
 
             for (const deployment of older) {
+              // GitHub permits deletion only after a deployment is inactive when
+              // the repository has more than one deployment. Pages deployments
+              // can remain active, so deactivate each historical record first.
+              await github.rest.repos.createDeploymentStatus({
+                owner,
+                repo,
+                deployment_id: deployment.id,
+                state: "inactive",
+                auto_inactive: false,
+                description: "Superseded by the latest GitHub Pages deployment.",
+              });
               await github.rest.repos.deleteDeployment({
                 owner,
                 repo,
