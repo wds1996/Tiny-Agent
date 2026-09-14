@@ -3,14 +3,18 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import inspect
-from typing import Any, Awaitable, Callable
-
-from mcp import Client
-
-from mcp_server import mcp
+from typing import Any, Awaitable, Callable, Protocol
 
 
 ToolHandler = Callable[..., Any | Awaitable[Any]]
+DEFAULT_ALLOWED_TOOLS = frozenset(
+    {"get_order_summary", "get_shipment_status", "get_invoice_summary"}
+)
+
+
+class MCPClientLike(Protocol):
+    async def list_tools(self) -> Any: ...
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any: ...
 
 
 @dataclass(slots=True)
@@ -19,8 +23,11 @@ class Tool:
     description: str
     parameters: dict[str, Any]
     handler: ToolHandler
+    source: str
 
     async def ainvoke(self, arguments: dict[str, Any]) -> Any:
+        if not isinstance(arguments, dict):
+            raise TypeError("tool arguments must be a dictionary")
         result = self.handler(**arguments)
         if inspect.isawaitable(result):
             return await result
@@ -47,23 +54,40 @@ class AsyncToolRegistry:
         ]
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> Any:
-        if name not in self._tools:
-            raise KeyError(f"unknown tool: {name}")
-        return await self._tools[name].ainvoke(arguments)
+        try:
+            tool = self._tools[name]
+        except KeyError as exc:
+            raise KeyError(f"unknown tool: {name}") from exc
+        return await tool.ainvoke(arguments)
 
 
 class MCPToolBridge:
-    def __init__(self, client: Client, *, namespace: str) -> None:
+    def __init__(
+        self,
+        client: MCPClientLike,
+        *,
+        namespace: str,
+        allowed_remote_tools: set[str] | frozenset[str],
+    ) -> None:
         normalized = namespace.strip()
         if not normalized:
             raise ValueError("namespace must not be blank")
+        allowed = frozenset(name.strip() for name in allowed_remote_tools if name.strip())
+        if not allowed:
+            raise ValueError("allowed_remote_tools must not be empty")
         self._client = client
         self._namespace = normalized
+        self._allowed = allowed
 
     async def populate(self, registry: AsyncToolRegistry) -> None:
         catalog = await self._client.list_tools()
-        for remote in catalog.tools:
-            remote_name = remote.name
+        discovered = {remote.name: remote for remote in catalog.tools}
+        missing = self._allowed - discovered.keys()
+        if missing:
+            raise RuntimeError(f"allowed MCP tools were not discovered: {sorted(missing)}")
+
+        for remote_name in sorted(self._allowed):
+            remote = discovered[remote_name]
             local_name = f"{self._namespace}__{remote_name}"
 
             async def call_remote(
@@ -83,19 +107,33 @@ class MCPToolBridge:
                     description=remote.description or f"MCP tool {remote_name}",
                     parameters=dict(remote.input_schema),
                     handler=call_remote,
+                    source=f"mcp:{self._namespace}:{remote_name}",
                 )
             )
 
 
 async def main() -> None:
+    try:
+        from mcp import Client
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install Stage 05 dependencies first:\n"
+            "python -m pip install -r stages/05-mcp/code/requirements.txt"
+        ) from exc
+    from mcp_server import mcp
+
     registry = AsyncToolRegistry()
-
     async with Client(mcp) as client:
-        bridge = MCPToolBridge(client, namespace="handbook")
+        bridge = MCPToolBridge(
+            client,
+            namespace="support",
+            allowed_remote_tools=DEFAULT_ALLOWED_TOOLS,
+        )
         await bridge.populate(registry)
-
-        print("local tool names:", [item["name"] for item in registry.schemas()])
-        result = await registry.execute("handbook__add", {"a": 19, "b": 23})
+        print("model-visible tools:", [schema["name"] for schema in registry.schemas()])
+        result = await registry.execute(
+            "support__get_order_summary", {"order_id": "ACME-1007"}
+        )
         print("bridged result:", result)
 
 

@@ -3,63 +3,81 @@ from __future__ import annotations
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from support_data import (
+    SUPPORT_GUIDES,
+    create_support_case as create_case_record,
+    get_invoice_summary as invoice_record,
+    get_order_summary as order_record,
+    get_shipment_status as shipment_record,
+    read_support_guide,
+)
 
-HANDBOOK = {
-    "refunds": (
-        "For orders placed on or after 2026-08-01, refunds to the original "
-        "payment method are available within 45 calendar days. This replaces "
-        "the earlier 30-day policy."
-    ),
-    "shipping": (
-        "Standard shipping normally takes 3-5 business days after dispatch."
-    ),
-}
 
 mcp = MCPServer(
-    "Tiny-Agent Stage 05",
+    "Tiny-Agent Acme Support",
     instructions=(
-        "Teaching server for MCP Tools, Resources, and Prompts. "
-        "The host remains responsible for deciding which capabilities are trusted and exposed."
+        "Teaching MCP server for one fictional support system. "
+        "Discovery does not grant authorization; the host decides what to expose."
     ),
 )
 
 
-@mcp.tool()
-def add(a: int, b: int) -> dict[str, int]:
-    """Add two integers and return structured data."""
-    return {"result": a + b}
+def _tool_call(operation, *args):
+    try:
+        return operation(*args)
+    except (LookupError, ValueError) as exc:
+        raise ToolError(str(exc)) from exc
 
 
 @mcp.tool()
-def lookup_policy(topic: str) -> dict[str, str]:
-    """Return one handbook policy by topic."""
-    normalized = topic.strip().lower()
-    if normalized not in HANDBOOK:
-        raise ToolError(f"unknown policy topic: {topic}")
-    return {"topic": normalized, "policy": HANDBOOK[normalized]}
+def get_order_summary(order_id: str) -> dict[str, object]:
+    """Read the teaching order's date, status, item type, and paid amount."""
+    return _tool_call(order_record, order_id)
 
 
-@mcp.resource("tiny-agent://about")
+@mcp.tool()
+def get_shipment_status(order_id: str) -> dict[str, str]:
+    """Read the teaching shipment status and tracking number for an order."""
+    return _tool_call(shipment_record, order_id)
+
+
+@mcp.tool()
+def get_invoice_summary(order_id: str) -> dict[str, object]:
+    """Read the teaching invoice number and paid amount for an order."""
+    return _tool_call(invoice_record, order_id)
+
+
+@mcp.tool()
+def create_support_case(order_id: str, reason: str) -> dict[str, str]:
+    """Create a teaching support case. This changes server-side business state."""
+    return _tool_call(create_case_record, order_id, reason)
+
+
+@mcp.resource("acme-support://about")
 def about() -> str:
-    """Describe the teaching server."""
-    return "Tiny-Agent Stage 05 demonstrates MCP interoperability boundaries."
+    """Describe the fictional support service."""
+    return (
+        "Acme Support is a fictional Stage 05 service exposing teaching order, "
+        "shipment, invoice, and support-case capabilities."
+    )
 
 
-@mcp.resource("tiny-agent://handbook/{topic}")
-def handbook(topic: str) -> str:
-    """Read a handbook entry by URI."""
-    normalized = topic.strip().lower()
-    if normalized not in HANDBOOK:
-        raise ValueError(f"unknown handbook topic: {topic}")
-    return HANDBOOK[normalized]
+@mcp.resource("acme-support://guide/{topic}")
+def support_guide(topic: str) -> str:
+    """Read one support guide by URI."""
+    try:
+        return read_support_guide(topic)
+    except LookupError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 @mcp.prompt()
-def explain_mcp(topic: str, audience: str = "beginner") -> str:
-    """Create a reusable model-facing instruction about MCP."""
+def prepare_case_summary(order_id: str, audience: str = "customer") -> str:
+    """Return a reusable prompt for summarizing a support case."""
     return (
-        f"Explain {topic} to a {audience}. "
-        "Start from the concrete problem, then give one MCP example and one non-example."
+        f"Summarize support evidence for order {order_id} for a {audience}. "
+        "Separate verified system facts from policy interpretation, and do not "
+        "claim that a refund or support action already happened unless a tool result proves it."
     )
 
 
