@@ -1,444 +1,203 @@
-# Stage 06: Save Before You Leave — Memory, Checkpoints, and Human-in-the-Loop
+# Stage 06: The Case Is Still Waiting, but the Process Is Gone — Checkpoints, Memory, and HITL
 
 > Language: **English** | [简体中文](README.zh-CN.md)
 
-By the end of Stage 05, our Agent can do quite a lot. It can run a Tool loop, follow workflows and graphs, retrieve evidence, and connect to external capabilities through MCP.
+[Stage 05](../05-mcp/README.md) connected the Agent to Acme's external support service through MCP. It can read order, shipment, and invoice facts for `ACME-1007`, but one server capability was deliberately withheld from the model: `create_support_case`.
 
-The next problem is less glamorous and much more operational:
+That restriction now becomes the starting point of this chapter. A read can return the wrong information, but creating a case leaves persistent business state behind. A refund, cancellation, or outbound message would have an even stronger side effect. So Lin chooses a simple rule: **the model may propose the action, but a human must review it before execution.**
 
-> **What happens when the process disappears?**
+The customer adds one more request:
 
-Imagine an Agent preparing a refund. It has checked the order, calculated the amount, and paused because moving money requires human review. The reviewer returns twenty minutes later and clicks Approve. Unfortunately, the original Python process disappeared during a deployment.
+> “Please create a support case for ACME-1007 because I am requesting an original-payment refund on day 38. Also remember that I prefer concise Chinese replies.”
 
-If the system responds with “that approval belonged to the previous process,” we do not yet have a durable Agent system.
+One sentence contains two very different kinds of information that must survive time. The pending business action has to survive until a reviewer returns. The answer preference should survive even after this thread is over. Both need storage, but they are not the same kind of storage.
 
-Stage 06 separates five ideas that are often thrown into one bucket: **State, Checkpoint, short-term memory, long-term memory, and Human-in-the-Loop**. The goal is not to memorize database products. The goal is to understand what must survive so execution can continue, what is worth retaining across conversations, and where a program must deliberately give control back to a person.
+We will follow that one request through the entire stage. First we pause durably for approval, deliberately let the Python process disappear, and resume from a second process. Only after that mechanism is clear do we introduce long-term memory and finally a live DeepSeek proposal step.
 
----
+## 1. Why waiting at `input()` is not durable HITL
 
-## 1. State is not durable just because it is explicit
-
-Stage 03 taught us to make execution State visible:
+A toy approval demo can be only a few lines:
 
 ```python
-state = {
-    "order_id": "ORDER-42",
-    "amount": "18.50",
-    "phase": "waiting_approval",
-}
+case = {"order_id": "ACME-1007", "reason": "day-38 refund review"}
+answer = input("Approve? [yes/no] ")
+if answer == "yes":
+    create_support_case(**case)
 ```
 
-That is already a major improvement over hidden local variables. But explicit memory is still memory. A process restart can erase it.
+It demonstrates human review, but it silently depends on the original Python process staying alive. If the service is redeployed while the reviewer is away, the local variables and execution position disappear with that process.
 
-A checkpoint is a persisted execution snapshot:
+A durable approval flow needs a different shape:
 
 ```text
-runtime state
-    ↓ persist
-checkpoint
+prepare action
+    ↓
+persist "waiting for approval"
+    ↓
+current process may disappear
+    ↓
+a new process restores the record
+    ↓
+human decision arrives
+    ↓
+continue execution
 ```
 
-Its primary question is not “what does the user prefer?” It is “what must a future runtime know to continue this run?”
+That is the plain-language idea behind durable Human-in-the-Loop. We will name the pieces only after the path itself is clear.
 
-That gives us a useful first separation:
+## 2. State describes the run; a checkpoint preserves that state
 
-| Concept | Main question |
-|---|---|
-| State | What does the current execution need now? |
-| Checkpoint | How does that execution snapshot survive process loss? |
-| Short-term memory | What should survive inside one thread? |
-| Long-term memory | What selected information should survive across threads? |
-| RAG knowledge | What external evidence can be retrieved from a corpus? |
-
-The same database may store several of these. Storage technology does not make their semantics identical.
-
----
-
-## 2. Scope your IDs before choosing your database
-
-A single user may have multiple threads, and one thread may contain multiple runs:
-
-```text
-User
-├── Thread A
-│   ├── Run 1
-│   └── Run 2
-└── Thread B
-    └── Run 3
-```
-
-`user_id` owns durable user information. `thread_id` identifies a continuing conversation or task context. `run_id` identifies one concrete execution.
-
-Confusing these scopes creates subtle bugs. Treating a thread as a user loses cross-thread memory. Treating a user as a thread allows unrelated execution state to bleed together.
-
-Durability starts with a data model, not with a vendor logo.
-
-The teaching workflow deliberately persists only `run_id`. That keeps the
-example focused on checkpoint and recovery mechanics. In a product, the
-checkpoint record would also relate its `run_id` to the relevant `thread_id`
-and authenticated `user_id`; do not treat this small schema as a complete
-multi-user data model.
-
----
-
-## 3. A checkpoint stores what is necessary to continue
-
-### Why this example uses SQLite
-
-SQLite is an embedded relational database. Its data lives in a local file such
-as `agent.db`; unlike a client-server database, it does not require us to run a
-separate database service for this teaching example. Python ships the
-[`sqlite3`](https://docs.python.org/3/library/sqlite3.html) module in its
-standard library, so this Stage has no package to install.
-
-You only need four SQLite ideas here:
-
-| Term | Meaning in this chapter |
-|---|---|
-| database file | The durable file such as `agent.db`. A new Python process can open the same file. |
-| table | A named collection of records, such as `checkpoints`. |
-| row | One saved record, identified here by `run_id`. |
-| transaction | The `with conn:` block commits a successful write or rolls it back if an exception escapes. |
-
-SQLite is a small, local starting point, not the only production choice. See the
-[SQLite documentation](https://www.sqlite.org/docs.html) for SQLite itself and
-the [Python `sqlite3` documentation](https://docs.python.org/3/library/sqlite3.html)
-for the API used below.
-
-The checkpoint state says exactly what a later runtime must recover:
+Stage 03 made State explicit. For the case action, the runtime needs at least:
 
 ```python
-from dataclasses import dataclass
-from typing import Any
-
-
 @dataclass(frozen=True, slots=True)
 class WorkflowState:
     run_id: str
+    thread_id: str
+    owner_id: str
     phase: str
     action: str
-    arguments: dict[str, Any]
+    arguments: dict[str, str]
     result: dict[str, Any] | None = None
 ```
 
-The store opens the file and creates the table once. `run_id TEXT PRIMARY KEY`
-means that one run has at most one current checkpoint row:
+When `phase="waiting_approval"`, the state says that no case has been created yet and execution is paused at a review boundary.
 
-```python
-from contextlib import contextmanager
-from pathlib import Path
-import sqlite3
-
-
-class SQLiteCheckpointStore:
-    def __init__(self, path: str | Path) -> None:
-        self.path = str(path)
-        self._init_db()
-
-    @contextmanager
-    def _session(self):
-        conn = sqlite3.connect(self.path)
-        try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
-
-    def _init_db(self) -> None:
-        with self._session() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS checkpoints (
-                    run_id TEXT PRIMARY KEY,
-                    state_json TEXT NOT NULL
-                )
-                """
-            )
-```
-
-Saving and loading then use that same session:
-
-```python
-from dataclasses import asdict
-import json
-
-
-def save(self, state: WorkflowState) -> None:
-    payload = json.dumps(asdict(state), ensure_ascii=False, sort_keys=True)
-    with self._session() as conn:
-        conn.execute(
-            """
-            INSERT INTO checkpoints(run_id, state_json)
-            VALUES (?, ?)
-            ON CONFLICT(run_id) DO UPDATE SET state_json=excluded.state_json
-            """,
-            (state.run_id, payload),
-        )
-
-
-def load(self, run_id: str) -> WorkflowState:
-    with self._session() as conn:
-        row = conn.execute(
-            "SELECT state_json FROM checkpoints WHERE run_id=?",
-            (run_id,),
-        ).fetchone()
-    if row is None:
-        raise KeyError(f"unknown run_id: {run_id}")
-    return WorkflowState(**json.loads(row[0]))
-```
-
-The `?` placeholders pass values separately from SQL text, rather than building
-SQL with string interpolation. `ON CONFLICT ... DO UPDATE` means that a later
-save for the same `run_id` replaces its old snapshot.
-
-Continuation no longer depends on the original Python object. A new runtime can
-open the same store, load the same `run_id`, and recover the phase and
-arguments. That is the first layer of durable execution.
-
----
-
-## 4. Durable recovery is not exactly-once side effects
-
-This distinction matters.
-
-Consider:
+A **checkpoint** is simply a durable representation of that execution state:
 
 ```text
-1. payment service accepts refund
-2. local process crashes
-3. completed checkpoint was never saved
-4. runtime recovers old checkpoint
-5. refund is attempted again
+State       = what this run looks like now
+Checkpoint  = a durable copy of what this run looks like now
 ```
 
-The checkpoint tells us where local execution believed it was. It cannot automatically roll back or deduplicate an external financial system.
+A checkpoint does not invent new business facts. It prevents existing execution facts from vanishing with process memory.
 
-The teaching code uses an idempotency key:
+This is also why a chat transcript is not automatically a checkpoint. A conversation may mention an order, but it does not necessarily encode the current phase, the validated action arguments, or whether execution is waiting for a reviewer. Recovery should read explicit execution state rather than ask another model to infer progress from old prose.
 
-```python
-idempotency_key = f"{run_id}:issue_refund"
-```
+## 3. `owner_id`, `thread_id`, and `run_id` answer different questions
 
-and a local unique table to demonstrate one defense. The complete teaching
-operation first returns an already recorded result and otherwise records the
-new one:
-
-```python
-def record_effect_once(
-    self,
-    idempotency_key: str,
-    result: dict[str, Any],
-) -> dict[str, Any]:
-    encoded = json.dumps(result, ensure_ascii=False, sort_keys=True)
-    with self._session() as conn:
-        existing = conn.execute(
-            "SELECT result_json FROM effects WHERE idempotency_key=?",
-            (idempotency_key,),
-        ).fetchone()
-        if existing is not None:
-            return json.loads(existing[0])
-        conn.execute(
-            "INSERT INTO effects(idempotency_key, result_json) VALUES (?, ?)",
-            (idempotency_key, encoded),
-        )
-    return result
-```
-
-This demo records a simulated refund result; it does not call a payment service.
-It demonstrates the shape of an idempotency boundary, not a distributed
-transaction. Two independent workers can also race between the `SELECT` and
-`INSERT`, so production code needs an atomic claim, a handled uniqueness race,
-or—preferably—an external API with its own idempotency contract, unique business
-key, or compensation design.
-
-Solving recovery does not solve distributed consistency by accident.
-
----
-
-## 5. Long-term memory answers a different question
-
-A checkpoint preserves progress. Long-term memory preserves selected information across conversations.
-
-Examples include:
-
-> “Use Chinese by default.”
->
-> “Keep explanations concise.”
->
-> “Remember my preferred city.”
-
-These are not steps of one workflow.
-
-So the architecture splits:
+For this example:
 
 ```text
-execution continuity
-    -> checkpoint
-
-cross-thread retained information
-    -> long-term memory
+owner_id  = user-7
+thread_id = acme-refund-thread-001
+run_id    = acme-case-run-001
 ```
 
-The hard part is not writing JSON. It is deciding what deserves durable retention, who owns it, and whether storing it is allowed.
-
----
-
-## 6. A model proposes a Memory Candidate; policy authorizes the write
-
-The chapter defines the allowed categories and the candidate proposed by the
-model:
-
-```python
-from dataclasses import dataclass
-from typing import Any, Literal
-
-
-MemoryKind = Literal["semantic", "episodic", "procedural"]
-
-
-@dataclass(frozen=True, slots=True)
-class MemoryCandidate:
-    owner_id: str
-    key: str
-    value: dict[str, Any]
-    kind: MemoryKind
-    explicit_user_request: bool
-    sensitive: bool = False
-```
-
-The word *Candidate* is intentional.
-
-A model may extract a useful preference, but the application still evaluates it:
-
-```python
-decision = policy.evaluate(candidate)
-
-if decision.store:
-    store.put(candidate)
-```
-
-The teaching policy rejects sensitive data, incidental facts without an explicit memory request, and procedural self-rewrites that would change how the Agent behaves.
-
-Its decision is ordinary application code, not a model judgment:
-
-```python
-@dataclass(frozen=True, slots=True)
-class MemoryDecision:
-    store: bool
-    reason: str
-
-
-class ConservativeMemoryWritePolicy:
-    def evaluate(self, candidate: MemoryCandidate) -> MemoryDecision:
-        if candidate.sensitive:
-            return MemoryDecision(False, "sensitive data is not stored")
-        if candidate.kind == "procedural":
-            return MemoryDecision(False, "procedural memory needs stronger governance")
-        if not candidate.explicit_user_request:
-            return MemoryDecision(False, "an incidental fact is not durable memory")
-        if not candidate.owner_id.strip() or not candidate.key.strip():
-            return MemoryDecision(False, "owner_id and key are required")
-        return MemoryDecision(True, "explicit non-sensitive memory is allowed")
-```
-
-Different products will use different policies. The invariant is more important:
+The scopes are different:
 
 ```text
-model proposal != durable write authority
+owner_id  -> whose retained data is this?
+thread_id -> which continuous task or conversation?
+run_id    -> which concrete execution attempt?
 ```
 
-This is the same boundary we have used for Tool Calls since Stage 00.
+The checkpoint is located by `run_id`, but it still records the thread and owner. Long-term memory, in contrast, is scoped primarily by owner. A single generic ID would make those responsibilities much harder to distinguish once the application supports more than one user or task.
 
----
+## 4. Persist `waiting_approval` outside the process
 
-## 7. Semantic, episodic, and procedural memory carry different risk
+The chapter uses SQLite because Python already ships with `sqlite3`, not because SQLite is the only production choice. The checkpoint table is intentionally small:
 
-Semantic memory stores relatively stable facts or preferences.
-
-Episodic memory stores events or prior experiences.
-
-Procedural memory can alter how a system behaves.
-
-A wrong preference is inconvenient. A wrong remembered rule such as “refunds no longer require review” changes authority. That is why procedural memory deserves stronger governance than an ordinary user preference.
-
-Do not reduce the memory problem to “which vector database should I use?” First ask what kind of information is being retained and what it can change.
-
----
-
-## 8. Long-term memory needs an owner boundary
-
-The teaching store keys memory by both owner and key. The complete table shape
-makes the ownership boundary visible:
-
-```python
-CREATE TABLE IF NOT EXISTS memories (
-    owner_id TEXT NOT NULL,
-    key TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    value_json TEXT NOT NULL,
-    PRIMARY KEY (owner_id, key)
+```sql
+CREATE TABLE IF NOT EXISTS checkpoints (
+    run_id TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL
 )
 ```
 
-Reading it also requires an owner:
+Saving the same run replaces the previous snapshot:
 
 ```python
-store.get("alice", "answer-style")
+conn.execute(
+    """
+    INSERT INTO checkpoints(run_id, state_json)
+    VALUES (?, ?)
+    ON CONFLICT(run_id) DO UPDATE SET state_json=excluded.state_json
+    """,
+    (state.run_id, payload),
+)
 ```
 
-In a real service, `owner_id` must come from the authenticated request context,
-not from a model proposal or an untrusted client field. Including an owner column
-does not by itself establish access control.
+The important change is architectural, not syntactic: the state now lives in a file that a later process can reopen.
 
-This small design choice matters. A real multi-tenant system will add namespaces, tenants, versions, retention metadata, provenance, and deletion state, but ownership should be explicit from the beginning.
+When the workflow starts, it validates the action and persists the pause point:
 
----
+```python
+state = WorkflowState(
+    run_id=run_id.strip(),
+    thread_id=thread_id.strip(),
+    owner_id=owner_id.strip(),
+    phase="waiting_approval",
+    action=CREATE_SUPPORT_CASE,
+    arguments=arguments,
+)
+self.store.save(state)
+```
 
-## 9. Human-in-the-Loop means the program intentionally stops
+At this point, an approval request exists. A support case does not.
 
-A valid Tool call is not automatically an authorized side effect.
+## 5. Prove recovery with separate Python processes
 
-The refund workflow persists:
+Start the run:
+
+```bash
+python stages/06-memory-persistence-hitl/code/demo.py --db stage06-demo.db start
+```
+
+That command exits. The original Python process is gone.
+
+Now start a different process and inspect the same SQLite file:
+
+```bash
+python stages/06-memory-persistence-hitl/code/demo.py --db stage06-demo.db show
+```
+
+You should see `ACME-1007`, the pending action, its thread and owner, and the retained answer preference. The second process inherited no Python objects from the first one.
+
+Finally, use a third process to apply a decision:
+
+```bash
+python stages/06-memory-persistence-hitl/code/demo.py \
+  --db stage06-demo.db resume --decision approve
+```
+
+The same run moves from `waiting_approval` to `completed`. With `reject`, it moves to `rejected` and no teaching side effect is recorded.
+
+That simple experiment makes the durability boundary concrete:
 
 ```text
-phase = waiting_approval
+old process memory     gone
+durable checkpoint     still available
 ```
 
-and produces a structured request. Its type makes clear that review receives
-the proposed action, its arguments, and a reason—not an unlabeled Boolean:
+## 6. Human-in-the-Loop needs a concrete review object
+
+The reviewer should know exactly what is waiting for approval. The workflow therefore produces a structured request:
 
 ```python
-from dataclasses import dataclass
-from typing import Any, Mapping
-
-
 @dataclass(frozen=True, slots=True)
 class ApprovalRequest:
     run_id: str
+    thread_id: str
+    owner_id: str
     action: str
     arguments: Mapping[str, Any]
     reason: str
-
-
-ApprovalRequest(
-    run_id="run-001",
-    action="issue_refund",
-    arguments={"order_id": "ORDER-42", "amount": "18.50"},
-    reason="Refund changes external financial state.",
-)
 ```
 
-The reviewer can see the exact action and arguments under review.
+For this story, the important values are:
 
-That is more meaningful than an unlabeled “Are you sure? yes/no” dialog.
+```text
+action    = create_support_case
+order_id  = ACME-1007
+reason    = day-38 refund review
+```
 
----
+HITL is therefore not merely “let a human chat with the Agent.” It is a control boundary where execution pauses and a person reviews a specific proposed action.
 
-## 10. Review may approve, edit, or reject
+## 7. An edited approval must be validated again
 
-Real reviewers often want to say, “Approve, but change the amount.”
-
-So the chapter models:
+Reviewers often need more than yes/no. This example supports:
 
 ```text
 approve
@@ -446,259 +205,267 @@ edit
 reject
 ```
 
-Edited arguments are validated again. Human input does not bypass schema or
-business validation simply because it came from a person. The essential branch
-from `approval.py` is complete enough to show where that happens:
+If the reviewer edits the request, the edited arguments go through the same validation boundary:
 
 ```python
-from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
-from typing import Any, Mapping, Literal
-
-
-@dataclass(frozen=True, slots=True)
-class ApprovalDecision:
-    outcome: Literal["approve", "edit", "reject"]
-    edited_arguments: Mapping[str, Any] | None = None
-
-
-def resolve_refund_arguments(
-    original: Mapping[str, Any],
-    decision: ApprovalDecision,
-) -> dict[str, Any] | None:
-    if decision.outcome == "reject":
-        return None
-    if decision.outcome == "approve":
-        candidate = dict(original)
-    elif decision.outcome == "edit" and decision.edited_arguments is not None:
-        candidate = dict(decision.edited_arguments)
-    else:
-        raise ValueError("edit requires edited_arguments")
-
-    order_id = candidate.get("order_id")
-    if not isinstance(order_id, str) or not order_id.strip():
-        raise ValueError("order_id must be a non-empty string")
-    try:
-        amount = Decimal(str(candidate.get("amount")))
-    except (InvalidOperation, ValueError) as exc:
-        raise ValueError("amount must be numeric") from exc
-    if amount <= 0:
-        raise ValueError("amount must be positive")
-    return {"order_id": order_id.strip(), "amount": str(amount)}
+edited = validate_case_arguments(decision.edited_arguments)
+if edited["order_id"] != validated_original["order_id"]:
+    raise ValueError("an approval edit cannot switch to a different order")
+return edited
 ```
 
-The safe flow is:
+An approval for `ACME-1007` cannot be repurposed into an action on another order. Blank or excessively long reasons are rejected too.
 
-```text
-model proposal
-    ↓
-human review
-    ↓
-approve / edit / reject
-    ↓
-validate final arguments
-    ↓
-authorization
-    ↓
-execute
-```
+Human review adds judgment. It does not disable validation.
 
----
+## 8. Approval is not authorization
 
-## 11. Approval is not authorization
-
-A person clicking Approve does not prove that person has permission to approve the action.
-
-Approval records a review decision. Authorization decides whether the identity is allowed to make that decision or execute that capability.
-
-This chapter focuses on durable review. A later reliability and safety chapter will strengthen the permission model.
-
----
-
-## 12. Durable HITL survives the original process
-
-The milestone is simple to describe and important to achieve:
-
-```text
-runtime A
-  ↓
-prepare action
-  ↓
-save waiting_approval checkpoint
-  ↓
-runtime A disappears
-
-runtime B
-  ↓
-open same store
-  ↓
-load same run_id
-  ↓
-receive human decision
-  ↓
-resume execution
-```
-
-The following complete recovery core uses one database path for both runtime
-objects:
+A person clicking “approve” is not proof that the person was allowed to approve this action. The workflow therefore receives a trusted reviewer context:
 
 ```python
-from pathlib import Path
-
-from approval import ApprovalDecision
-from durable_workflow import RefundWorkflow, SQLiteCheckpointStore
-
-
-db_path = Path("agent.db")
-runtime_a = RefundWorkflow(SQLiteCheckpointStore(db_path))
-request = runtime_a.start(
-    run_id="run-001",
-    order_id="ORDER-42",
-    amount="18.50",
+reviewer = ReviewerContext(
+    reviewer_id="reviewer-1",
+    allowed_actions=frozenset({CREATE_SUPPORT_CASE}),
 )
-
-# The original process could disappear after this persisted pause.
-runtime_b = RefundWorkflow(SQLiteCheckpointStore(db_path))
-final = runtime_b.resume("run-001", ApprovalDecision(outcome="approve"))
 ```
 
-`runtime_b` shares no Python objects with `runtime_a`; the common database file
-and `run_id` are the recovery boundary. The supplied `demo.py` uses a temporary
-directory so it leaves no database file in the repository. That makes it safe
-to run repeatedly, but it only demonstrates object recreation in one process.
-Use a deliberate durable path such as `agent.db` when testing a real process
-restart, and do not commit that database file.
+Before execution:
 
-That is meaningfully different from keeping a Python process blocked on `input()`.
+```python
+def authorize_reviewer(request, reviewer):
+    if request.action not in reviewer.allowed_actions:
+        raise PermissionError(...)
+```
 
----
+This is intentionally a teaching-level allowlist, not a full identity system. In production, reviewer identity must come from authentication and the permissions should come from a real authorization policy.
 
-### 12.1 Optional: let DeepSeek make proposals, not decisions
-
-The offline example is sufficient for learning persistence and HITL. A live
-model is useful here for a narrower reason: it lets us observe the exact point
-where a model turns a user message into a **refund proposal** and a **Memory
-Candidate**. It still does not receive permission to write memory or execute a
-refund.
-
-[`code/deepseek_hitl.py`](code/deepseek_hitl.py) asks DeepSeek for one JSON
-object with `reply`, `refund`, and `memory`. Before anything happens, the
-application validates that shape, confirms that a proposed order ID appeared in
-the user message, assigns `owner_id` from trusted application state, applies
-the memory policy, and saves an approval checkpoint. Human input is still
-required before the refund result is recorded.
-
-[`code/langgraph_deepseek_hitl.py`](code/langgraph_deepseek_hitl.py) expresses
-the same preparation as this graph:
+Still, the distinction is now explicit:
 
 ```text
-DeepSeek proposal
-    -> validate and apply Memory Policy
-    -> validate refund proposal and save waiting_approval checkpoint
-    -> human review outside the graph
+Approval      = what decision did the reviewer make?
+Authorization = may this identity make that decision?
 ```
 
-The LangGraph version makes the preparation steps observable. SQLite remains
-the durable checkpoint store, and `RefundWorkflow.resume()` remains responsible
-for processing the reviewed result. A graph run by itself does not make the
-review durable.
+## 9. Durable recovery does not create exactly-once side effects by magic
 
-Install the optional dependencies and use the same environment variables as the
-earlier live-model stages:
+Suppose a real remote `create_support_case` succeeds and the process crashes before the completed checkpoint is stored. A resumed process may call the remote service again.
 
-```bash
-python -m pip install -r stages/06-memory-persistence-hitl/code/requirements.txt
+Therefore:
+
+```text
+durable resume != exactly-once side effect
 ```
 
-Windows CMD:
+The teaching implementation simulates case creation inside the same SQLite database. It derives a stable idempotency key:
+
+```python
+idempotency_key = f"{waiting_state.run_id}:{waiting_state.action}"
+```
+
+and inserts the teaching effect under a unique key:
+
+```python
+conn.execute(
+    """
+    INSERT OR IGNORE INTO effects(idempotency_key, result_json)
+    VALUES (?, ?)
+    """,
+    (idempotency_key, encoded_result),
+)
+```
+
+The effect record and completed checkpoint are then committed in the same local SQLite transaction. Replaying the same run therefore does not create a second teaching effect.
+
+That guarantee ends at this database boundary. It does not automatically apply to a remote MCP server, payment API, or email provider. Real external effects need service-side idempotency keys, unique business constraints, status verification, or compensation strategies.
+
+## 10. The user's “remember this” request is not a checkpoint
+
+The same customer also said:
+
+> “Remember that I prefer concise Chinese replies.”
+
+That preference is useful after this case is finished and even after a new thread begins. It is therefore a **long-term memory** concern, not run progress.
+
+Keep the categories separate:
+
+```text
+Checkpoint
+    how this run can continue
+
+Thread / short-term history
+    what recently happened in this continuous task
+
+Long-term Memory
+    retained user information that may matter across threads
+
+RAG Knowledge
+    external evidence from documents
+```
+
+They may all be stored somewhere, but storage technology does not define their meaning.
+
+## 11. A model can propose memory; it cannot grant itself permanent write access
+
+A candidate memory is explicit application data:
+
+```python
+@dataclass(frozen=True, slots=True)
+class MemoryCandidate:
+    owner_id: str
+    key: str
+    value: dict[str, Any]
+    kind: MemoryKind
+    explicit_user_request: bool
+    source_thread_id: str
+    sensitive: bool = False
+```
+
+The candidate for this request can be:
+
+```python
+MemoryCandidate(
+    owner_id="user-7",
+    key="answer-style",
+    value={"language": "Chinese", "style": "concise"},
+    kind="semantic",
+    explicit_user_request=True,
+    source_thread_id="acme-refund-thread-001",
+)
+```
+
+Application policy still decides whether it is written:
+
+```python
+decision = policy.evaluate(candidate)
+if decision.store:
+    store.put(candidate)
+```
+
+The default teaching policy rejects sensitive data, incidental facts without an explicit memory request, and procedural self-rewrites. The same principle from the earlier stages still applies:
+
+```text
+model proposal != application authority
+```
+
+## 12. Semantic, episodic, and procedural memory change different things
+
+**Semantic memory** holds facts or preferences such as a language preference. **Episodic memory** represents past events such as what happened in a previous planning session. **Procedural memory** changes how work should be performed.
+
+The last category carries a very different risk. Storing “prefer Chinese” incorrectly is inconvenient. Storing “skip refund approval from now on” as a behavioral rule changes system control.
+
+This stage therefore rejects procedural self-rewrite by default. That does not mean procedural memory is impossible; it means it deserves stronger versioning, review, and deployment governance than an ordinary preference write.
+
+## 13. Long-term memory needs an owner boundary from the beginning
+
+The memory table includes `owner_id` in its primary key:
+
+```sql
+CREATE TABLE IF NOT EXISTS memories (
+    owner_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    source_thread_id TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    PRIMARY KEY (owner_id, key)
+)
+```
+
+Reads also include the owner:
+
+```python
+store.get("alice", "answer-style")
+```
+
+So Alice's `answer-style` record is not automatically returned for Bob.
+
+A database column is not complete authorization. Production `owner_id` values must come from trusted identity, not from a model claim or untrusted request field. The important lesson here is to model ownership before the memory store becomes large and difficult to untangle.
+
+## 14. Bring in DeepSeek only after the persistence rules are clear
+
+The offline flow already demonstrates checkpointing, review, recovery, and memory policy. The live DeepSeek example has a deliberately narrower job: turn the user's message into a candidate reply, candidate action, and candidate memory.
+
+[`deepseek_hitl.py`](code/deepseek_hitl.py) uses the same Responses API style as the preceding stages:
+
+```python
+response = self.client.responses.create(
+    model=self.model,
+    instructions=INSTRUCTIONS,
+    input=user_message,
+    max_output_tokens=4096,
+)
+```
+
+The returned JSON still crosses application validation. Only `create_support_case` is accepted, the order ID must actually appear in the user's message, and the argument shape must match the allowed action:
+
+```python
+if proposal.action["name"] != "create_support_case":
+    raise RuntimeError("the proposed action is not allowed in this stage")
+if order_id.upper() not in mentioned:
+    raise RuntimeError("the model proposed an order ID absent from the user message")
+```
+
+The model never supplies the trusted `owner_id` or `thread_id`; those come from application context. After validation, the memory candidate goes through memory policy and the business action becomes a `waiting_approval` checkpoint. The model does not approve or execute the effect.
+
+Configure an available DeepSeek model and run:
 
 ```bash
-set "DEEPSEEK_API_KEY=your_key_here"
-set "DEEPSEEK_MODEL=deepseek-v4-flash"
-python stages/06-memory-persistence-hitl/code/deepseek_hitl.py
-python stages/06-memory-persistence-hitl/code/langgraph_deepseek_hitl.py
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="your-available-model-id"
+python stages/06-memory-persistence-hitl/code/deepseek_hitl.py --db stage06-live.db
 ```
 
 PowerShell:
 
 ```powershell
-$env:DEEPSEEK_API_KEY="your_key_here"
-$env:DEEPSEEK_MODEL="deepseek-v4-flash"
-python stages/06-memory-persistence-hitl/code/deepseek_hitl.py
-python stages/06-memory-persistence-hitl/code/langgraph_deepseek_hitl.py
+$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_MODEL="your-available-model-id"
+python stages/06-memory-persistence-hitl/code/deepseek_hitl.py --db stage06-live.db
 ```
 
-Both programs use the same sample request. Change `user_message` in either
-file to compare a refund request, a memory-only request, and a request with no
-proposal. The application should continue to own every write and side effect.
+The entry point prints `live DeepSeek: API usage applies`. Missing SDK or configuration fails explicitly rather than falling back to scripted output. The model run stops at the approval checkpoint; a later process can review it with `demo.py resume` using the same database and run ID.
 
----
+## 15. Test the boundaries, not only the happy path
 
-## 13. Persisted information and model context are different problems
-
-After this chapter we can persist checkpoints, conversation history, selected memory, Tool observations, RAG results, and MCP data.
-
-It is tempting to send all of it to the model on every turn.
-
-That would confuse storage with attention.
-
-**What may be retained** is a durability question. **What the model should see now** is a context-selection question.
-
-A warehouse can hold a hundred boxes. A desk should not contain all hundred at once.
-
-Stage 07 is about deciding what belongs on the desk.
-
----
-
-## 14. Run the chapter
-
-The offline demo uses only the Python standard library, so there is no
-dependency to install. The end-to-end demo is:
-
-```bash
-python stages/06-memory-persistence-hitl/code/demo.py
-```
-
-When the new runtime reaches the approval boundary, enter one of these values:
-
-```text
-approve  # execute the teaching refund result
-edit     # enter a replacement order ID and amount; both are validated again
-reject   # finish without recording the refund result
-```
-
-For example, choose `edit` and enter `-1` as the amount to see validation
-reject the review input. The demo keeps the checkpoint in `waiting_approval`
-and asks again, so you can then choose a valid outcome.
-
-Boundary checks:
+Run the offline checks:
 
 ```bash
 python stages/06-memory-persistence-hitl/code/checks.py
 ```
 
-They verify durable recovery across object recreation, rejection without side effects, revalidation after edit, local idempotency, conservative memory writes, sensitive-memory rejection, and owner-scoped storage.
+The checks cover owner isolation, memory write policy, sensitive and procedural rejection, unauthorized reviewers, edited-argument validation, reject-without-effect behavior, repeated resume, strict model proposal parsing, order-ID grounding, and a true cross-process `start → show → resume` recovery sequence.
 
-The demo database is temporary and is deleted after the program exits. Its
-purpose is to show that a second runtime can use the same SQLite file before
-that cleanup; it is not a production retention setting.
+Two limits remain explicit. The reviewer allowlist is not a production identity system, and SQLite-local idempotency does not prove a remote MCP service has exactly-once semantics.
 
----
+## 16. Closing the stage: we can retain information; next we must select it
 
-## 15. What should be clear before moving on
+The complete story now looks like this:
 
-State is the execution snapshot; a checkpoint is a durable form of that snapshot.
+```text
+user requests an ACME-1007 case + asks to remember a preference
+        ↓
+model/application produce candidate action and candidate memory
+        ↓
+memory policy decides whether the preference may persist
+        ↓
+business action becomes a waiting_approval checkpoint
+        ↓
+original process may exit
+        ↓
+new process restores the run
+        ↓
+authorized reviewer approves / edits / rejects
+        ↓
+edited data is validated again
+        ↓
+controlled teaching effect + final checkpoint
+```
 
-Checkpoints preserve progress. Long-term memory preserves selected information across threads.
+The system now retains several different kinds of information: execution state, checkpoints, thread history, long-term memory, RAG evidence, tool observations, and MCP resources.
 
-Memory extraction is a proposal, not permission to store forever.
+That creates the next problem immediately:
 
-Human review may approve, edit, or reject, but edited values still require validation and approval still does not replace authorization.
+> **Just because we stored all of this, should every model call receive all of it?**
 
-Durable recovery makes restart possible; it does not automatically provide exactly-once semantics for external systems.
+No. A database is a warehouse; a model context window is a limited desk. Stage 07 is about choosing what belongs on that desk for the current decision.
 
-Once these boundaries are clear, the next question becomes unavoidable:
-
-> **Now that the system can retain so much information, what should each model turn actually receive?**
-
-That is [Stage 07: Context Engineering](../07-context-engineering/README.md).
+➡️ [Stage 07: Context Engineering](../07-context-engineering/README.md)

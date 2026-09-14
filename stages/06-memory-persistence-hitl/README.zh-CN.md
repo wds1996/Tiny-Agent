@@ -1,350 +1,332 @@
-# Stage 06：Agent 也得学会“下班前存档”——从 State 到 Memory、Checkpoint 与 Human-in-the-Loop (HITL)
+# Stage 06：工单还没创建，程序先重启了——从 Checkpoint 到 Memory 与 HITL
 
 > Language: [English](README.md) | **简体中文**
 
-前五章结束以后，我们的 Agent 已经不像最开始那个“会聊天的函数”了。它能调用 Tool，能自己走 ReAct 循环，能按照 Workflow 或 Graph 编排任务，能去知识库里找证据，也能通过 MCP 接上外部系统。
+[上一章](../05-mcp/README.zh-CN.md)，小林已经把 Agent 接到了 Acme 的外部支持系统。它能通过 MCP 查询 `ACME-1007` 的订单、物流和发票，但有一个工具一直没有交给模型：`create_support_case`。
 
-能力越来越多，接下来出现的问题却非常朴素：
+原因很简单。查询错一次，通常只是拿错了一份信息；创建工单却会在业务系统里留下长期记录。更现实一点，如果这个动作换成“退款”“取消订单”或“发邮件”，副作用只会更明显。于是小林决定：**模型可以提出动作，但真正执行前必须有人审批。**
 
-> **程序关掉以后，刚才做到哪了？**
+顾客这时又补了一句：
 
-假设 Agent 正准备给用户退款。它已经查完订单、确认规则、算好金额，最后一步因为会真的动钱，所以系统暂停下来等人工审批。审批人午饭回来点了“同意”，结果原来的 Python 进程早就因为部署重启消失了。
+> “请为 ACME-1007 创建一个售后工单，原因是我在第 38 天申请原路退款；另外记住，以后请用简短中文回复我。”
 
-如果你的系统只能回答：
+一句话里出现了两件完全不同的“以后还要用到”的信息。工单动作需要在审批回来后继续执行；回答偏好则希望下次新会话也能记住。它们都要保存，却不是同一种保存。
 
-> “不好意思，那次审批属于上一条进程的人生经历。”
+本章就跟着这条请求走到底。先让流程在审批处停下来，再故意把 Python 进程关掉，用另一个进程恢复；随后再处理长期 Memory。等这些事情都能说清楚，最后才让真实 DeepSeek 参与“提出候选动作和候选记忆”。
 
-那它还不能算真正可持续运行的 Agent 系统。
+## 1. 先看最朴素的问题：`input()` 等审批，为什么还不够？
 
-Stage 06 就从这里开始。我们不急着把所有能存东西的数据库统称为“Memory”，而是先把几个非常容易混在一起的概念分清：**State、Checkpoint、Short-term Memory、Long-term Memory，以及 Human-in-the-Loop。**
-
-这一章的核心不是“怎样把 JSON 塞进数据库”，而是：
-
-> **什么必须为了继续执行而保存，什么值得跨会话记住，以及什么时候程序必须停下来把决定权交还给人。**
-
----
-
-## 1. State 已经有了，为什么还要 Checkpoint？
-
-Stage 03 里我们把 State 摊在了桌面上。一个退款流程可能有这样的状态：
+如果只在一台电脑上做演示，最容易写出这样的代码：
 
 ```python
-state = {
-    "order_id": "ORDER-42",
-    "amount": "18.50",
-    "phase": "waiting_approval",
-}
+case = {"order_id": "ACME-1007", "reason": "day-38 refund review"}
+answer = input("Approve? [yes/no] ")
+if answer == "yes":
+    create_support_case(**case)
 ```
 
-只要 Python 进程还活着，这个状态待在内存里没有问题。
+它能演示“有人点头以后再执行”，但有个隐含前提：**这个 Python 进程必须一直活着。**
 
-问题是，内存没有忠诚度。进程退出、容器重启、机器故障，它说没就没。
+假设审批人去开会了。等待期间应用发布新版本，进程重启。旧变量 `case`、执行到了哪一步、正在等谁审批，全都只存在于已经消失的内存里。审批人回来点“同意”，新进程却不知道这次“同意”属于哪一个动作。
 
-于是我们需要一个很自然的动作：
+所以我们真正需要的流程不是：
 
 ```text
-runtime state
-    ↓ persist
-checkpoint
+Python 一直等着
+    ↓
+人回来按按钮
 ```
 
-Checkpoint 可以理解成某个执行时刻的**可恢复快照**。它关心的问题不是“用户喜欢什么”，而是：
-
-> “这次 run 已经执行到了哪里，恢复时必须知道什么？”
-
-这一点很重要，因为 Checkpoint 和 Memory 经常都存到数据库，于是名字一模糊，架构也跟着糊。
-
-把它们先粗略分开：
-
-| 概念 | 它回答的问题 |
-|---|---|
-| State | 当前执行需要知道什么？ |
-| Checkpoint | 当前执行快照怎样跨进程保存？ |
-| Short-term Memory | 同一条会话 / thread 里过去哪些信息要继续保留？ |
-| Long-term Memory | 跨会话以后，哪些用户相关信息仍值得记住？ |
-| RAG Knowledge | 外部文档里有哪些证据可以被检索？ |
-
-数据库表可能长得很像，但**语义不是由数据库产品决定的**。
-
-把 `checkpoint` 表改名叫 `memory_super_pro_max`，它也不会突然变成加强版的memory。
-
----
-
-## 2. `run_id`、`thread_id`、`user_id` 别混成一锅粥
-
-随着系统开始持久化，你会遇到几个 ID。
-
-最危险的写法不是忘记 ID，而是所有地方都用一个 `"123"`，然后靠感觉解释它是谁。
-
-考虑一个用户 Alice。她可能同时开两个对话：
+而是：
 
 ```text
-user_id = alice
-
-thread_id = trip-planning
-thread_id = expense-reimbursement
+准备动作
+    ↓
+把“正在等审批”保存下来
+    ↓
+当前进程可以消失
+    ↓
+另一个进程读回记录
+    ↓
+收到人的决定
+    ↓
+继续执行
 ```
 
-而“报销”这条 thread 里，又可能启动一次具体的执行：
+这就是 **Durable Human-in-the-Loop** 最直观的样子。先把这条路线跑通，再给里面的概念起名字。
 
-```text
-run_id = reimburse-2026-09-04-001
-```
+## 2. State 是“现在有什么”，Checkpoint 是“把现在存下来”
 
-三个 ID 的作用域完全不同。
-
-`user_id` 表示谁拥有长期数据；`thread_id` 表示哪段连续会话或任务上下文；`run_id` 表示某一次实际执行。
-
-所以一个合理关系更像：
-
-```text
-User
-├── Thread A
-│   ├── Run 1
-│   └── Run 2
-└── Thread B
-    └── Run 3
-```
-
-如果把 `thread_id` 当成 `user_id`，跨会话记忆很容易丢；如果把 `user_id` 当成 `thread_id`，不同任务的执行状态又可能莫名串在一起。
-
-持久化系统的第一道题，往往不是“选 SQLite 还是 Postgres”，而是先把作用域说清楚。
-
-本章教学实现有意只保存 `run_id`，这样读者可以把注意力放在 Checkpoint 与恢复机制上。在真实产品中，Checkpoint 记录还应关联它所属的 `thread_id` 和已认证的 `user_id`；不要把这个最小表结构当成完整的多用户数据模型。
-
----
-
-## 3. Checkpoint 保存的是“继续干活所需的信息”
-
-### 为什么这里使用 SQLite
-
-SQLite 是嵌入式关系型数据库：数据保存在本地的一个文件中，例如 `agent.db`；它不像 MySQL 或 Postgres 那样需要先运行一个独立的数据库服务。Python 标准库自带 [`sqlite3`](https://docs.python.org/3/library/sqlite3.html)，所以本章无需安装额外依赖。
-
-这一节只需要先认识四个词：
-
-| 术语 | 在本章中的含义 |
-|---|---|
-| 数据库文件 | 可持久化保存的数据文件，例如 `agent.db`；新的 Python 进程可以重新打开它。 |
-| 表（table） | 一类有名字的记录集合，例如 `checkpoints`。 |
-| 行（row） | 一条保存的记录；这里由 `run_id` 唯一标识。 |
-| 事务（transaction） | `with conn:` 中的写入成功时提交；若异常逃出则回滚。 |
-
-SQLite 是本章便于理解的本地起点，并不是唯一的生产选择。需要继续学习时，可阅读 [SQLite 官方文档](https://www.sqlite.org/docs.html)、[Python `sqlite3` 官方文档](https://docs.python.org/3/library/sqlite3.html)，或中文的[菜鸟教程 SQLite 教程](https://www.runoob.com/sqlite/sqlite-tutorial.html)。
-
-先定义“恢复时必须读回什么”的状态：
+Stage 03 已经把 State 讲清楚了：它是程序继续执行所需要的当前数据。现在这笔工单在审批前至少需要这些事实：
 
 ```python
-from dataclasses import dataclass
-from typing import Any
-
-
 @dataclass(frozen=True, slots=True)
 class WorkflowState:
     run_id: str
+    thread_id: str
+    owner_id: str
     phase: str
     action: str
-    arguments: dict[str, Any]
+    arguments: dict[str, str]
     result: dict[str, Any] | None = None
 ```
 
-Store 打开数据库文件，并在第一次使用时建表。`run_id TEXT PRIMARY KEY` 表示同一次 run 最多有一条当前 Checkpoint：
+当 `phase="waiting_approval"` 时，这份 State 表示：工单还没有创建，系统正在等审批。**Checkpoint** 做的事情，就是把这份执行快照写到进程之外，让以后还能读回来。
 
-```python
-from contextlib import contextmanager
-from pathlib import Path
-import sqlite3
-
-
-class SQLiteCheckpointStore:
-    def __init__(self, path: str | Path) -> None:
-        self.path = str(path)
-        self._init_db()
-
-    @contextmanager
-    def _session(self):
-        conn = sqlite3.connect(self.path)
-        try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
-
-    def _init_db(self) -> None:
-        with self._session() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS checkpoints (
-                    run_id TEXT PRIMARY KEY,
-                    state_json TEXT NOT NULL
-                )
-                """
-            )
-```
-
-接下来在同一个 session 中完整地保存和读回状态：
-
-```python
-from dataclasses import asdict
-import json
-
-
-def save(self, state: WorkflowState) -> None:
-    payload = json.dumps(asdict(state), ensure_ascii=False, sort_keys=True)
-    with self._session() as conn:
-        conn.execute(
-            """
-            INSERT INTO checkpoints(run_id, state_json)
-            VALUES (?, ?)
-            ON CONFLICT(run_id) DO UPDATE SET state_json=excluded.state_json
-            """,
-            (state.run_id, payload),
-        )
-
-
-def load(self, run_id: str) -> WorkflowState:
-    with self._session() as conn:
-        row = conn.execute(
-            "SELECT state_json FROM checkpoints WHERE run_id=?",
-            (run_id,),
-        ).fetchone()
-    if row is None:
-        raise KeyError(f"unknown run_id: {run_id}")
-    return WorkflowState(**json.loads(row[0]))
-```
-
-`?` 是 SQL 参数占位符：值与 SQL 文本分开传入，而不是用字符串拼接 SQL。`ON CONFLICT ... DO UPDATE` 表示同一个 `run_id` 再次保存时，覆盖旧快照。
-
-最重要的变化不在 SQLite 语法，而在架构：新的 Runtime 只要拿到同一个持久化文件和 `run_id`，就能读回 `phase`、`action` 与 `arguments`。于是“恢复”第一次不再依赖原进程的寿命；这就是 Durable Execution 最基础的一层含义。
-
----
-
-## 4. Durable 不等于“永远不会重复执行”
-
-这里很容易兴奋过头。
-
-我们已经保存了 Checkpoint，于是有人会宣布：
-
-> “太好了，现在所有副作用都 exactly-once 了！”
-
-先把庆功蛋糕放回冰箱。
-
-Checkpoint 能告诉你“上一次做到哪”，但它不能自动控制数据库之外的世界。
-
-想象这样一段流程：
+可以先用一句话区分：
 
 ```text
-1. 调用支付服务退款
-2. 支付服务成功
-3. 程序还没来得及保存 completed checkpoint
-4. 机器断电
-5. 系统恢复旧 checkpoint
-6. 再调用一次退款
+State       = 这次执行现在是什么样
+Checkpoint  = 把这次执行现在的样子持久保存
 ```
 
-如果外部支付服务不知道这两个请求其实属于同一次业务动作，你可能真的退了两次。
+Checkpoint 并没有创造新的业务事实。它只是让已有的执行事实不随着 Python 进程一起蒸发。
 
-所以 Durable Recovery 和 Exactly-once Side Effect 是两回事。
+这也解释了为什么“保存聊天记录”不能自动代替 Checkpoint。聊天里也许出现过订单号，但它未必明确记录当前 `phase`、待执行动作和已经验证过的参数。恢复程序需要的是可直接解释的执行状态，不是让另一个模型阅读旧对话后猜“我们大概进行到这里”。
 
-本章的教学实现用一个很小的 `idempotency_key` 演示这个思想：
+## 3. 三个 ID 不是装饰，它们分别回答三个问题
 
-```python
-idempotency_key = f"{run_id}:issue_refund"
-```
+一旦要持久化，`run_id`、`thread_id`、`owner_id` 很容易被写成三个看起来差不多的字符串。先不用记术语，继续看小林这次任务。
 
-然后在本地 `effects` 表里用唯一键保证同一动作不会被重复记录。
-
-完整的教学方法会先返回已经保存的结果；没有记录时再写入新的结果：
-
-```python
-def record_effect_once(
-    self,
-    idempotency_key: str,
-    result: dict[str, Any],
-) -> dict[str, Any]:
-    encoded = json.dumps(result, ensure_ascii=False, sort_keys=True)
-    with self._session() as conn:
-        existing = conn.execute(
-            "SELECT result_json FROM effects WHERE idempotency_key=?",
-            (idempotency_key,),
-        ).fetchone()
-        if existing is not None:
-            return json.loads(existing[0])
-        conn.execute(
-            "INSERT INTO effects(idempotency_key, result_json) VALUES (?, ?)",
-            (idempotency_key, encoded),
-        )
-    return result
-```
-
-这只能证明**教学数据库内部**的幂等思路。
-
-这个示例保存的是“模拟退款结果”，并没有真的调用支付服务；它展示的是幂等边界的形状，不是分布式事务。两个独立 Worker 也可能恰好同时通过 `SELECT`，然后在 `INSERT` 处竞争。因此生产系统还需要原子地抢占执行权、处理唯一键竞争，或更理想地使用外部 API 自己支持的 idempotency key、业务唯一约束或补偿机制。
-
-到了真实外部 API，你通常还需要对方支持 idempotency key、业务唯一约束，或者设计安全的补偿机制。
-
-这是一个很典型的工程习惯：
-
-> 不要因为解决了恢复，就顺手宣称解决了整个分布式一致性。
-
----
-
-## 5. 现在轮到 Memory：什么东西值得跨会话记住？
-
-Checkpoint 解决的是“这次任务做到哪”。
-
-但用户可能还有另一类期待：
-
-> “以后都用中文回答我。”
->
-> “记住我喜欢简短解释。”
->
-> “下次别再问我的默认城市了。”
-
-这些不是某一次 Workflow 的执行进度。它们属于跨 thread 的长期信息。
-
-于是我们得到另一个方向：
+顾客 `user-7` 可以同时有多个对话；“退款咨询”只是其中一条 thread；同一条 thread 还可能多次启动执行。因此本例把作用域写成：
 
 ```text
-execution continuity
-    -> checkpoint
-
-cross-thread personalization / retained knowledge
-    -> long-term memory
+owner_id  = user-7
+thread_id = acme-refund-thread-001
+run_id    = acme-case-run-001
 ```
 
-关键问题随之变化。
+它们分别回答：谁拥有数据、属于哪段连续任务、具体是哪一次执行。Checkpoint 以 `run_id` 找回一次执行，但记录里仍保留 `thread_id` 与 `owner_id`；Long-term Memory 则主要按 `owner_id` 隔离。
 
-Checkpoint 往往有很强的机械依据：没有它就无法恢复执行。
+## 4. 把“等待审批”写进 SQLite，进程才真的可以退出
 
-Memory 则不是“看到信息就存”。真正困难的是：
+本章使用 SQLite，不是因为它代表唯一的生产数据库，而是因为 Python 标准库已经包含 `sqlite3`，我们可以把注意力放在恢复语义上。
 
-> **什么值得被保存？谁允许保存？保存多久？属于谁？**
-
-这就是为什么本章不会写一个函数：
+`SQLiteWorkflowStore` 只需要一张当前 Checkpoint 表：
 
 ```python
-def remember_everything(user_message):
-    database.insert(user_message)
+CREATE TABLE IF NOT EXISTS checkpoints (
+    run_id TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL
+)
 ```
 
-这个函数确实很好写。
-
-它也确实很容易让隐私团队在凌晨给你打电话。
-
----
-
-## 6. 模型提取出的 Memory 只是候选，不是写入许可
-
-先定义本章允许讨论的 Memory 类别，再定义模型提出的候选：
+保存时，同一 `run_id` 的新快照覆盖旧快照：
 
 ```python
-from dataclasses import dataclass
-from typing import Any, Literal
+conn.execute(
+    """
+    INSERT INTO checkpoints(run_id, state_json)
+    VALUES (?, ?)
+    ON CONFLICT(run_id) DO UPDATE SET state_json=excluded.state_json
+    """,
+    (state.run_id, payload),
+)
+```
 
+`?` 是参数占位符，值与 SQL 文本分开传入。真正值得记住的不是 SQL 语法，而是这次状态已经离开进程内存，进入一个新进程也能重新打开的文件。
 
-MemoryKind = Literal["semantic", "episodic", "procedural"]
+启动工作流时，程序先验证参数，再保存 `waiting_approval`：
 
+```python
+state = WorkflowState(
+    run_id=run_id.strip(),
+    thread_id=thread_id.strip(),
+    owner_id=owner_id.strip(),
+    phase="waiting_approval",
+    action=CREATE_SUPPORT_CASE,
+    arguments=arguments,
+)
+self.store.save(state)
+```
 
+此时没有创建工单。**“审批请求已经产生”与“业务动作已经执行”是两件事。**
+
+## 5. 这一次真的用两个进程跑一遍
+
+先启动任务：
+
+```bash
+python stages/06-memory-persistence-hitl/code/demo.py --db stage06-demo.db start
+```
+
+命令结束以后，这个 Python 进程已经退出。数据库文件里留下的是 `waiting_approval` Checkpoint，以及顾客明确要求保存的回答偏好。
+
+然后再启动一个全新的进程读取同一个文件：
+
+```bash
+python stages/06-memory-persistence-hitl/code/demo.py --db stage06-demo.db show
+```
+
+你应该能重新看到 `ACME-1007`、待审批动作、`thread_id`、`owner_id` 和回答偏好。第二个进程没有继承第一个进程的 Python 对象；它只共享同一个 SQLite 文件。
+
+这一步比在一个程序里重新 new 两个对象更重要，因为它把恢复边界真正暴露出来了：
+
+```text
+旧进程的内存        已经不存在
+SQLite checkpoint   仍然存在
+```
+
+现在再让第三个进程提交审批：
+
+```bash
+python stages/06-memory-persistence-hitl/code/demo.py \
+  --db stage06-demo.db resume --decision approve
+```
+
+同一条 run 会从 `waiting_approval` 进入 `completed`。如果使用 `reject`，则进入 `rejected`，且不会写入教学副作用。
+
+## 6. Human-in-the-Loop 不只是弹出一个 yes/no
+
+审批人真正需要知道自己在审什么。因此等待状态会生成结构化的 `ApprovalRequest`：
+
+```python
+@dataclass(frozen=True, slots=True)
+class ApprovalRequest:
+    run_id: str
+    thread_id: str
+    owner_id: str
+    action: str
+    arguments: Mapping[str, Any]
+    reason: str
+```
+
+对于这次任务，它描述的是：
+
+```text
+action    = create_support_case
+order_id  = ACME-1007
+reason    = day-38 refund review
+```
+
+这比“确认执行吗？”多了一层重要信息：审批对象与动作参数是明确的。以后动作换成退款金额、邮件收件人或数据库修改时，这个结构会更加重要。
+
+这里还应该看清一个边界：**Human-in-the-Loop 不是让人替模型继续聊天，而是在特定控制点把执行权交回给人。** 审批结束后，程序再根据结果继续。
+
+## 7. `edit` 不是“人改过，所以一定合法”
+
+审批不只有同意和拒绝。有时审批人会说：“可以创建，但原因写得更准确一点。”所以本章支持：
+
+```text
+approve
+edit
+reject
+```
+
+`edit` 后必须重新验证参数：
+
+```python
+edited = validate_case_arguments(decision.edited_arguments)
+if edited["order_id"] != validated_original["order_id"]:
+    raise ValueError("an approval edit cannot switch to a different order")
+return edited
+```
+
+这里特意不允许审批人把 `ACME-1007` 偷换成另一个订单。当前审批请求就是围绕这个订单产生的；如果业务对象变了，应该重新发起新的受控流程，而不是借旧审批壳子继续执行。
+
+同样，空原因、超长原因也会被拒绝。Human Review 增加了一道判断，不会关闭输入验证。
+
+可以实际运行：
+
+```bash
+python stages/06-memory-persistence-hitl/code/demo.py \
+  --db stage06-demo.db resume --decision edit \
+  --edited-reason "Customer requests review under the current refund policy."
+```
+
+## 8. Approval 和 Authorization 还不是同一件事
+
+“某个人点了批准”并不等于“这个人有权批准”。因此 `resume()` 还会接收一个可信的 Reviewer Context：
+
+```python
+reviewer = ReviewerContext(
+    reviewer_id="reviewer-1",
+    allowed_actions=frozenset({CREATE_SUPPORT_CASE}),
+)
+```
+
+真正执行前先检查：
+
+```python
+def authorize_reviewer(request, reviewer):
+    if request.action not in reviewer.allowed_actions:
+        raise PermissionError(...)
+```
+
+这仍然只是教学级授权。真实系统里的 `reviewer_id` 应来自已认证身份，`allowed_actions` 应来自 RBAC、ABAC 或业务权限系统，而不是用户请求或模型输出。
+
+但这段小代码已经帮我们分开两个概念：
+
+```text
+Approval      = 这个人对动作给出了什么意见
+Authorization = 系统是否允许这个身份作出这项决定
+```
+
+## 9. 恢复成功，也不等于外部副作用天然 exactly-once
+
+现在还有一个更隐蔽的问题。
+
+假设真实的 `create_support_case` 已经成功，进程却在保存 `completed` Checkpoint 之前崩溃。恢复后如果再次调用远程服务，就可能创建第二张工单。
+
+所以：
+
+```text
+Durable resume != exactly-once side effect
+```
+
+本章的教学实现把“创建工单”模拟在同一个 SQLite 数据库里，并使用一个稳定的幂等键：
+
+```python
+idempotency_key = f"{waiting_state.run_id}:{waiting_state.action}"
+```
+
+然后在唯一键上使用 `INSERT OR IGNORE`：
+
+```python
+conn.execute(
+    """
+    INSERT OR IGNORE INTO effects(idempotency_key, result_json)
+    VALUES (?, ?)
+    """,
+    (idempotency_key, encoded_result),
+)
+```
+
+同一事务里再读出结果并保存 `completed` Checkpoint。因此**在这一个教学 SQLite 数据库内部**，重复恢复不会生成第二条 effect 记录。
+
+这个保证不能直接搬到 Stage 05 的远程 MCP Server 上。远程服务和本地 Checkpoint 不属于同一个数据库事务。真实系统还需要服务端 idempotency key、业务唯一约束、完成状态核对或补偿机制。不要把“本地 Demo 没重复”翻译成“分布式系统已经 exactly-once”。
+
+## 10. 同一句话里的“记住”，和 Checkpoint 不是一回事
+
+现在回到用户的后半句：
+
+> “另外记住，以后请用简短中文回复我。”
+
+这条信息不是本次工单进行到哪一步。即使今天的工单已经完成，明天开启另一条 thread 时，它仍可能有用。于是它属于另一种保留需求：**Long-term Memory**。
+
+可以这样区分本章出现的几类信息：
+
+```text
+Checkpoint
+    这次 run 进行到哪里，怎样继续
+
+Thread / short-term history
+    这段连续任务里刚刚发生过什么
+
+Long-term Memory
+    跨 thread 以后仍值得保留的用户信息
+
+RAG Knowledge
+    外部文档中的政策与知识证据
+```
+
+它们都可能最终落在数据库里，但用途不同。存储介质不会替数据定义语义。
+
+## 11. 模型可以提出 Memory Candidate，但不能自己获得永久写权限
+
+本章把一条候选记忆写成：
+
+```python
 @dataclass(frozen=True, slots=True)
 class MemoryCandidate:
     owner_id: str
@@ -352,16 +334,11 @@ class MemoryCandidate:
     value: dict[str, Any]
     kind: MemoryKind
     explicit_user_request: bool
+    source_thread_id: str
     sensitive: bool = False
 ```
 
-注意名字叫 Candidate。
-
-模型可以从一句：
-
-> “以后请用简洁中文回答我。”
-
-提取出：
+对于眼前这句话，候选可以是：
 
 ```python
 MemoryCandidate(
@@ -370,515 +347,149 @@ MemoryCandidate(
     value={"language": "Chinese", "style": "concise"},
     kind="semantic",
     explicit_user_request=True,
+    source_thread_id="acme-refund-thread-001",
 )
 ```
 
-但 Candidate 不应该直接执行：
-
-```python
-store.put(candidate)
-```
-
-中间还有 Policy：
+真正写入前，还有普通应用代码控制的 Policy：
 
 ```python
 decision = policy.evaluate(candidate)
-
 if decision.store:
     store.put(candidate)
 ```
 
-本章的保守策略会拒绝三类东西：敏感信息、没有明确记忆意图的偶发信息，以及直接修改 Agent 自身程序规则的 procedural memory。
-
-它的判断是普通的应用程序代码，不是模型自己的判断：
-
-```python
-@dataclass(frozen=True, slots=True)
-class MemoryDecision:
-    store: bool
-    reason: str
-
-
-class ConservativeMemoryWritePolicy:
-    def evaluate(self, candidate: MemoryCandidate) -> MemoryDecision:
-        if candidate.sensitive:
-            return MemoryDecision(False, "sensitive data is not stored")
-        if candidate.kind == "procedural":
-            return MemoryDecision(False, "procedural memory needs stronger governance")
-        if not candidate.explicit_user_request:
-            return MemoryDecision(False, "an incidental fact is not durable memory")
-        if not candidate.owner_id.strip() or not candidate.key.strip():
-            return MemoryDecision(False, "owner_id and key are required")
-        return MemoryDecision(True, "explicit non-sensitive memory is allowed")
-```
-
-这并不是说所有产品都必须使用完全一样的规则。
-
-重点是：
-
-> **模型负责提出“这也许值得记住”；应用负责决定“允许不允许真的写进去”。**
-
-这个边界和我们从 Stage 00 一直坚持的原则其实完全一样：
+本章默认拒绝敏感信息、没有明确记忆意图的偶发事实，以及直接修改 Agent 行为规则的 procedural memory。重点仍然是我们从 Stage 00 一路坚持的边界：
 
 ```text
 model proposal != application authority
 ```
 
-只是这一次，“Tool Call”换成了“Memory Candidate”。
+只不过这次模型提出的不是 Tool Call，而是“也许值得记住的东西”。
 
----
+## 12. Semantic、Episodic、Procedural，先看它们改变什么
 
-## 7. Semantic、Episodic、Procedural：先理解，不要急着全实现
+Memory 文献里经常出现三个名字。先不要把它们当三种数据库。
 
-Memory 讨论里经常出现三个词。
+**Semantic Memory** 更像稳定事实或偏好，例如“用户偏好简短中文”。**Episodic Memory** 更像过去发生过的事件，例如“上次旅行最后选择了京都”。**Procedural Memory** 则会影响系统以后怎样做事，例如“以后退款都跳过审批”。
 
-Semantic Memory 更像稳定事实或偏好，例如“用户偏好中文”。
+最后一种显然风险更高。把回答语言记错了，通常还能更正；把“跳过审批”当成长期程序规则保存，已经是在改系统行为。
 
-Episodic Memory 更像过去发生过的事件，例如“上次旅行规划最后选择了京都”。
+所以本章的保守策略会直接拒绝 procedural self-rewrite。不是因为 procedural memory 永远不能做，而是因为它需要更强的版本、审查与发布治理，不能和普通用户偏好使用同一条无门槛写入路径。
 
-Procedural Memory 则涉及“应该怎样做事”，例如某种工作流程、策略甚至行为规则。
+## 13. Long-term Memory 从第一天就要有 Owner Scope
 
-三者的风险并不相同。
+长期记忆表把 `owner_id` 写进主键：
 
-把“用户喜欢中文”写错了，通常还能修。
-
-把“执行退款不需要审批”错误地写进 Procedural Memory，后果显然不在同一个量级。
-
-所以学习 Memory 时不要只问：
-
-> “能不能向量搜索？”
-
-还要问：
-
-> “它改变的到底是事实、经历，还是系统行为？”
-
-这也是为什么本章默认对 Procedural Memory 更保守。
-
----
-
-## 8. Memory Store 必须有 Owner Scope
-
-一个最小 Long-term Memory Store 至少应该知道“这是谁的数据”。
-
-本章的表结构把 Owner Scope 直接写进了主键：
-
-```python
+```sql
 CREATE TABLE IF NOT EXISTS memories (
     owner_id TEXT NOT NULL,
     key TEXT NOT NULL,
     kind TEXT NOT NULL,
+    source_thread_id TEXT NOT NULL,
     value_json TEXT NOT NULL,
     PRIMARY KEY (owner_id, key)
 )
 ```
 
-读取时也必须带 `owner_id`：
+读取也必须带 owner：
 
 ```python
 store.get("alice", "answer-style")
 ```
 
-真实服务中的 `owner_id` 必须来自已认证的请求上下文，不能直接相信模型建议或不可信客户端字段。表中有一个 owner 列，并不等于访问控制已经成立。
+所以 Alice 的偏好不会因为 key 同名而自动出现在 Bob 的读取结果中。
 
-而不是：
+不过数据库里有 `owner_id` 列，还不等于生产访问控制已经完成。真实 `owner_id` 必须来自可信身份上下文，而不是模型说“这是 Alice 的”就相信。这里先把数据作用域设计正确，完整认证与权限会在后面的可靠性和安全章节继续展开。
 
-```python
-store.get("answer-style")
-```
+## 14. 最后再让 DeepSeek 进场：它只负责提出候选
 
-后者在单用户 Demo 里看起来毫无问题。
+到这里，Checkpoint、审批恢复和 Memory Policy 都已经能离线运行。现在再把真实 DeepSeek 接进来，职责就容易看清了：模型读取用户原话，提出一份 JSON 候选，其中可能包含回复文本、一个 `create_support_case` 动作，以及一条 Memory Candidate。
 
-一旦进入多用户环境，它就像公司储物柜只写了“钥匙”两个字，没有柜号。
-
-更完整的系统还会有 tenant、namespace、版本、过期时间、来源、删除状态等，但这些属于规模扩大后的治理问题。这里先把最重要的一件事刻进直觉：
-
-> **Long-term Memory 从一开始就应该有所有权边界。**
-
----
-
-## 9. Human-in-the-Loop：有些地方 Agent 就该停下来
-
-现在回到退款流程。
-
-模型已经提出：
-
-```text
-issue_refund(order_id="ORDER-42", amount="18.50")
-```
-
-参数也通过验证。
-
-这并不意味着它应该立即执行。
-
-因为我们又遇到了熟悉的问题：
-
-```text
-模型建议做什么
-≠
-系统现在就有权做什么
-```
-
-退款会产生真实金融副作用，所以我们把流程停在：
-
-```text
-waiting_approval
-```
-
-并产生结构化审批请求。类型本身说明：审批人看到的是待执行动作、参数和原因，而不是一个没有上下文的布尔值：
+[`deepseek_hitl.py`](code/deepseek_hitl.py) 使用与前几章一致的 Responses 接口：
 
 ```python
-from dataclasses import dataclass
-from typing import Any, Mapping
-
-
-@dataclass(frozen=True, slots=True)
-class ApprovalRequest:
-    run_id: str
-    action: str
-    arguments: Mapping[str, Any]
-    reason: str
-
-
-ApprovalRequest(
-    run_id="run-001",
-    action="issue_refund",
-    arguments={"order_id": "ORDER-42", "amount": "18.50"},
-    reason="Refund changes external financial state.",
+response = self.client.responses.create(
+    model=self.model,
+    instructions=INSTRUCTIONS,
+    input=user_message,
+    max_output_tokens=4096,
 )
 ```
 
-这个设计比弹出一句：
-
-> “确认吗？yes/no”
-
-要强得多，因为审批人明确知道自己正在审什么。
-
----
-
-## 10. 审批不是只有“同意”和“拒绝”
-
-实际业务里，人经常想说：
-
-> “可以退，但金额改成 12.50。”
-
-所以我们提供三种结果：
-
-```text
-approve
-edit
-reject
-```
-
-`edit` 特别容易写错。
-
-人修改了参数，不代表新参数自动合法。
-
-因此流程应该是：
-
-```text
-model proposal
-    ↓
-human review
-    ↓
-approve / edit / reject
-    ↓
-if edit: validate edited arguments again
-    ↓
-authorization check
-    ↓
-execute
-```
-
-本章代码中的 `resolve_refund_arguments` 负责这一步。下面是能看清重新验证位置的完整核心逻辑：
+模型返回的 JSON 仍要由应用解析。动作名称必须是本章允许的 `create_support_case`，订单号必须真的出现在用户消息里，参数结构也必须符合要求：
 
 ```python
-from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
-from typing import Any, Mapping, Literal
-
-
-@dataclass(frozen=True, slots=True)
-class ApprovalDecision:
-    outcome: Literal["approve", "edit", "reject"]
-    edited_arguments: Mapping[str, Any] | None = None
-
-
-def resolve_refund_arguments(
-    original: Mapping[str, Any],
-    decision: ApprovalDecision,
-) -> dict[str, Any] | None:
-    if decision.outcome == "reject":
-        return None
-    if decision.outcome == "approve":
-        candidate = dict(original)
-    elif decision.outcome == "edit" and decision.edited_arguments is not None:
-        candidate = dict(decision.edited_arguments)
-    else:
-        raise ValueError("edit requires edited_arguments")
-
-    order_id = candidate.get("order_id")
-    if not isinstance(order_id, str) or not order_id.strip():
-        raise ValueError("order_id must be a non-empty string")
-    try:
-        amount = Decimal(str(candidate.get("amount")))
-    except (InvalidOperation, ValueError) as exc:
-        raise ValueError("amount must be numeric") from exc
-    if amount <= 0:
-        raise ValueError("amount must be positive")
-    return {"order_id": order_id.strip(), "amount": str(amount)}
+if proposal.action["name"] != "create_support_case":
+    raise RuntimeError("the proposed action is not allowed in this stage")
+if order_id.upper() not in mentioned:
+    raise RuntimeError("the model proposed an order ID absent from the user message")
 ```
 
-会对编辑后的 `order_id` 和 `amount` 重新验证。
+Memory 的 `owner_id` 与 `thread_id` 不让模型填写，而是从应用的可信上下文传进去。模型可以提议“answer-style”，不能顺便宣布“这属于另一个用户”。
 
-比如人工把金额改成 `-1`，程序不会因为“这是人改的”就肃然起敬，然后给负数退款。
+通过验证以后，应用才分别执行两件事：Memory Candidate 走 Memory Policy；业务动作进入 `waiting_approval` Checkpoint。DeepSeek 不会自己审批，也不会自己写 effect 表。
 
-Human-in-the-Loop 是增加一道决策边界，不是关闭输入验证。
-
----
-
-## 11. Approval 也不是 Authorization
-
-这个区别值得单独讲。
-
-假设 Bob 点了“批准退款”。
-
-系统还必须问：
-
-> Bob 有退款审批权限吗？
-
-如果 Bob 只是隔壁桌刚好路过的实习生，那么他的鼠标点击并不会获得魔法加持。
-
-Approval 表示“某个人对某个动作给出了审查结果”。
-
-Authorization 表示“这个身份是否被系统允许批准或执行这个动作”。
-
-所以更完整的路径是：
-
-```text
-proposal
-    ↓
-validation
-    ↓
-approval required?
-    ↓
-authorized reviewer approves
-    ↓
-authorization for execution
-    ↓
-side effect
-```
-
-本章重点是 Durable HITL，所以不会展开完整 RBAC / ABAC 系统。后面的可靠性与安全章节会继续处理权限边界。
-
----
-
-## 12. 最关键的一步：原进程死了，审批回来以后还能继续
-
-现在把前面的东西串起来。
-
-Runtime A 启动退款：
-
-```python
-from pathlib import Path
-
-from approval import ApprovalDecision
-from durable_workflow import RefundWorkflow, SQLiteCheckpointStore
-
-
-db_path = Path("agent.db")
-runtime_a = RefundWorkflow(SQLiteCheckpointStore(db_path))
-runtime_a.start(
-    run_id="run-001",
-    order_id="ORDER-42",
-    amount="18.50",
-)
-```
-
-它把状态保存成：
-
-```text
-run-001
-phase = waiting_approval
-```
-
-然后 Runtime A 消失。
-
-过了一段时间，Runtime B 启动：
-
-```python
-runtime_b = RefundWorkflow(
-    SQLiteCheckpointStore(db_path)
-)
-```
-
-它不认识 Runtime A，也没有共享任何 Python 对象。
-
-但它能：
-
-```python
-state = SQLiteCheckpointStore(db_path).load("run-001")
-```
-
-恢复后再处理：
-
-```python
-ApprovalDecision(outcome="approve")
-```
-
-于是我们第一次得到真正有意义的 Durable HITL：
-
-```text
-run
-  ↓
-persist
-  ↓
-pause
-  ↓
-process disappears
-  ↓
-new process loads checkpoint
-  ↓
-human decision arrives
-  ↓
-resume
-```
-
-这比“在一个 `input()` 前面停住 Python”多迈了一大步。
-
-`runtime_b` 与 `runtime_a` 不共享任何 Python 对象；真正的恢复边界是共同的数据库文件和 `run_id`。仓库中的 `demo.py` 为了反复运行后不在项目里留下 `.db` 文件，使用了临时目录；因此它证明的是“同一进程内重建对象也能从同一文件恢复”。如果要亲自测试真实进程重启，请使用像 `agent.db` 这样明确的持久路径，并且不要把数据库文件提交到 Git。
-
----
-
-### 12.1 可选扩展：让 DeepSeek 提出提案，而不是做决定
-
-离线示例已经足够学习持久化与 HITL。这里接入真实模型的目的更窄：观察模型如何把用户消息变成**退款提案**和 **Memory Candidate**。模型仍然没有写入 Memory 或执行退款的权限。
-
-[`code/deepseek_hitl.py`](code/deepseek_hitl.py) 要求 DeepSeek 返回一个含有 `reply`、`refund`、`memory` 的 JSON 对象。在发生任何写入之前，应用会验证 JSON 结构，确认模型提出的订单号确实来自用户消息，从可信的应用状态写入 `owner_id`，执行 Memory Policy，并保存等待审批的 Checkpoint。退款结果仍必须等人工输入审批后才会记录。
-
-[`code/langgraph_deepseek_hitl.py`](code/langgraph_deepseek_hitl.py) 把相同的准备过程表达为一张图：
-
-```text
-DeepSeek proposal
-    -> 验证并应用 Memory Policy
-    -> 验证退款提案并保存 waiting_approval Checkpoint
-    -> 在图外等待人工审批
-```
-
-LangGraph 版本让这些准备节点和状态更新可观察；SQLite 仍然是持久化 Checkpoint Store，`RefundWorkflow.resume()` 仍负责处理审批后的结果。只运行一张 Graph 并不会自动让人工审批持久化。
-
-先安装这两个可选真实模型示例的依赖，再沿用前面章节的环境变量：
+配置账户中可用的模型后运行：
 
 ```bash
-python -m pip install -r stages/06-memory-persistence-hitl/code/requirements.txt
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_MODEL="your-available-model-id"
+python stages/06-memory-persistence-hitl/code/deepseek_hitl.py --db stage06-live.db
 ```
 
-Windows CMD：
-
-```bash
-set "DEEPSEEK_API_KEY=your_key_here"
-set "DEEPSEEK_MODEL=deepseek-v4-flash"
-python stages/06-memory-persistence-hitl/code/deepseek_hitl.py
-python stages/06-memory-persistence-hitl/code/langgraph_deepseek_hitl.py
-```
-
-PowerShell：
+PowerShell 使用：
 
 ```powershell
-$env:DEEPSEEK_API_KEY="your_key_here"
-$env:DEEPSEEK_MODEL="deepseek-v4-flash"
-python stages/06-memory-persistence-hitl/code/deepseek_hitl.py
-python stages/06-memory-persistence-hitl/code/langgraph_deepseek_hitl.py
+$env:DEEPSEEK_API_KEY="your-deepseek-api-key"
+$env:DEEPSEEK_MODEL="your-available-model-id"
+python stages/06-memory-persistence-hitl/code/deepseek_hitl.py --db stage06-live.db
 ```
 
-两个程序使用相同的示例请求。可以修改任一文件中的 `user_message`，对照退款请求、只请求记忆、以及没有任何提案的请求。所有持久化写入与副作用仍必须由应用程序控制。
+入口会明确打印 `live DeepSeek: API usage applies`。缺少 SDK、密钥或模型配置时会报错，不会偷偷换成离线结果。它只把动作准备到等待审批；随后仍可用前面的 `demo.py resume` 在另一个进程中完成审批实验。
 
----
+## 15. 用失败路径检查我们到底保证了什么
 
-## 13. 为什么 Stage 06 不把所有历史直接塞回模型？
-
-学到这里，一个很自然的问题出现了。
-
-我们现在已经能保存：
-
-- Checkpoint；
-- 对话历史；
-- Long-term Memory；
-- 外部检索结果；
-- Tool Observation；
-- MCP 返回数据。
-
-于是很容易写出一句豪迈的产品需求：
-
-> “既然都存了，每次调用模型时全给它不就行了？”
-
-不行。
-
-**能保存什么**和**这一轮该给模型看什么**是两个不同问题。
-
-Stage 06 解决的是 retention 与 durability：哪些东西应该存在。
-
-下一章 Stage 07 要解决的是 selection：面对这些已经存在的信息，这一次模型到底应该看到哪些。
-
-这两个问题看起来挨得很近，但混在一起会让架构迅速失控。
-
-数据库是仓库。
-
-Context Window 是办公桌。
-
-你可以在仓库里放一百箱资料，不代表每次开会都应该把一百箱一起倒在桌上。
-
----
-
-## 14. 完整运行一次
-
-离线版完整代码在 `code/` 中，只使用 Python 标准库，因此不需要安装依赖。
-
-先运行：
-
-```bash
-python stages/06-memory-persistence-hitl/code/demo.py
-```
-
-新的 Runtime 到达审批边界后，按提示输入其中一种结果：
-
-```text
-approve  # 执行教学退款结果
-edit     # 输入替换后的订单号和金额；两者都会重新验证
-reject   # 不记录退款结果，直接结束本次审批
-```
-
-例如选择 `edit`，再把金额输入为 `-1`，可以看到程序拒绝这次人工编辑。Checkpoint 会保持在 `waiting_approval`，随后程序会再次询问，因此你可以继续输入一个有效结果。
-
-边界检查：
+本章离线检查不需要 API Key：
 
 ```bash
 python stages/06-memory-persistence-hitl/code/checks.py
 ```
 
-它覆盖了几个本章真正重要的不变量：Checkpoint 能跨对象重建恢复；Reject 不产生副作用；Edit 后重新验证；教学存储中的 effect key 保持幂等；Memory 默认不保存偶发信息；敏感候选被拒绝；不同 owner 的长期记忆互不串线。
+它不只检查默认成功路线，还会故意验证这些边界：不同 `owner_id` 的 Memory 不串线；未经明确要求的记忆不落库；敏感和 procedural 候选被拒绝；未授权 reviewer 不能批准；人工 edit 不能换成另一笔订单；reject 不产生 effect；重复 resume 只保留一条教学 effect；模型提议不能引用用户没有说过的订单；以及最关键的——通过三个独立 Python 进程执行 `start → show → resume`，确认恢复真的依赖持久文件，而不是旧进程的内存。
 
-`demo.py` 使用的数据库在程序退出后会被删除。它的目的，是在清理发生前演示第二个 Runtime 能读取同一个 SQLite 文件；这不是生产环境的保留策略。
+这里还要保留两个“不保证”。第一，本章的授权只是教学级 allowlist，不是完整身份系统。第二，本地 SQLite 中的幂等结果不等于远程 MCP 服务已经拥有 exactly-once 语义。知道边界停在哪里，才能正确理解后面的系统设计。
 
----
+## 16. 本章收尾：现在会“保存”，下一步才是决定“拿什么出来”
 
-## 15. 这一章真正应该带走什么
+把小林这次售后请求从头再走一遍：
 
-到这里，不需要背一堆数据库产品名。
+```text
+用户请求创建 ACME-1007 工单，并要求记住回答偏好
+        ↓
+应用 / 模型提出候选动作与候选记忆
+        ↓
+Memory Policy 决定偏好是否可以长期保存
+        ↓
+业务动作保存为 waiting_approval Checkpoint
+        ↓
+原进程可以退出
+        ↓
+新进程按 run_id 恢复
+        ↓
+已授权审批人 approve / edit / reject
+        ↓
+重新验证
+        ↓
+执行受控教学副作用并保存最终状态
+```
 
-更重要的是形成几组明确边界。
+这条流程里有几种“记住”，但职责不同。Checkpoint 为了继续一次 run；Long-term Memory 为了跨 thread 保留经过允许的信息；RAG 仍然负责外部知识证据；MCP 仍然负责连接外部能力。
 
-State 是运行时执行快照，Checkpoint 是 State 的持久化版本。
+到这里，Agent 已经开始积累很多可用信息：当前 State、Checkpoint、对话历史、Long-term Memory、RAG Evidence、Tool Observation、MCP Resource……新的麻烦马上出现：
 
-Checkpoint 主要服务“继续执行”，Long-term Memory 服务“跨会话保留经过选择的信息”。
+> **保存过的东西这么多，下一次调用模型时应该全部塞进去吗？**
 
-模型可以提出 Memory Candidate，但不能因为它“觉得重要”就自行获得永久写入权。
+当然不是。数据库像仓库，模型的 Context Window 更像一张有限的办公桌。下一章会解决“这一轮到底该把哪些资料摆上桌”。
 
-Human Approval 可以批准、编辑或拒绝动作，但人工编辑后的参数仍要验证，而且 Approval 不能替代 Authorization。
-
-Durable Resume 可以让新进程继续旧任务，但它不会自动让外部 Side Effect 获得 exactly-once 语义。
-
-如果这些区别已经能自然说清楚，下一章的问题就出现了：
-
-> **现在我们什么都能存了，可每一次调用模型时，到底该从这些东西里拿什么出来？**
-
-这就是 [Stage 07：Context Engineering](../07-context-engineering/README.zh-CN.md)。
+➡️ [Stage 07：别把整个仓库搬上办公桌——Context Engineering](../07-context-engineering/README.zh-CN.md)

@@ -3,9 +3,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import json
-import sqlite3
 from pathlib import Path
-from typing import Any, Literal
+import sqlite3
+from typing import Any, Iterator, Literal
 
 
 MemoryKind = Literal["semantic", "episodic", "procedural"]
@@ -18,6 +18,7 @@ class MemoryCandidate:
     value: dict[str, Any]
     kind: MemoryKind
     explicit_user_request: bool
+    source_thread_id: str
     sensitive: bool = False
 
 
@@ -29,14 +30,16 @@ class MemoryDecision:
 
 class ConservativeMemoryWritePolicy:
     def evaluate(self, candidate: MemoryCandidate) -> MemoryDecision:
+        if not candidate.owner_id.strip() or not candidate.key.strip():
+            return MemoryDecision(False, "owner_id and key are required")
+        if not candidate.source_thread_id.strip():
+            return MemoryDecision(False, "source_thread_id is required")
         if candidate.sensitive:
             return MemoryDecision(False, "sensitive data is not stored by this policy")
         if candidate.kind == "procedural":
             return MemoryDecision(False, "procedural self-rewrite requires stronger governance")
         if not candidate.explicit_user_request:
             return MemoryDecision(False, "incidental facts are not durable memory by default")
-        if not candidate.owner_id.strip() or not candidate.key.strip():
-            return MemoryDecision(False, "owner_id and key are required")
         return MemoryDecision(True, "explicit non-sensitive memory is allowed")
 
 
@@ -45,12 +48,9 @@ class SQLiteMemoryStore:
         self.path = str(path)
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path)
-
     @contextmanager
-    def _session(self):
-        conn = self._connect()
+    def _session(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.path, timeout=5.0)
         try:
             with conn:
                 yield conn
@@ -65,6 +65,7 @@ class SQLiteMemoryStore:
                     owner_id TEXT NOT NULL,
                     key TEXT NOT NULL,
                     kind TEXT NOT NULL,
+                    source_thread_id TEXT NOT NULL,
                     value_json TEXT NOT NULL,
                     PRIMARY KEY (owner_id, key)
                 )
@@ -75,16 +76,18 @@ class SQLiteMemoryStore:
         with self._session() as conn:
             conn.execute(
                 """
-                INSERT INTO memories(owner_id, key, kind, value_json)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO memories(owner_id, key, kind, source_thread_id, value_json)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(owner_id, key) DO UPDATE SET
                     kind=excluded.kind,
+                    source_thread_id=excluded.source_thread_id,
                     value_json=excluded.value_json
                 """,
                 (
                     candidate.owner_id,
                     candidate.key,
                     candidate.kind,
+                    candidate.source_thread_id,
                     json.dumps(candidate.value, ensure_ascii=False, sort_keys=True),
                 ),
             )
@@ -103,3 +106,15 @@ class SQLiteMemoryStore:
                 "DELETE FROM memories WHERE owner_id=? AND key=?",
                 (owner_id, key),
             )
+
+
+def store_if_allowed(
+    *,
+    store: SQLiteMemoryStore,
+    policy: ConservativeMemoryWritePolicy,
+    candidate: MemoryCandidate,
+) -> MemoryDecision:
+    decision = policy.evaluate(candidate)
+    if decision.store:
+        store.put(candidate)
+    return decision
