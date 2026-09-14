@@ -384,7 +384,7 @@ async with Client("http://127.0.0.1:8765/mcp") as client:
 
 先把这两个差异搞清楚，比一上来研究 HTTP header 更重要。
 
-## 10. 协议版本由 Client 与 Server协商，不要把一个版本号写进业务逻辑
+## 10. 协议版本由 Client 与 Server 协商，不要把一个版本号写进业务逻辑
 
 进入 Client 生命周期以后，可以读取：
 

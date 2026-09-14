@@ -29,7 +29,7 @@ The previous chapter and this one solve different parts of the same problem. Sta
 
 ## 2. Why leave an archived policy and another shop's terms on the shelf?
 
-Lin has collected the material in [`code/data/`](code/data/). It contains the current refund policy, delivery and invoice information, an archived refund policy, and another fictional shop's terms. Each has a Chinese and an English version: eight files, yielding eighteen section-sized chunks with the default settings. These are not eighteen unrelated examples. They are the sources and distractors for the same policy question.
+Lin has collected the material in `code/data/`; [`manifest.json`](code/data/manifest.json) records each source's identity and scope. It contains the current refund policy, delivery and invoice information, an archived refund policy, and another fictional shop's terms. Each has a Chinese and an English version: eight files, yielding eighteen section-sized chunks with the default settings. These are not eighteen unrelated examples. They are the sources and distractors for the same policy question.
 
 The distractors matter. If the collection contains only the correct answer, the retriever hardly has to demonstrate exclusion. A short archived “30-day refund” page may match the query very well. Another shop's promise may be even more explicit. Neither lexical similarity nor confident wording makes those promises applicable to Acme.
 
@@ -306,11 +306,11 @@ Install the live-model dependencies from the repository root and select an accou
 ```bash
 python -m pip install -r stages/04-agentic-rag/code/requirements.txt
 export DEEPSEEK_API_KEY="your-deepseek-api-key"
-export DEEPSEEK_MODEL="deepseek-v4-flash"
+export DEEPSEEK_MODEL="deepseek-flash"
 python stages/04-agentic-rag/code/deepseek_rag.py --language en --show-evidence
 ```
 
-In PowerShell, the variable assignments are `$env:DEEPSEEK_API_KEY="your-deepseek-api-key"` and `$env:DEEPSEEK_MODEL="deepseek-v4-flash"`. The model name is a documented example, not a permanent account guarantee. This entry point makes live requests and incurs API usage. Missing configuration, dependencies, or a failed response never trigger a silent fallback to the extractive double.
+In PowerShell, the variable assignments are `$env:DEEPSEEK_API_KEY="your-deepseek-api-key"` and `$env:DEEPSEEK_MODEL="deepseek-flash"`. The model name is a documented example, not a permanent account guarantee. This entry point makes live requests and incurs API usage. Missing configuration, dependencies, or a failed response never trigger a silent fallback to the extractive double.
 
 For the supplied facts, a sensible reply distinguishes being inside the 45-day application window from completing verification and approval. It must not claim a refund occurred. Its wording need not match the offline passages word for word. We now have a fixed RAG path that genuinely uses an LLM; the next difficulty is what to do when its first evidence bundle is incomplete.
 

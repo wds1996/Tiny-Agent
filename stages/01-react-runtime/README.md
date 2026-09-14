@@ -370,7 +370,7 @@ Set credentials and an available model in the current terminal. The model below 
 
 ```bash
 export DEEPSEEK_API_KEY="your-deepseek-api-key"
-export DEEPSEEK_MODEL="deepseek-v4-flash"
+export DEEPSEEK_MODEL="deepseek-flash"
 python stages/01-react-runtime/code/deepseek_runtime.py --language en --show-transcript
 ```
 
@@ -378,7 +378,7 @@ PowerShell:
 
 ```powershell
 $env:DEEPSEEK_API_KEY="your-deepseek-api-key"
-$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+$env:DEEPSEEK_MODEL="deepseek-flash"
 python stages/01-react-runtime/code/deepseek_runtime.py --language en --show-transcript
 ```
 

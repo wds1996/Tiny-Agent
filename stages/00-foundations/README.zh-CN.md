@@ -42,20 +42,27 @@ source .venv/bin/activate
 python -m pip install -r stages/00-foundations/code/requirements.txt
 ```
 
-Windows PowerShell 的激活命令是 `.\.venv\Scripts\Activate.ps1`，安装命令相同。如果环境不允许执行激活脚本，可以直接用 `.\.venv\Scripts\python.exe` 代替下面命令里的 `python`，不用为了做练习去放宽系统执行策略。
+Windows PowerShell 的激活命令是 `.\.venv\Scripts\Activate.ps1`，安装命令相同；Windows 命令提示符（CMD）则使用 `.\.venv\Scripts\activate.bat`。如果环境不允许执行 PowerShell 激活脚本，可以直接用 `.\.venv\Scripts\python.exe` 代替下面命令里的 `python`，不用为了做练习去放宽系统执行策略。
 
 接着在 [DeepSeek 平台](https://platform.deepseek.com/api_keys) 准备 API Key。Key 是调用凭证，不是模型名字；不要把真实 Key 写进源文件、提交到 Git，或者发进截图。下面把它放到当前终端的环境变量中。macOS / Linux 使用：
 
 ```bash
 export DEEPSEEK_API_KEY="替换为你的密钥"
-export DEEPSEEK_MODEL="deepseek-v4-flash"
+export DEEPSEEK_MODEL="deepseek-flash"
 ```
 
 PowerShell 使用：
 
 ```powershell
 $env:DEEPSEEK_API_KEY="替换为你的密钥"
-$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+$env:DEEPSEEK_MODEL="deepseek-flash"
+```
+
+Windows 命令提示符（CMD）使用：
+
+```bat
+set "DEEPSEEK_API_KEY=替换为你的密钥"
+set "DEEPSEEK_MODEL=deepseek-flash"
 ```
 
 环境变量是启动程序时可以读取的配置，不是已经写入模型的一段提示词。新开终端后可能需要重新设置；示例也不会自动加载 `.env` 文件。模型 ID 请以账户实际可用且支持本章接口的模型为准，示例值可对照 [DeepSeek 的 Responses API 说明](https://api-docs.deepseek.com/zh-cn/guides/responses_api/)。这些入口会产生真实 API 请求，可能消耗账户额度；后面的离线检查不需要 Key。

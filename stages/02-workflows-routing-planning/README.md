@@ -369,7 +369,7 @@ Configure the key and a model accessible to your account in the current terminal
 
 ```bash
 export DEEPSEEK_API_KEY="your-deepseek-api-key"
-export DEEPSEEK_MODEL="deepseek-v4-flash"
+export DEEPSEEK_MODEL="deepseek-flash"
 python stages/02-workflows-routing-planning/code/deepseek_decisions.py --mode route --language en
 ```
 
@@ -377,7 +377,7 @@ In PowerShell:
 
 ```powershell
 $env:DEEPSEEK_API_KEY="your-deepseek-api-key"
-$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+$env:DEEPSEEK_MODEL="deepseek-flash"
 python stages/02-workflows-routing-planning/code/deepseek_decisions.py --mode route --language en
 ```
 

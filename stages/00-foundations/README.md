@@ -42,20 +42,27 @@ source .venv/bin/activate
 python -m pip install -r stages/00-foundations/code/requirements.txt
 ```
 
-On Windows PowerShell, activate with `.\.venv\Scripts\Activate.ps1`, then use the same installation command. If local policy prevents activation scripts, use `.\.venv\Scripts\python.exe` wherever these commands say `python`. You do not need to weaken a machine's execution policy to run the exercise.
+On Windows PowerShell, activate with `.\.venv\Scripts\Activate.ps1`, then use the same installation command. In Windows Command Prompt (CMD), use `.\.venv\Scripts\activate.bat`. If local policy prevents PowerShell activation scripts, use `.\.venv\Scripts\python.exe` wherever these commands say `python`. You do not need to weaken a machine's execution policy to run the exercise.
 
 Prepare an API key in the [DeepSeek platform](https://platform.deepseek.com/api_keys). A key is a credential, not a model name. Do not place a real key in source code, Git history, or screenshots. The following commands put configuration in the current terminal's environment. On macOS or Linux:
 
 ```bash
 export DEEPSEEK_API_KEY="replace-with-your-key"
-export DEEPSEEK_MODEL="deepseek-v4-flash"
+export DEEPSEEK_MODEL="deepseek-flash"
 ```
 
 On PowerShell:
 
 ```powershell
 $env:DEEPSEEK_API_KEY="replace-with-your-key"
-$env:DEEPSEEK_MODEL="deepseek-v4-flash"
+$env:DEEPSEEK_MODEL="deepseek-flash"
+```
+
+In Windows Command Prompt (CMD):
+
+```bat
+set "DEEPSEEK_API_KEY=replace-with-your-key"
+set "DEEPSEEK_MODEL=deepseek-flash"
 ```
 
 Environment variables are configuration your process can read when it starts, not instructions already sent to the model. A new terminal may need them set again. These examples do not automatically load `.env` files. Choose a model your account can access that supports this interface; check the example against [DeepSeek's Responses API guide](https://api-docs.deepseek.com/guides/responses_api/). The live examples make real API requests and may consume account credit. The offline checks introduced later do not need a key.

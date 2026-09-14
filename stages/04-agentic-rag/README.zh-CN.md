@@ -29,7 +29,7 @@
 
 ## 2. 书架上为什么同时留着旧版和别家商店的条款？
 
-小林把资料整理进 [`code/data/`](code/data/)。里面有现行售后政策、配送与发票说明，也有归档的旧版政策和另一家虚构商店的条款。每份都有中英文，因此是八个文件；按小节整理后，默认得到十八个检索片段。不是十八篇互不相关的知识点，而是同一个商店案例需要的资料和对照资料。
+小林把资料整理进 `code/data/`；每份资料的身份和范围记录在 [`manifest.json`](code/data/manifest.json)。里面有现行售后政策、配送与发票说明，也有归档的旧版政策和另一家虚构商店的条款。每份都有中英文，因此是八个文件；按小节整理后，默认得到十八个检索片段。不是十八篇互不相关的知识点，而是同一个商店案例需要的资料和对照资料。
 
 故意保留旧版很重要。如果书架上只有正确答案，检索器几乎不用学习“该排除什么”。旧版的“30 天退款”可能比现行政策更短、更像查询词，另一家商店的条款也可能写得非常明确。然而，词句相似并不能让别家的承诺适用于 Acme。
 
@@ -306,11 +306,11 @@ ids.append(citation.evidence_id)
 ```bash
 python -m pip install -r stages/04-agentic-rag/code/requirements.txt
 export DEEPSEEK_API_KEY="your-deepseek-api-key"
-export DEEPSEEK_MODEL="deepseek-v4-flash"
+export DEEPSEEK_MODEL="deepseek-flash"
 python stages/04-agentic-rag/code/deepseek_rag.py --show-evidence
 ```
 
-PowerShell 中两条环境变量设置对应为 `$env:DEEPSEEK_API_KEY="your-deepseek-api-key"` 与 `$env:DEEPSEEK_MODEL="deepseek-v4-flash"`。模型名是文档示例，不是永久不变的账户能力；以当前服务支持为准。入口会实际请求服务并产生用量，缺少密钥、依赖或响应失败时不会偷偷返回离线答案。
+PowerShell 中两条环境变量设置对应为 `$env:DEEPSEEK_API_KEY="your-deepseek-api-key"` 与 `$env:DEEPSEEK_MODEL="deepseek-flash"`。模型名是文档示例，不是永久不变的账户能力；以当前服务支持为准。入口会实际请求服务并产生用量，缺少密钥、依赖或响应失败时不会偷偷返回离线答案。
 
 按当前材料，合理回复应区分“按题设仍在 45 天申请窗口”与“需要提交资料并审核”，并明确没有执行退款。文字不要求和离线摘录逐字一致。现在我们已经有一条能真正调用模型的固定 RAG 流程；下一处问题是，第一次递到桌上的材料可能并不完整。
 

@@ -409,6 +409,9 @@ class AdapterChecks(unittest.TestCase):
 class CommandLineChecks(unittest.TestCase):
     def invoke(self, script, *args):
         env = {k: v for k, v in os.environ.items() if k not in {"DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "PYTHONPATH"}}
+        # The parent decodes captured output as UTF-8.  On Windows, make the child
+        # emit UTF-8 instead of inheriting the active console code page.
+        env["PYTHONIOENCODING"] = "utf-8"
         return subprocess.run([sys.executable, str(Path(__file__).with_name(script)), *args], capture_output=True, text=True, encoding="utf-8", env=env, timeout=15)
 
     def test_paris_english_entry(self):
